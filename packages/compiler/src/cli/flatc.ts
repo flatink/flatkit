@@ -18,7 +18,7 @@ import { parseUnits } from '@flatkit/engine/dsl'
 import { sanitizeDoc } from '@flatkit/engine/validateDoc'
 import { unitsToFunctions } from '@flatkit/engine/scriptDoc'
 import { lintDocReport, docHasErrors } from '../programDoc'
-import { playHeadless, type Gesture } from '@flatkit/player'
+import { playHeadless, type Gesture } from '@flatkit/player/debug'
 import type { FuncDef } from '@flatkit/engine/actions'
 import type { Doc } from '@flatkit/types'
 

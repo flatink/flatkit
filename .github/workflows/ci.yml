@@ -55,6 +55,10 @@ jobs:
       - name: Test
         run: pnpm run test
 
+      # Build every package to dist/ and lint the would-be-published tarballs (publint + are-the-types-wrong).
+      - name: Build & publishability
+        run: pnpm run check:pack
+
       # Smoke-test the wired CLI binary end to end.
       - name: flatc CLI smoke
         run: node packages/compiler/bin/flatc.mjs --help

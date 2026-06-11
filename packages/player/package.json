@@ -3,19 +3,47 @@
   "version": "0.1.0",
   "description": "The lightweight FlatInk player: load a .flatpack and play it in a <canvas>. No editor, no heavy deps.",
   "license": "MIT",
+  "author": "Zwyk Studio",
+  "homepage": "http://flatink.zwyk-studio.com/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zwykstudio/flatkit.git",
+    "directory": "packages/player"
+  },
+  "bugs": "https://github.com/zwykstudio/flatkit/issues",
+  "keywords": ["flatink", "flatpack", "animation", "canvas", "player", "interactive"],
   "type": "module",
+  "sideEffects": false,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./*": "./src/*.ts"
+    "./debug": "./src/debug.ts"
   },
+  "files": ["dist"],
   "dependencies": {
     "@flatkit/engine": "workspace:*",
     "@flatkit/types": "workspace:*"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json"
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json",
+    "prepublishOnly": "pnpm build"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "main": "./dist/index.js",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./debug": {
+        "types": "./dist/debug.d.ts",
+        "import": "./dist/debug.js"
+      }
+    }
   }
 }

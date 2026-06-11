@@ -3,7 +3,9 @@
 //  Importable on its own, without anything from the editor. The played format = the FlatInk `Doc` JSON.
 // -----------------------------------------------------------------------------
 export { FlatPlayer, sameOriginAssetResolver, type PlayerOptions } from './player'
-export { playHeadless, type PlayResult, type TraceStep, type Gesture } from './headless'
+// `Gesture` stays here (FlatPlayer.stopRecording returns Gesture[]). The headless replay tools
+// (playHeadless, trace) live under `@flatkit/player/debug` — not needed for plain playback.
+export type { Gesture } from './player'
 export { renderLayers, renderItems, regionPath, applyTransform } from './drawScene'
 export { evaluateTimeline, resolveInstanceFrame } from '@flatkit/engine/timeline'
 export { resolveLayerAt } from '@flatkit/engine/cel'
