@@ -1,6 +1,7 @@
 # flatkit
 
 [![CI](https://github.com/zwykstudio/flatkit/actions/workflows/ci.yml/badge.svg)](https://github.com/zwykstudio/flatkit/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **The open language, compiler, and player for the [FlatInk](http://flatink.zwyk-studio.com/) animation format** — a modern, web-native take on the "one file that just plays" idea behind the old SWF.
 
@@ -55,7 +56,10 @@ import { FlatPlayer } from '@flatkit/player'
 const player = new FlatPlayer(canvas, doc, { autoplay: true })
 ```
 
-See [`examples/cli`](examples/cli) for an end-to-end project, and [`docs/dsl-gotchas.md`](docs/dsl-gotchas.md) for the hands-on DSL reference (everything learned the hard way, then fixed or written down).
+**Learn the DSL** in [`docs/`](docs/) — a guided set from [getting started](docs/getting-started.md) to
+[scene & drawing](docs/scene-and-drawing.md), [behavior & interactions](docs/behavior-and-interactions.md),
+[expressions & stdlib](docs/expressions-and-stdlib.md), and the [`flatc` tooling](docs/tooling.md). See
+[`examples/cli`](examples/cli) for an end-to-end project.
 
 ## Development
 

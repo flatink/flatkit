@@ -1,8 +1,9 @@
-# FlatInk DSL — gotchas & cheat sheet
+# FlatInk DSL — gotchas & best practices (appendix)
 
-> Reference page for writing reliable `.flatink` files (by hand or with an LLM). Everything
-> below was learned the hard way on a real production pipeline, then fixed in the engine or
-> documented here.
+> **New here?** Start with the [documentation index](README.md) and the
+> [getting-started guide](getting-started.md). This page is the **appendix**: hard-won pitfalls and
+> sharp edges learned on a real production pipeline, then fixed in the engine or written down here.
+> Skim it once you know the basics.
 
 ## Mental model
 
