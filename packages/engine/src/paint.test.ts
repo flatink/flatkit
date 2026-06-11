@@ -1,20 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import {
-  bakePaint,
-  cssPreview,
-  defaultGradient,
-  lerpPaint,
-  lerpTint,
-  paintEquals,
-  paintKey,
-  primaryColor,
-  solid,
-  translatePaintBox,
-  type Paint,
-} from './paint'
+import { defaultGradient, lerpPaint, lerpTint, paintEquals, paintKey, solid, type Paint } from './paint'
 import { hexToHsv, hsvToHex, normalizeHex } from './color'
-
-const box = { minX: 0, minY: 0, maxX: 100, maxY: 100 }
 
 describe('paint', () => {
   it('equality by key: same solids merge, different paints do not', () => {
@@ -29,37 +15,6 @@ describe('paint', () => {
 
   it('a gradient and a solid never share the same key', () => {
     expect(paintKey(solid('#e63946'))).not.toBe(paintKey(defaultGradient('linear')))
-  })
-
-  it('primaryColor returns the fallback color', () => {
-    expect(primaryColor(solid('#abcdef'))).toBe('#abcdef')
-    expect(primaryColor(defaultGradient('radial', '#111111', '#222222'))).toBe('#111111')
-  })
-
-  it('cssPreview produces a valid CSS gradient', () => {
-    expect(cssPreview(solid('#fff'))).toBe('#fff')
-    expect(cssPreview(defaultGradient('linear'))).toMatch(/^linear-gradient\(90deg,/)
-    expect(cssPreview(defaultGradient('radial'))).toMatch(/^radial-gradient\(circle/)
-  })
-
-  it('bakePaint anchors the box (and does not affect a solid)', () => {
-    const baked = bakePaint(defaultGradient('linear'), box)
-    expect(baked.type === 'linear' && baked.box).toEqual(box)
-    expect(bakePaint(solid('#fff'), box)).toEqual(solid('#fff'))
-  })
-
-  it('the box is part of the key: two pieces anchored the same are continuous', () => {
-    const a = bakePaint(defaultGradient('linear'), box)
-    const b = bakePaint(defaultGradient('linear'), box)
-    expect(paintEquals(a, b)).toBe(true) // same box -> continuous gradient
-    const c = bakePaint(defaultGradient('linear'), { ...box, maxX: 200 })
-    expect(paintEquals(a, c)).toBe(false)
-  })
-
-  it('translatePaintBox offsets the box', () => {
-    const baked = bakePaint(defaultGradient('radial'), box)
-    const moved = translatePaintBox(baked, 10, 5)
-    expect(moved.type === 'radial' && moved.box).toEqual({ minX: 10, minY: 5, maxX: 110, maxY: 105 })
   })
 })
 

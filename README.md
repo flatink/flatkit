@@ -72,4 +72,4 @@ A `.flatink` program or a `.flatpack` document is **untrusted input**. The toolc
 
 ## License
 
-[MIT](LICENSE) © [Zwyk Studio](http://flatink.zwyk-studio.com/)
+[MIT](LICENSE) © Zwyk Studio

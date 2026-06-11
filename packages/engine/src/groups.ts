@@ -2,21 +2,13 @@
 //  groups.ts — containers (one-off groups & symbol instances): create, ungroup, measure, hit-test,
 //  navigate. Everything resolves symbols via `doc`.
 // ─────────────────────────────────────────────────────────────────────────────
-import type { Doc, EditFrame, Group, Instance, Item, Layer, Point, Region, Text, Path, Subpath } from '@flatkit/types'
+import type { Doc, Group, Instance, Item, Layer, Point, Region, Text, Path, Subpath } from '@flatkit/types'
 import { apply, compose, IDENTITY, invert, rotationOf, type Transform } from './transform'
-import { containerLayers, groupsOf, isContainer, isGroup, isInstance, isText, isImage, isRegion, makeLayer, sceneRootLayers } from './layers'
+import { containerLayers, isContainer, isGroup, isInstance, isText, isImage, isRegion } from './layers'
 import { pointInRegion } from './regionHit'
 import { transformPath } from './path'
 import { combineBBox, regionBBox, type BBox } from './bbox'
 import { resolveLayerAt } from './cel'
-import { uid } from './id'
-
-export function makeGroup(name: string, layers: Layer[]): Group {
-  return { id: uid(), kind: 'group', name, transform: IDENTITY, layers }
-}
-export function groupFromRegions(name: string, regions: Region[]): Group {
-  return makeGroup(name, [makeLayer('Layer 1', regions)])
-}
 
 /** Apply a transform to a region's path (+ the gradient box & angle). */
 export function transformRegion(t: Transform, r: Region): Region {
@@ -39,14 +31,6 @@ export function transformRegion(t: Transform, r: Region): Region {
         : { ...paint, box }
   }
   return { ...r, path, paint }
-}
-
-/** Ungroup (1 level): items brought back to parent coords, transform baked. */
-export function ungroup(group: Group): Item[] {
-  const t = group.transform
-  return group.layers
-    .flatMap((l) => l.items)
-    .map((it) => (isContainer(it) || isText(it) || isImage(it) ? { ...it, transform: compose(t, it.transform) } : transformRegion(t, it)))
 }
 
 /**
@@ -81,11 +65,6 @@ export function containerBBox(doc: Doc, container: Group | Instance, frame = 0, 
   const start = isInstance(container) ? new Set([container.symbolId]) : new Set<string>()
   walk(containerLayers(doc, container), base, frame, start)
   return combineBBox(boxes)
-}
-
-/** LOCAL content box of a container (before its own transform) — an oriented frame. */
-export function localContainerBBox(doc: Doc, container: Group | Instance): BBox | null {
-  return containerBBox(doc, container, 0, IDENTITY)
 }
 
 /** Bounding box of a transformed local box [0,0]–[w,h] (text, image). `outer` = the context. */
@@ -287,20 +266,3 @@ export function hitContext(doc: Doc, layers: Layer[], pt: Point): { item: Item; 
   return null
 }
 
-/** Composed transform of the current context (groups after the last symbol). */
-export function contextTransform(doc: Doc, editPath: EditFrame[]): Transform {
-  let lastSym = -1
-  for (let i = editPath.length - 1; i >= 0; i--) if (editPath[i].kind === 'symbol') {
-    lastSym = i
-    break
-  }
-  let t = IDENTITY
-  let layers = sceneRootLayers(doc, editPath)
-  for (const f of editPath.slice(lastSym + 1)) {
-    const grp = layers.flatMap(groupsOf).find((g) => g.id === (f as { id: string }).id)
-    if (!grp) break
-    t = compose(t, grp.transform)
-    layers = grp.layers
-  }
-  return t
-}

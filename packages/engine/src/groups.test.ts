@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { Region, Group, Layer, Doc } from '@flatkit/types'
 import { apply, IDENTITY, invert, compose, translation } from './transform'
-import { containerBBox, groupFromRegions, pointInContainer, ungroup, dropZoneBounds } from './groups'
-import { regionBBox } from './bbox'
+import { containerBBox, pointInContainer, dropZoneBounds } from './groups'
 import { polygonsToPath } from './path'
 
 const emptyDoc: Doc = { width: 100, height: 100, layers: [], symbols: [] }
@@ -14,6 +13,9 @@ function rectRegion(id: string, x: number, y: number, w: number, h: number): Reg
     path: polygonsToPath([[{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }]]),
   }
 }
+
+/** Plain group fixture (one-off group from regions) — groupFromRegions itself lives in @flatink/core now. */
+const plainGroup = (regions: Region[]): Group => ({ id: 'g', kind: 'group', name: 'G', transform: IDENTITY, layers: [{ id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: regions }] })
 
 describe('transform (matrix)', () => {
   it('apply and invert are reciprocal', () => {
@@ -31,22 +33,8 @@ describe('transform (matrix)', () => {
 })
 
 describe('groups', () => {
-  it('groupFromRegions keeps coords (identity transform) and measures the box', () => {
-    const g = groupFromRegions('G', [rectRegion('a', 0, 0, 50, 50)])
-    expect(g.transform).toEqual(IDENTITY)
-    expect(containerBBox(emptyDoc, g)).toEqual({ minX: 0, minY: 0, maxX: 50, maxY: 50 })
-  })
-
-  it('ungroup bakes the transform into the regions', () => {
-    const g = groupFromRegions('G', [rectRegion('a', 0, 0, 50, 50)])
-    g.transform = translation(100, 20)
-    const items = ungroup(g)
-    expect(items.length).toBe(1)
-    expect(regionBBox(items[0] as Region)).toEqual({ minX: 100, minY: 20, maxX: 150, maxY: 70 })
-  })
-
   it('pointInGroup accounts for the transform', () => {
-    const g = groupFromRegions('G', [rectRegion('a', 0, 0, 50, 50)])
+    const g = plainGroup([rectRegion('a', 0, 0, 50, 50)])
     g.transform = translation(100, 0)
     expect(pointInContainer(emptyDoc, g, { x: 120, y: 25 })).toBe(true) // inside the moved rect
     expect(pointInContainer(emptyDoc, g, { x: 20, y: 25 })).toBe(false) // at the old position
