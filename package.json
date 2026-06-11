@@ -1,0 +1,36 @@
+{
+  "name": "flatkit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The open language, compiler and player for the FlatInk animation format.",
+  "license": "MIT",
+  "packageManager": "pnpm@10.15.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "lint": "eslint . --max-warnings 0",
+    "check:english": "node scripts/check-english.mjs",
+    "verify": "pnpm run lint && pnpm run check:english && pnpm run typecheck && pnpm run test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.0.0",
+    "eslint": "^10.4.1",
+    "globals": "^17.6.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.60.1",
+    "vitest": "^4.1.8",
+    "skia-canvas": "^3.0.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "skia-canvas"
+    ]
+  }
+}

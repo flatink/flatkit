@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same branch/PR.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04 # pinned (not -latest) so the runner image can't shift under us
+    # Third-party actions are pinned to a full commit SHA (supply-chain hardening): a moved tag can no
+    # longer swap the code we run. The trailing comment tracks the human-readable version; Dependabot
+    # (.github/dependabot.yml) bumps both the SHA and the comment together.
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false # no git push from CI -> do not leave the token in .git/config
+
+      # pnpm before setup-node so the node cache can use the pnpm store.
+      # The version is read from the root package.json "packageManager" field.
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # Optional deps (skia-canvas, native, debug-only --render) are left to pnpm's
+      # build-script allowlist: their binaries do not build in CI, so the --render test
+      # self-skips. Everything else installs deterministically from the lockfile.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Fail the build on a known HIGH/critical advisory in the dependency tree.
+      - name: Audit dependencies
+        run: pnpm audit --audit-level high
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: English-only guard
+        run: pnpm run check:english
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test
+
+      # Smoke-test the wired CLI binary end to end.
+      - name: flatc CLI smoke
+        run: node packages/compiler/bin/flatc.mjs --help

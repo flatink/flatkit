@@ -1,0 +1,33 @@
+{
+  "name": "@flatkit/compiler",
+  "version": "0.0.0",
+  "description": "The FlatInk language (parser + AST) and compiler (.flatink → .flatpack). Ships the flatc CLI.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "bin": {
+    "flatc": "./bin/flatc.mjs"
+  },
+  "dependencies": {
+    "@flatkit/engine": "workspace:*",
+    "@flatkit/player": "workspace:*",
+    "@flatkit/types": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "skia-canvas": "^3.0.8"
+  },
+  "peerDependenciesMeta": {
+    "skia-canvas": {
+      "optional": true
+    }
+  }
+}

@@ -1,0 +1,5 @@
+symbol "Star" {
+  layer "c" {
+    path "M0 -20L6 -6L20 -6L9 3L13 18L0 9L-13 18L-9 3L-20 -6L-6 -6Z" fill #ffd24d
+  }
+}

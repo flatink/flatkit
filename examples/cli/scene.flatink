@@ -1,0 +1,27 @@
+size 480 320
+background #0a0e1c
+use "collision"
+use "physics"
+use "shapes"
+asset "logo" "logo.svg" image
+var score = 0
+
+scene {
+  layer "game" {
+    instance "Hero" as "player" at 240,160
+    instance "Star" as "deco" at 400,60
+    image "logo" 80 80 at 40,40
+  }
+}
+
+every frame {
+  score = tick(score)
+}
+
+object "player" {
+  when clicked {
+    go to frame 1 and play
+  }
+
+  x = mouse.x
+}

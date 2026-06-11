@@ -1,0 +1,16 @@
+{
+  "name": "@flatkit/types",
+  "version": "0.0.0",
+  "description": "Shared types for the FlatInk format (Doc, Layer, Item, …). The leaf of the dependency graph.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

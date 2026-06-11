@@ -1,0 +1,6 @@
+symbol "Hero" {
+  layer "body" {
+    path "M-24 -24L24 -24L24 24L-24 24Z" fill #ff5a5f
+    path "M-8 -6L8 -6L8 6L-8 6Z" fill #10141c
+  }
+}

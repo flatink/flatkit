@@ -1,0 +1,32 @@
+# Keeps the supply chain current: bumps the SHA-pinned GitHub Actions (and their version comment) and the
+# npm/pnpm dependencies, so pinning stays a security control rather than a way to rot on old versions.
+version: 2
+updates:
+  # Third-party GitHub Actions pinned by SHA in .github/workflows/*. Dependabot updates the SHA + comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # npm dependencies (pnpm workspace, resolved from the root pnpm-lock.yaml).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: deps
+      prefix-development: deps-dev
+    groups:
+      # One PR for routine minor/patch bumps; majors stay separate for individual review.
+      dev-minor-patch:
+        dependency-type: development
+        update-types: ["minor", "patch"]
+      prod-minor-patch:
+        dependency-type: production
+        update-types: ["minor", "patch"]
