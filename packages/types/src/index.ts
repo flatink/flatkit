@@ -385,6 +385,8 @@ export type Asset = {
   name: string
   mime: string
   data: string // data:URI (base64)
+  family?: string // font assets only: family alias used when registering the face for headless `--render`
+  //                  (overrides the file's intrinsic name-table family, which variable-font statics often get wrong)
 }
 
 export type Layer = {

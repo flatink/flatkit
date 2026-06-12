@@ -23,8 +23,12 @@ interface SkiaCanvas {
   Canvas: new (w: number, h: number) => HTMLCanvasElement & { toBuffer(fmt: string): Promise<Uint8Array> }
   loadImage: (src: string) => Promise<unknown>
   Path2D: typeof Path2D
-  /** Global font registry — `use(paths)` reads each file's intrinsic family from its name table. */
-  FontLibrary: { use(fontPaths: readonly string[]): Array<{ family: string }> }
+  /** Global font registry. `use(paths)` reads each file's intrinsic name-table family; the 2-arg
+   *  `use(family, paths)` form FORCES that alias (fixes variable-font statics whose name table lies). */
+  FontLibrary: {
+    use(fontPaths: readonly string[]): Array<{ family: string }>
+    use(family: string, fontPaths: readonly string[]): Array<{ family: string }>
+  }
 }
 
 /** Map a font asset's MIME (or its data-URI) to a file extension skia-canvas can parse. */
@@ -47,7 +51,10 @@ function registerFonts(doc: Doc, FontLibrary: SkiaCanvas['FontLibrary']): { dir:
     const file = join(dir, a.id.replace(/[^\w.-]/g, '_') + ext)
     try {
       writeFileSync(file, Buffer.from(b64, 'base64'))
-      for (const f of FontLibrary.use([file])) if (!families.includes(f.family)) families.push(f.family)
+      // `family` alias (from `asset … font "Name"`) forces the registered name, so the face matches the
+      // text's `font "Name"` even when the file's own name table is wrong (variable-font static export).
+      const used = a.family ? FontLibrary.use(a.family, [file]) : FontLibrary.use([file])
+      for (const f of used) if (!families.includes(f.family)) families.push(f.family)
     } catch (e) {
       process.stderr.write(`flatc: skipped font asset "${a.id}" (${a.mime}): ${(e as Error).message}\n`)
     }

@@ -277,7 +277,7 @@ export function printProgram(doc: Program): string {
   const tl = doc.timeline
   if (tl && (tl.fps !== 24 || tl.durationFrames !== 60)) out += `timeline ${n(tl.fps)} ${n(tl.durationFrames)}\n`
   for (const name of doc.imports ?? []) out += `use ${q(name)}\n`
-  for (const a of doc.assets ?? []) out += `asset ${q(a.id)} ${q(a.name)} ${a.kind}\n`
+  for (const a of doc.assets ?? []) out += `asset ${q(a.id)} ${q(a.name)} ${a.kind}${a.family ? ` ${q(a.family)}` : ''}\n`
   for (const [name, val] of Object.entries(doc.variables ?? {})) out += `var ${name} = ${printVarValue(val)}\n`
   for (const s of doc.timeline?.sounds ?? []) out += `sound ${q(s.assetId)} at ${n(s.startFrame)}${s.gain != null && s.gain !== 1 ? ` gain ${n(s.gain)}` : ''}${s.loop ? ' loop' : ''}\n`
   out += `\nscene {\n${printLayers(doc.layers, 1, ctx)}\n}\n`
@@ -890,7 +890,12 @@ class FlatParser {
       else if (this.is('use')) { this.next(); imports.push(this.str()) }
       else if (this.is('var')) { this.next(); const name = this.next().v; this.eat('='); variables[name] = this.varValue() }
       else if (this.is('timeline')) { const tl = this.timeline(); stage = { fps: tl.fps, durationFrames: tl.durationFrames } }
-      else if (this.is('asset')) { this.next(); const id = this.str(); const path = this.str(); const kind = this.next().v as Asset['kind']; assets.push({ id, name: path, kind, mime: '', data: path }) }
+      else if (this.is('asset')) {
+        this.next(); const id = this.str(); const path = this.str(); const kind = this.next().v as Asset['kind']
+        // Optional family alias for `font` assets: `asset "id" "f.woff2" font "Quicksand"`.
+        const family = kind === 'font' && this.peek()?.k === 'str' ? this.str() : undefined
+        assets.push({ id, name: path, kind, mime: '', data: path, ...(family ? { family } : {}) })
+      }
       else if (this.is('sound')) {
         this.next(); const assetId = this.str(); this.eat('at'); const startFrame = this.num()
         let gain: number | undefined, loop = false

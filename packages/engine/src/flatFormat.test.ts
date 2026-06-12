@@ -247,6 +247,26 @@ describe('flatFormat — .flatink program', () => {
     expect((parsed.layers[0].items[0] as Instance).symbolId).toBe('@Hero')
   })
 
+  it('asset directive: kinds + optional font family alias round-trip', () => {
+    const prog: Program = {
+      width: 100, height: 100, symbols: [], layers: [],
+      assets: [
+        { id: 'logo', name: 'logo.svg', kind: 'image', mime: '', data: 'logo.svg' },
+        { id: 'qs', name: 'Quicksand.woff2', kind: 'font', mime: '', data: 'Quicksand.woff2', family: 'Quicksand' },
+        { id: 'plain', name: 'Inter.woff2', kind: 'font', mime: '', data: 'Inter.woff2' },
+      ],
+    }
+    const text = printProgram(prog)
+    expect(text).toContain('asset "logo" "logo.svg" image')
+    expect(text).toContain('asset "qs" "Quicksand.woff2" font "Quicksand"') // alias printed after the kind
+    expect(text).toContain('asset "plain" "Inter.woff2" font\n') // no alias → no trailing string
+    expect(printProgram(parseProgram(text))).toBe(text) // stable round-trip
+
+    const parsed = parseProgram(text)
+    expect(parsed.assets?.map((a) => a.family)).toEqual([undefined, 'Quicksand', undefined])
+    expect(parsed.assets?.[0].kind).toBe('image') // a non-font kind never swallows a following string
+  })
+
   it('mask / guide / folder: nested layers (parent relationship) + round-trip', () => {
     const reg = (d: string, color = '#000000') => ({ id: 'r', color, path: parsePathData(d) })
     const L = (id: string, name: string, items: ReturnType<typeof reg>[], extra: object) =>

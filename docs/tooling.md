@@ -47,6 +47,11 @@ flatc <file> --render -o out.png [--frame N] [--at k=v[,k2=v2]] [--steps N] [--s
   capture, so text uses the authored face (matched by the font's intrinsic family name — the same name
   you put in `text … font "…"`) instead of a host fallback. `.woff2/.woff/.ttf/.otf` are all supported;
   flatc prints the registered families to stderr.
+- **Font family alias**: add a quoted name after `font` — `asset "id" "font.woff2" font "Quicksand"` —
+  to register the face under *that* family instead of the file's intrinsic one. Use it when a font's
+  name table is wrong (e.g. a variable-font static export skia reads as `… Thin/Light`), so the alias
+  matches the `text … font "Quicksand"` you authored. Browsers ignore it (they bind families via
+  `FontFace`); it only steers headless `--render`.
 
 ## Media packing — `--assets`
 
