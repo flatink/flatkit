@@ -71,3 +71,15 @@
     auto-injects `use "feedback"`. One line per element. Settle-bounce deferred (needs a release
     timestamp → not stateless). Tests: `cel.test.ts`, `playerFeedback.test.ts`, `stdlib.test.ts`,
     `flatFormat.test.ts` (feedback sugar).
+
+## Packaging
+
+11. **Browser-ready build of `@flatkit/player`** — the published `dist/index.js` uses bare
+    cross-package imports (`@flatkit/engine/cel`, `@flatkit/types`, chunk splits), so a browser
+    cannot load it directly: every consumer who embeds the player in a plain `<script
+    type="module">` or a static site must run a bundler first (flatink-edu ships a 16ms esbuild
+    `build-vendor` step for exactly this). Since the player is meant to be embedded in
+    third-party pages, ship an additional **self-contained browser bundle** (e.g.
+    `@flatkit/player/browser` → one ESM/IIFE file with engine+types inlined, zero bare imports).
+    Then consumers `cp` it instead of bundling. Low effort (an extra esbuild target in the
+    player's own build), removes a real friction for the primary use case.
