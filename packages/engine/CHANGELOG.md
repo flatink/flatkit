@@ -1,5 +1,16 @@
 # @flatkit/engine
 
+## 0.4.0
+
+### Minor Changes
+
+- Font family alias for headless `--render`: `asset "id" "font.woff2" font "Quicksand"` registers the embedded face under the declared family instead of the file's intrinsic name-table family. Fixes variable-font static exports whose name table is wrong (skia would otherwise read them as `… Thin/Light` and fall back). Browsers are unaffected (they bind families via `FontFace`); the alias only steers `flatc --render`.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @flatkit/types@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes
