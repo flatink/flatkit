@@ -1,6 +1,6 @@
 {
   "name": "@flatkit/player",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The lightweight FlatInk player: load a .flatpack and play it in a <canvas>. No editor, no heavy deps.",
   "license": "MIT",
   "author": "Zwyk Studio",
@@ -11,7 +11,14 @@
     "directory": "packages/player"
   },
   "bugs": "https://github.com/zwykstudio/flatkit/issues",
-  "keywords": ["flatink", "flatpack", "animation", "canvas", "player", "interactive"],
+  "keywords": [
+    "flatink",
+    "flatpack",
+    "animation",
+    "canvas",
+    "player",
+    "interactive"
+  ],
   "type": "module",
   "sideEffects": false,
   "main": "./src/index.ts",
@@ -20,7 +27,9 @@
     ".": "./src/index.ts",
     "./debug": "./src/debug.ts"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "dependencies": {
     "@flatkit/engine": "workspace:*",
     "@flatkit/types": "workspace:*"

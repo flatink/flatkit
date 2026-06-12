@@ -1,6 +1,6 @@
 {
   "name": "@flatkit/compiler",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The FlatInk language (parser + AST) and compiler (.flatink → .flatpack). Ships the flatc CLI.",
   "license": "MIT",
   "author": "Zwyk Studio",
@@ -11,7 +11,14 @@
     "directory": "packages/compiler"
   },
   "bugs": "https://github.com/zwykstudio/flatkit/issues",
-  "keywords": ["flatink", "flatpack", "compiler", "cli", "flatc", "animation"],
+  "keywords": [
+    "flatink",
+    "flatpack",
+    "compiler",
+    "cli",
+    "flatc",
+    "animation"
+  ],
   "type": "module",
   "sideEffects": false,
   "main": "./src/index.ts",
@@ -22,7 +29,10 @@
   "bin": {
     "flatc": "./bin/flatc.mjs"
   },
-  "files": ["dist", "bin"],
+  "files": [
+    "dist",
+    "bin"
+  ],
   "dependencies": {
     "@flatkit/engine": "workspace:*",
     "@flatkit/player": "workspace:*",

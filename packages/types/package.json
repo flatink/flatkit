@@ -1,6 +1,6 @@
 {
   "name": "@flatkit/types",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Shared types for the FlatInk format (Doc, Layer, Item, …). The leaf of the dependency graph.",
   "license": "MIT",
   "author": "Zwyk Studio",
@@ -11,7 +11,12 @@
     "directory": "packages/types"
   },
   "bugs": "https://github.com/zwykstudio/flatkit/issues",
-  "keywords": ["flatink", "flatpack", "animation", "types"],
+  "keywords": [
+    "flatink",
+    "flatpack",
+    "animation",
+    "types"
+  ],
   "type": "module",
   "sideEffects": false,
   "main": "./src/index.ts",
@@ -19,7 +24,9 @@
   "exports": {
     ".": "./src/index.ts"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc -p tsconfig.json",

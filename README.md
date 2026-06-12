@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/zwykstudio/flatkit/actions/workflows/ci.yml/badge.svg)](https://github.com/zwykstudio/flatkit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![npm @flatkit/player](https://img.shields.io/npm/v/@flatkit/player?label=%40flatkit%2Fplayer)](https://www.npmjs.com/package/@flatkit/player)
+[![npm @flatkit/compiler](https://img.shields.io/npm/v/@flatkit/compiler?label=%40flatkit%2Fcompiler)](https://www.npmjs.com/package/@flatkit/compiler)
 
 **The open language, compiler, and player for the [FlatInk](http://flatink.zwyk-studio.com/) animation format** — a modern, web-native take on the "one file that just plays" idea behind the old SWF.
 

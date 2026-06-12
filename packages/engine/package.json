@@ -1,6 +1,6 @@
 {
   "name": "@flatkit/engine",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pure FlatInk engine: model evaluation, expressions, timeline, geometry, layers. No canvas, no clipper. Shared by the player and the compiler.",
   "license": "MIT",
   "author": "Zwyk Studio",
@@ -11,13 +11,21 @@
     "directory": "packages/engine"
   },
   "bugs": "https://github.com/zwykstudio/flatkit/issues",
-  "keywords": ["flatink", "flatpack", "animation", "timeline", "geometry"],
+  "keywords": [
+    "flatink",
+    "flatpack",
+    "animation",
+    "timeline",
+    "geometry"
+  ],
   "type": "module",
   "sideEffects": false,
   "exports": {
     "./*": "./src/*.ts"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "dependencies": {
     "@flatkit/types": "workspace:*"
   },
