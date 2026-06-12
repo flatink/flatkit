@@ -335,6 +335,7 @@ export type Text = {
   align: 'left' | 'center' | 'right'
   lineHeight: number // multiplier (e.g. 1.25)
   color: string // fill (solid) — `#rrggbb(aa)`
+  stroke?: Stroke // text outline, drawn BEHIND the fill (so the fill keeps its full weight); absent = none
   weight?: number // 400 / 700 (absent = 400)
   italic?: boolean
   box: { w: number; h: number } // measured local extent (max line width × total height)

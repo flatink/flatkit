@@ -43,6 +43,10 @@ flatc <file> --render -o out.png [--frame N] [--at k=v[,k2=v2]] [--steps N] [--s
 - `--at score=3,step=2` forces variables → capture a precise state.
 - **`--steps N`** runs N fixed simulation steps (`every frame`, 60 Hz) *before* capture, so a stateful
   act unfolds on its own — no need to force every derived ramp variable by hand.
+- **Embedded fonts render too**: any `asset "id" "font.woff2" font` is registered with skia before
+  capture, so text uses the authored face (matched by the font's intrinsic family name — the same name
+  you put in `text … font "…"`) instead of a host fallback. `.woff2/.woff/.ttf/.otf` are all supported;
+  flatc prints the registered families to stderr.
 
 ## Media packing — `--assets`
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { parseProgramFull } from '@flatkit/engine/flatFormat'
 import { resolveLayerAt } from '@flatkit/engine/cel'
-import { itemsHaveGlyph, wrapLines, isRenderStatic, compositeFiltered } from './drawScene'
+import { itemsHaveGlyph, wrapLines, isRenderStatic, compositeFiltered, renderItems } from './drawScene'
 
 // Mask clipping routing: TEXT/IMAGE matter -> alpha clipping (compositeMasked);
 // vector matter -> fast clip `ctx.clip` (common case, unchanged).
@@ -81,6 +81,42 @@ describe('drawScene -- wrapLines (word-wrap)', () => {
   })
   it('a word wider than maxW stays alone on its line (no intra-word break)', () => {
     expect(wrapLines(ctx, 'short enormouslylong short', 60)).toEqual(['short', 'enormouslylong', 'short'])
+  })
+})
+
+describe('drawScene -- text stroke (outline) rendering', () => {
+  // Recording fake 2D context: counts the text-drawing calls and the last stroke style applied.
+  const mkCtx = () => {
+    const calls: { fillText: string[]; strokeText: string[] } = { fillText: [], strokeText: [] }
+    const ctx = {
+      calls, lineWidth: 0, lineCap: '', lineJoin: '', miterLimit: 0, strokeStyle: '', fillStyle: '',
+      font: '', textAlign: '', textBaseline: '', globalAlpha: 1,
+      save() {}, restore() {}, transform() {}, setLineDash() {},
+      getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+      measureText: (s: string) => ({ width: s.length * 10 }),
+      fillText: (t: string) => calls.fillText.push(t),
+      strokeText: (t: string) => calls.strokeText.push(t),
+    }
+    return ctx as unknown as CanvasRenderingContext2D & { calls: typeof calls }
+  }
+  const draw = (src: string) => {
+    const doc = parseProgramFull(src)
+    const items = resolveLayerAt(doc.layers[0], 0, {})
+    const ctx = mkCtx()
+    renderItems(ctx, doc, items, 0, null, new Set(), { fps: 60 })
+    return ctx.calls
+  }
+
+  it('stroked text strokes BEFORE filling each line (outline behind the fill)', () => {
+    const calls = draw('size 100 100\nscene {\n  layer "c" {\n    text "A\\nB" at 0,0 font "sans-serif" size 40 color #ffd23f stroke #e23b3b 6 join round\n  }\n}')
+    expect(calls.strokeText).toEqual(['A', 'B']) // one stroke per line
+    expect(calls.fillText).toEqual(['A', 'B'])   // one fill per line
+  })
+
+  it('plain text (no stroke) never calls strokeText', () => {
+    const calls = draw('size 100 100\nscene {\n  layer "c" {\n    text "Hi" at 0,0 font "sans-serif" size 40 color #ffffff\n  }\n}')
+    expect(calls.strokeText).toEqual([])
+    expect(calls.fillText).toEqual(['Hi'])
   })
 })
 

@@ -190,6 +190,29 @@ describe('flatFormat — .flat serializer', () => {
     expect(pose.id).toBe(img.id) // resolved by NAME (no orphan "@photo")
     expect(pose.id.startsWith('@')).toBe(false)
   })
+
+  it('text stroke (outline): solid + gradient paint, cap/join/dash + stable round-trip', () => {
+    const sym: SymbolDef = {
+      id: 's', name: 'S', layers: [{
+        id: 'l', name: 'L', visible: true, locked: false, opacity: 1,
+        items: [
+          { id: 't1', kind: 'text', name: 'a', transform: T(0, 0), content: 'Hi', font: 'sans-serif', size: 40, align: 'left', lineHeight: 1.2, color: '#ffd23f', box: { w: 80, h: 40 }, stroke: { width: 6, paint: { type: 'solid', color: '#e23b3b' }, cap: 'round', join: 'round', miterLimit: 8, dash: [4, 2] } } as Text,
+          { id: 't2', kind: 'text', name: 'b', transform: T(0, 50), content: 'Yo', font: 'sans-serif', size: 40, align: 'left', lineHeight: 1.2, color: '#ffffff', box: { w: 80, h: 40 }, stroke: { width: 3, paint: { type: 'linear', angle: 90, stops: [{ offset: 0, color: '#ff0000' }, { offset: 1, color: '#0000ff' }] } } } as Text,
+        ],
+      }],
+    }
+    const text = printFlat([sym])
+    expect(text).toContain('color #ffd23f stroke #e23b3b 6 cap round join round miter 8 dash 4,2')
+    expect(text).toContain('stroke linear(') // gradient paint on the outline
+    expect(printFlat(parseFlat(text))).toBe(text) // stable round-trip
+
+    const back = parseFlat(text)[0]
+    const t1 = back.layers[0].items[0] as Text
+    expect(t1.stroke).toMatchObject({ width: 6, cap: 'round', join: 'round', miterLimit: 8, dash: [4, 2] })
+    expect(t1.stroke!.paint).toMatchObject({ type: 'solid', color: '#e23b3b' })
+    const t2 = back.layers[0].items[1] as Text
+    expect(t2.stroke!.paint.type).toBe('linear')
+  })
 })
 
 describe('flatFormat — .flatink program', () => {

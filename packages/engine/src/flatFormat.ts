@@ -142,6 +142,13 @@ function printText(t: Text, withExpr: boolean): string {
   // `as` printed only if the author set the id explicitly (flag set at parse) — no guessing about the form.
   const asId = t.idExplicit ? ` as ${q(t.id)}` : ''
   let s = `text ${q(t.content)}${asId}${printTransform(t.transform)} font ${q(t.font)} size ${n(t.size)} align ${t.align} line ${n(t.lineHeight)} color ${t.color}`
+  if (t.stroke) {
+    s += ` stroke ${printPaint(t.stroke.paint)} ${n(t.stroke.width)}`
+    if (t.stroke.cap) s += ` cap ${t.stroke.cap}`
+    if (t.stroke.join) s += ` join ${t.stroke.join}`
+    if (t.stroke.miterLimit != null) s += ` miter ${n(t.stroke.miterLimit)}`
+    if (t.stroke.dash?.length) s += ` dash ${t.stroke.dash.map(n).join(',')}`
+  }
   if (t.weight && t.weight >= 700) s += ' bold'
   if (t.italic) s += ' italic'
   s += ` box ${n(t.box.w)} ${n(t.box.h)}`
@@ -1110,12 +1117,26 @@ class FlatParser {
     let font = 'sans-serif', size = 16, align: Text['align'] = 'left', lineHeight = 1.2, color = '#000000'
     let weight: number | undefined, italic = false, box = { w: 0, h: 0 }
     let wrap = false, bind: string | undefined, decimals: number | undefined
+    let stroke: Text['stroke']
     for (;;) {
       if (this.is('font')) { this.next(); font = this.str() }
       else if (this.is('size')) { this.next(); size = this.num() }
       else if (this.is('align')) { this.next(); align = this.str() as Text['align'] }
       else if (this.is('line')) { this.next(); lineHeight = this.num() }
       else if (this.is('color')) { this.next(); color = this.next().v }
+      else if (this.is('stroke')) {
+        // Mirrors the region stroke grammar: `stroke <paint> <width> [cap …] [join …] [miter …] [dash …]`.
+        this.next(); const sp = this.paint(); const w = this.num()
+        const st: NonNullable<Text['stroke']> = { width: w, paint: sp }
+        for (;;) {
+          if (this.is('cap')) { this.next(); st.cap = this.next()!.v as NonNullable<Text['stroke']>['cap'] }
+          else if (this.is('join')) { this.next(); st.join = this.next()!.v as NonNullable<Text['stroke']>['join'] }
+          else if (this.is('miter')) { this.next(); st.miterLimit = this.num() }
+          else if (this.is('dash')) { this.next(); const ds: number[] = [this.num()]; while (this.is(',')) { this.eat(','); ds.push(this.num()) } st.dash = ds }
+          else break
+        }
+        stroke = st
+      }
       else if (this.is('bold')) { this.next(); weight = 700 }
       else if (this.is('italic')) { this.next(); italic = true }
       else if (this.is('box')) { this.next(); box = { w: this.num(), h: this.num() } }
@@ -1125,7 +1146,7 @@ class FlatParser {
       else break
     }
     const a = this.poseAttrs()
-    return { id: id ?? uid('t'), kind: 'text', name: content || 'Text', ...(id !== undefined ? { idExplicit: true } : {}), transform, content, font, size, align, lineHeight, color, ...(weight ? { weight } : {}), ...(italic ? { italic } : {}), box, ...(wrap ? { wrap: true } : {}), ...(bind ? { bind } : {}), ...(decimals != null ? { decimals } : {}), ...leafAttrs(a), ...exprAttr(a) }
+    return { id: id ?? uid('t'), kind: 'text', name: content || 'Text', ...(id !== undefined ? { idExplicit: true } : {}), transform, content, font, size, align, lineHeight, color, ...(stroke ? { stroke } : {}), ...(weight ? { weight } : {}), ...(italic ? { italic } : {}), box, ...(wrap ? { wrap: true } : {}), ...(bind ? { bind } : {}), ...(decimals != null ? { decimals } : {}), ...leafAttrs(a), ...exprAttr(a) }
   }
   private image(): Image {
     this.eat('image')

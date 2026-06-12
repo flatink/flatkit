@@ -8,6 +8,9 @@
 // -----------------------------------------------------------------------------
 import { FlatPlayer } from '@flatkit/player'
 import type { Doc } from '@flatkit/types'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 export type RenderOpts = { frame?: number; vars?: Record<string, number>; scale?: number; steps?: number }
 
@@ -20,6 +23,36 @@ interface SkiaCanvas {
   Canvas: new (w: number, h: number) => HTMLCanvasElement & { toBuffer(fmt: string): Promise<Uint8Array> }
   loadImage: (src: string) => Promise<unknown>
   Path2D: typeof Path2D
+  /** Global font registry — `use(paths)` reads each file's intrinsic family from its name table. */
+  FontLibrary: { use(fontPaths: readonly string[]): Array<{ family: string }> }
+}
+
+/** Map a font asset's MIME (or its data-URI) to a file extension skia-canvas can parse. */
+const FONT_EXT: Record<string, string> = {
+  'font/woff2': '.woff2', 'font/woff': '.woff', 'font/ttf': '.ttf', 'font/otf': '.otf',
+  'font/collection': '.ttc', 'application/font-woff': '.woff', 'application/x-font-ttf': '.ttf',
+}
+
+/** Registers every embedded `font` asset with skia's FontLibrary so headless text uses the authored
+ *  faces (not host fallbacks). Fonts are baked as base64 data-URIs by flatc; FontLibrary only reads
+ *  FILE paths, so we materialize each into a temp dir, register it, and return that dir for cleanup. */
+function registerFonts(doc: Doc, FontLibrary: SkiaCanvas['FontLibrary']): { dir: string | null; families: string[] } {
+  const fonts = (doc.assets ?? []).filter((a) => a.kind === 'font' && /^data:/.test(a.data ?? ''))
+  if (fonts.length === 0) return { dir: null, families: [] }
+  const dir = mkdtempSync(join(tmpdir(), 'flatc-fonts-'))
+  const families: string[] = []
+  for (const a of fonts) {
+    const b64 = a.data.slice(a.data.indexOf(',') + 1)
+    const ext = FONT_EXT[a.mime] ?? `.${(a.mime.split('/')[1] || 'ttf').replace(/[^\w]/g, '')}`
+    const file = join(dir, a.id.replace(/[^\w.-]/g, '_') + ext)
+    try {
+      writeFileSync(file, Buffer.from(b64, 'base64'))
+      for (const f of FontLibrary.use([file])) if (!families.includes(f.family)) families.push(f.family)
+    } catch (e) {
+      process.stderr.write(`flatc: skipped font asset "${a.id}" (${a.mime}): ${(e as Error).message}\n`)
+    }
+  }
+  return { dir, families }
 }
 
 /** Render `doc` to a PNG (Buffer). `frame` = target image; `vars` = state override (`--at`); `scale` = x-px (default 2). */
@@ -36,9 +69,13 @@ export async function renderDocToPng(doc: Doc, opts: RenderOpts = {}): Promise<U
       'run `node node_modules/skia-canvas/lib/prebuild.mjs download`.',
     )
   }
-  const { Canvas, loadImage, Path2D } = skia
+  const { Canvas, loadImage, Path2D, FontLibrary } = skia
   const scale = opts.scale && opts.scale > 0 ? opts.scale : 2
   const W = doc.width, H = doc.height
+
+  // Register embedded fonts up front so the player's `ctx.font` resolves to the authored faces.
+  const { dir: fontDir, families } = registerFonts(doc, FontLibrary)
+  if (families.length) process.stderr.write(`flatc: registered ${families.length} font famil${families.length > 1 ? 'ies' : 'y'}: ${families.join(', ')}\n`)
 
   // Pre-decode the image assets (skia reads SVG/PNG/... from the data-URIs embedded by flatc).
   const images = new Map<string, CanvasImageSource>()
@@ -81,5 +118,7 @@ export async function renderDocToPng(doc: Doc, opts: RenderOpts = {}): Promise<U
     return png
   } finally {
     for (const k in saved) { if (saved[k] === undefined) delete g[k]; else g[k] = saved[k] }
+    // skia keeps the parsed faces in memory after `use()`, so the temp files are safe to drop now.
+    if (fontDir) try { rmSync(fontDir, { recursive: true, force: true }) } catch { /* best-effort cleanup */ }
   }
 }

@@ -643,7 +643,22 @@ function paintText(ctx: CanvasRenderingContext2D, t: Text) {
   const x = t.align === 'left' ? 0 : t.align === 'right' ? t.box.w : t.box.w / 2
   const lh = t.size * t.lineHeight
   const lines = t.wrap && t.box.w > 0 ? wrapLines(ctx, t.content, t.box.w) : t.content.split('\n')
-  for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], x, i * lh)
+  const s = t.stroke
+  if (s) {
+    // strokeText centers the stroke on the glyph outline; drawing it BEFORE the fill keeps the
+    // visible fill at full weight (only the outer half of the stroke shows). bbox = local text box.
+    ctx.lineWidth = s.width
+    ctx.lineCap = s.cap ?? 'round'
+    ctx.lineJoin = s.join ?? 'round'
+    if (s.miterLimit != null) ctx.miterLimit = s.miterLimit
+    ctx.setLineDash(s.dash ?? [])
+    ctx.strokeStyle = paintStyle(ctx, s.paint, { minX: 0, minY: 0, maxX: t.box.w, maxY: t.box.h }, t.color)
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const y = i * lh
+    if (s) ctx.strokeText(lines[i], x, y)
+    ctx.fillText(lines[i], x, y)
+  }
   ctx.restore()
 }
 

@@ -59,9 +59,13 @@ frame — keep those small (see the [gotchas](dsl-gotchas.md) for the perf detai
 
 ```
 text "Hello" font "sans-serif" size 24 align center line 1.2 color #ffffff box 200 40
+text "OUTLINE" font "sans-serif" size 64 color #ffd23f stroke #e23b3b 6 join round   # outlined text
 ```
 
 - `box <w> <h>` sets the text box; `align left|center|right`; `line` = line-height; `bold` / `italic`.
+- `stroke <color> <width> [cap …] [join …] [miter n] [dash a,b]` outlines the glyphs (same grammar as
+  paths). The stroke is drawn **behind** the fill, so the fill keeps its full weight. Accepts a gradient
+  paint too (`stroke linear(…) 4`).
 - **Word-wrap is opt-in**: add `wrap` to break at spaces within the box width (otherwise only explicit `\n` wraps).
 - **Live text**: `text "Angle: {}°" bind "round(a)" decimals 1` evaluates the expression every frame and
   fills the `{}` slot (or replaces the whole string if there's no `{}`).

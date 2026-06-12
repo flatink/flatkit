@@ -24,6 +24,8 @@
 - **`stroke` DOES exist on paths** (despite the folklore):
   `path "…" fill #rrggbb stroke #rrggbb <width> [cap butt|round|square] [join …] [miter n] [dash a,b,…]`.
   No need to draw ropes/threads as thin filled shapes.
+- **`stroke` ALSO exists on text** (same grammar): `text "…" color #fff stroke #000 4 join round` outlines
+  the glyphs (stroke drawn behind the fill). No need to fake outlines by stacking two text objects.
 - **`opacity` DOES exist on paths**: `path "…" fill #000 opacity 0.5`. (8-digit hex alpha
   works too, but `opacity` reads better.)
 - **Shape primitives** (sugar, normalized to `path` on save):
