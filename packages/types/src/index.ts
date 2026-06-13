@@ -167,6 +167,8 @@ export type Action =
   | { do: 'gotoLabel'; label: string; play?: boolean }
   | { do: 'setVar'; name: string; value: string } // value = expression evaluated by the host
   | { do: 'setIndex'; name: string; index: string; value: string } // arr[index] = value (array)
+  | { do: 'setParam'; target: string; param: string; value: string } // <Instance>.<param> = value — set an instanced symbol's exposed param (e.g. a state); value = state NAME or expression
+
   | { do: 'if'; cond: string; then: Action[]; else?: Action[] } // cond = expression; runs `then` if ≠ 0
   | { do: 'repeat'; count: string; body: Action[] } // count = expression; BOUNDED repeats (anti-loop)
   | { do: 'repeatRange'; var: string; from: string; to: string; body: Action[] } // repeat i from <from> to <to> (inclusive, bounded)
@@ -253,6 +255,7 @@ export type Region = {
   color: string // representative color (solid fallback / compat)
   path: Path // Bezier path (migrated material = closed subpaths without handles)
   paint?: Paint // optional rich paint (gradient); absent = solid `color`
+  fillParam?: string // fill bound to a symbol COLOR param (`fill <paramName>`); resolved per instance at render
   stroke?: Stroke // stroke; absent = none
   noFill?: boolean // true = no fill (path/stroke only, e.g. a pen line)
   xform?: Transform // accumulated display orientation (transform frame) — geometry stays baked; present = "oriented object" (no re-merge)
@@ -303,6 +306,7 @@ export type Instance = {
   filters?: Filter[] // filter stack (blur/shadow/glow/adjust) — animatable
   blend?: BlendMode // blend mode (add/screen = additive light, multiply = shadow); absent = normal
   expressions?: Partial<Record<ExprChannel, string>> // expression animation (cel model) — takes priority over the tween
+  params?: Record<string, string> // call-site values for the symbol's exposed `params` (literal: #color / number / true|false / state name); resolved per the symbol's ParamDef
 }
 
 /**
@@ -316,12 +320,47 @@ export type Folder = {
   collapsed?: boolean // collapsed in the symbol list
 }
 
+/** One named state of a symbol: a label on the symbol's timeline (e.g. `closed at 0`, `open at 24`). */
+export type StateAnchor = { name: string; frame: number }
+/**
+ * A symbol's exposed STATE MACHINE: the param `param` selects a named state, which drives the symbol's
+ * local playhead to that state's frame. A fractional/animated value between states plays the authored
+ * in-between animation (the timeline frames between the two anchors). `transition`/`ease` describe the
+ * default move between states (used by the live runtime; metadata for selection).
+ */
+export type StateMachine = {
+  param: string // the exposed variable name (e.g. "door")
+  states: StateAnchor[] // named states → frame anchors, in declaration order (index = state value)
+  initial?: string // default state name (absent = the first)
+  transition?: number // default frames to move between states (runtime)
+  ease?: Easing // default easing of the transition
+}
+
+/** Type of an exposed symbol param. `color` → a fill (`fill <name>`); `number`/`bool` → a scope variable. */
+export type ParamType = 'color' | 'number' | 'bool'
+/**
+ * One exposed param of a symbol — its public, named, defaulted, documented interface. A consumer sets it
+ * at the instance call-site (`instance "Boat" { hull = #fff }`), in `--preview --set`, or (number/bool)
+ * at runtime (`Boat.wave = 1.5`). `color` params feed `fill <name>`; `number`/`bool` become variables in
+ * the symbol's expressions.
+ */
+export type ParamDef = {
+  name: string
+  type: ParamType
+  default: string // raw default literal (#color / number / true|false), parsed per `type`
+  min?: number // number range (optional, advisory/clamp)
+  max?: number
+  doc?: string // one-line description (the interface, for tooling / a restyle model)
+}
+
 /** Reusable definition (Flash MovieClip-style symbol) stored in the library. */
 export type SymbolDef = {
   id: string
   name: string
   layers: Layer[]
   timeline?: Timeline // the symbol's own animation (absent = static)
+  states?: StateMachine[] // exposed state machines (P3): named states that drive the local playhead
+  params?: ParamDef[] // exposed typed params (the symbol's public interface): color / number / bool
   folderId?: string // owning library folder (absent = root)
 }
 

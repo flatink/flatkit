@@ -107,6 +107,100 @@ The timeline loops over `[0, durationFrames)`. An `instance` of the symbol plays
 (loops at the symbol's own rate); `singleFrame` freezes it on one frame. `--preview` borrows the
 symbol's fps/duration so the wrapped instance loops at its natural rate.
 
+## Exposed parameters (`params`)
+
+A symbol can publish a small, named **interface** instead of exposing its internals — useful for restyling
+an asset (hull/sail colors), tuning an animation (amplitude, speed), or toggling a detail, including
+"after the fact" by a small model.
+
+```
+symbol "Boat" {
+  params {
+    color  hull = #c0392b           "Hull color"
+    color  sail = #2980b9           "Sail color"
+    number wave = 1   range 0 2     "Bob amplitude"
+    bool   flag = true              "Show the pennant"
+  }
+  layer "body" {
+    path "…" fill hull                                  # a color param used as a fill
+    group "Deck" expr y "sin(time*3) * wave" { … }      # a number param read in an expression
+    group "Flag" expr opacity "flag ? 1 : 0" { … }      # a bool param as a toggle
+  }
+}
+```
+
+- `params { <type> <name> = <default> [range <min> <max>] ["doc"] … }` — `<type>` is `color`, `number`,
+  or `bool`. The default, range, and doc string make the interface self-describing.
+- **`color` params** are used as a fill: `fill hull` (where a `#color` would go). They are resolved per
+  instance at render — they are *not* available in numeric expressions.
+- **`number` / `bool` params** become **variables in the symbol's expressions** (`wave`, `flag`). `bool`
+  reads as `1`/`0`.
+
+Set params at the instance **call-site** (literals), in `--preview`, or — for `number`/`bool` — at
+runtime (`Boat.wave = 1.5`, see below):
+
+```
+instance "Boat" as "Hero" at center { hull = #1a5f3a, wave = 1.5, flag = false }
+flatc --preview Boat.flat --render --set hull=#1a5f3a,wave=1.5 -o boat.png
+```
+
+> A `state` (below) is just another exposed param — same call-site/preview/runtime surface.
+
+## Named states (`states`)
+
+A symbol can expose **named states** — points on its own timeline — and let a consumer switch between
+them. A door is the canonical case: the symbol animates from `closed` (frame 0) to `open` (frame 24),
+and exposes that as a single param.
+
+```
+symbol "Door" {
+  timeline 24 24
+  states door { closed at 0   open at 24   initial closed   transition 12 ease easeInOut }
+  layer "panel" {
+    group "Panel" at 60,10 pivot 0,0 { layer "art" { rect 0 0 40 80 fill #884422 } }
+    cel 0 tween { pose "Panel" rotate 0 }      # closed
+    cel 24       { pose "Panel" rotate 80 }    # open
+  }
+}
+```
+
+- `states <param> { <name> at <frame> … }` declares the state machine. `<param>` is the exposed
+  variable (`door`); each `<name> at <frame>` anchors a state to a frame of the symbol's timeline.
+- `initial <name>` is the resting state (default: the first). `transition <n> [ease <e>]` is the default
+  move between states.
+- **The param drives the symbol's local playhead.** `door = 0` (or `closed`) → frame 0; `door = 1`
+  (or `open`) → frame 24; a fractional `door = 0.5` → frame 12, i.e. the authored in-between animation.
+  So **animating the variable from 0→1 plays the open animation** — states live inside the ordinary
+  variable system, no special runtime.
+
+Select a state in a preview (a state name or a number):
+
+```
+flatc --preview Door.flat --render --set door=open -o open.png
+flatc --preview Door.flat --render --set door=0.5  -o half.png   # mid-transition
+```
+
+### Driving a state from a program (`set Name.param = state`)
+
+In a `.flatink` program, address an instance **by name** and set its state — the player plays the
+declared `transition` automatically. Each instance keeps its **own** state, so two doors are independent.
+
+```
+scene {
+  layer "stage" { instance "Door" as "FrontDoor" at 100,100 }
+}
+object "FrontDoor" {
+  when clicked { FrontDoor.door = open }   # animates closed → open over `transition` frames
+}
+```
+
+The right-hand side is a **state name** (`open`) or an expression (`FrontDoor.door = score > 5 ? open : closed`
+isn't valid — names aren't expressions; use a number there, e.g. `… ? 1 : 0`). `transition 0` snaps instantly.
+
+> **Scope note:** the state value drives the instance's playhead and is visible to that instance's own
+> expressions. Reading another object's state back by name (`FrontDoor.door` in an unrelated expression)
+> and the broader typed `params {}` interface (colors/numbers/toggles, `fill hull`) are still to come.
+
 ## Render order (a real caveat)
 
 Within **one animated layer**, the **matter (static drawing) always renders behind the posed

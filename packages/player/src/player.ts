@@ -7,7 +7,8 @@
 //  player only evaluates the timeline and draws.
 // -----------------------------------------------------------------------------
 import type { Asset, Doc, Layer, Point, Text } from '@flatkit/types'
-import { resolveInstanceFrame, scheduleSounds, type Timeline } from '@flatkit/engine/timeline'
+import { resolveInstanceFrame, scheduleSounds, applyEasing, type Timeline, type Easing } from '@flatkit/engine/timeline'
+import { stateValueOf, initialStateValue, stateMachineByParam } from '@flatkit/engine/states'
 import { compileExpr, evalExpr, exprScope, type ExprContext, type Compiled } from '@flatkit/engine/expr'
 import { runActions, MAX_SEND_TEXT, SEND_EVENT_NAME, type Action, type ActionHost, type ItemEvent } from '@flatkit/engine/actions'
 import { containerLayers, getSymbol, isGroup, isInstance, isText } from '@flatkit/engine/layers'
@@ -219,6 +220,11 @@ export class FlatPlayer {
   // `reveal` coverage PERSISTED per target across grabs → true monotonicity (a child scratching with
   // several short strokes keeps accumulating instead of resetting to the current stroke each grab).
   private readonly revealStates = new Map<string, RevealState>()
+  // Per-instance exposed-param runtime (P3 states): instanceId → param → in-progress transition.
+  // `value` is the current eased value; it drives the instance's local playhead (see drawScene.paramsFor).
+  private readonly paramRt = new Map<string, Map<string, { value: number; from: number; target: number; elapsed: number; dur: number; ease?: Easing }>>()
+  private instNameCache?: Map<string, { id: string; symbolId: string }>
+  private transRaf = 0 // lightweight rAF driving transitions while the playhead is NOT playing
   private longPressTimer: ReturnType<typeof setTimeout> | null = null
   private lastFrameInt = -1
   private readonly onResize = () => {
@@ -521,6 +527,7 @@ export class FlatPlayer {
     labelFrame: (name) => this.doc.timeline?.labels?.find((l) => l.name === name)?.frame,
     setVar: (name, v) => { this.vars.set(name, v) },
     setIndex: (name, i, v) => { const a = this.vars.get(name); if (Array.isArray(a) && i >= 0 && i < a.length) a[i] = v },
+    setParam: (target, param, value) => this.setParam(target, param, value),
     callProc: (name, args) => this.callProc(name, args),
     evalNumber: (src) => this.evalNumber(src),
     emit: (name, value) => this.emit(name, value),
@@ -815,6 +822,9 @@ export class FlatPlayer {
     this.namedCache = null // new document -> named-objects cache stale
     this.filterCache.clear() // new document -> filter bitmaps stale
     this.revealStates.clear() // new document -> reveal coverage resets
+    this.instNameCache = undefined // new document -> name→instance lookup stale
+    this.paramRt.clear() // new document -> per-instance param transitions reset
+    if (this.transRaf) { cancelAnimationFrame(this.transRaf); this.transRaf = 0 }
     this.bustNamed()
     this.buildFunctions()
     this.measure()
@@ -853,7 +863,7 @@ export class FlatPlayer {
     const expr = this.playing && this.simActive && this.prevSimVars && this.simAlpha < 1
       ? this.exprCtx(lerpVars(this.prevSimVars, this.vars, this.simAlpha))
       : this.exprCtx()
-    renderLayers(ctx, doc, doc.layers, this.frame, null, new Set(), { fps: this.fps, expr, image: (id) => this.imageFor(id), filterCache: this.filterCache, imageEpoch: this.imageEpoch, itemState: (id) => this.itemStateFor(id) })
+    renderLayers(ctx, doc, doc.layers, this.frame, null, new Set(), { fps: this.fps, expr, image: (id) => this.imageFor(id), filterCache: this.filterCache, imageEpoch: this.imageEpoch, itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id) })
     ctx.restore()
   }
 
@@ -863,6 +873,92 @@ export class FlatPlayer {
     const hovered = this.hoverIds.has(id) ? 1 : 0
     const grabbed = this.grabbed === id ? 1 : 0
     return hovered || grabbed ? { hovered, grabbed, pressed: grabbed } : undefined
+  }
+
+  // ── Per-instance exposed params (P3 states) ───────────────────────────────────
+  /** Scene instance (id + symbol) by NAME; first carrier wins (document order), groups recursed. Cached. */
+  private instanceByName(name: string): { id: string; symbolId: string } | undefined {
+    if (!this.instNameCache) {
+      const m = new Map<string, { id: string; symbolId: string }>()
+      const walk = (layers: Layer[]) => {
+        for (const l of layers) for (const it of l.items) {
+          if (isInstance(it) && it.name && !m.has(it.name)) m.set(it.name, { id: it.id, symbolId: it.symbolId })
+          if (isGroup(it)) walk(it.layers)
+        }
+      }
+      walk(this.doc.layers)
+      this.instNameCache = m
+    }
+    return this.instNameCache.get(name)
+  }
+
+  /** `Door.door = open`: set an instance's exposed param. Resolves a state NAME via the symbol's state
+   *  machine (else evaluates the expression), and starts a transition over the state machine's `transition`
+   *  frames (snap if 0). Drives the instance's local playhead through `paramsForInstance`. */
+  private setParam(target: string, param: string, raw: string): void {
+    const inst = this.instanceByName(target)
+    if (!inst) return // unknown instance → no-op
+    const sym = getSymbol(this.doc, inst.symbolId)
+    const sm = stateMachineByParam(sym?.states, param)
+    const trimmed = raw.trim()
+    let targetVal = sm && sm.states.some((s) => s.name === trimmed) ? stateValueOf(sm, trimmed) : this.evalNumber(raw)
+    if (!Number.isFinite(targetVal)) return
+    // Clamp a declared number param to its range (consistent with call-site/default resolution).
+    const def = sym?.params?.find((p) => p.name === param && p.type === 'number')
+    if (def?.min != null && def.max != null && def.min <= def.max) targetVal = Math.max(def.min, Math.min(def.max, targetVal))
+    let params = this.paramRt.get(inst.id)
+    if (!params) { params = new Map(); this.paramRt.set(inst.id, params) }
+    const cur = params.get(param)?.value ?? (sm ? initialStateValue(sm) : 0)
+    const dur = Math.max(0, sm?.transition ?? 0)
+    params.set(param, { value: dur > 0 ? cur : targetVal, from: cur, target: targetVal, elapsed: 0, dur, ease: sm?.ease })
+    this.bustNamed()
+    this.ensureTransitions()
+    this.render()
+  }
+
+  /** Current values of an instance's params (for drawScene → drives the local frame + the subtree scope). */
+  private paramsForInstance(id: string): Record<string, number> | undefined {
+    const params = this.paramRt.get(id)
+    if (!params || params.size === 0) return undefined
+    const out: Record<string, number> = {}
+    for (const [k, st] of params) out[k] = st.value
+    return out
+  }
+
+  /** Advance in-progress param transitions by `deltaFrames`; eased from→target over `dur`. Returns whether
+   *  any transition is still running (so the caller can keep ticking). */
+  private advanceParams(deltaFrames: number): boolean {
+    let active = false
+    for (const params of this.paramRt.values()) {
+      for (const st of params.values()) {
+        if (st.elapsed >= st.dur) { st.value = st.target; continue }
+        st.elapsed = Math.min(st.dur, st.elapsed + Math.max(0, deltaFrames))
+        const p = st.dur > 0 ? st.elapsed / st.dur : 1
+        st.value = st.from + (st.target - st.from) * applyEasing(p, st.ease)
+        if (st.elapsed < st.dur) active = true
+        else st.value = st.target
+      }
+    }
+    return active
+  }
+
+  /** While the playhead is NOT playing, drive active transitions on their own rAF (handed back to the
+   *  main tick once playback resumes). No-op without requestAnimationFrame (headless → advanced via stepSim). */
+  private ensureTransitions(): void {
+    if (this.playing || this.transRaf || typeof requestAnimationFrame !== 'function') return
+    let any = false
+    for (const ps of this.paramRt.values()) for (const st of ps.values()) if (st.elapsed < st.dur) { any = true; break }
+    if (!any) return
+    let prev = 0
+    const step = (now: number) => {
+      if (this.playing) { this.transRaf = 0; return } // the main tick takes over
+      const dt = prev ? Math.min((now - prev) / 1000, 0.25) : 0
+      prev = now
+      const stillActive = this.advanceParams(dt * this.fps)
+      this.render()
+      this.transRaf = stillActive ? requestAnimationFrame(step) : 0
+    }
+    this.transRaf = requestAnimationFrame(step)
   }
 
   // Decoded image of an asset (module cache). `null` while not loaded -> re-render on decode.
@@ -901,6 +997,7 @@ export class FlatPlayer {
       let f = this.frame + SIM_STEP * this.fps
       if (f >= this.duration) f = this.loop ? f % this.duration : this.duration
       this.frame = f
+      this.advanceParams(SIM_STEP * this.fps) // P3: advance per-instance state transitions in lockstep with the sim
       const symSims = this.activeSymbolTimelines(f).filter((s) => s.tl.onEnterFrame?.length)
       if (rootSim?.length) runActions(rootSim, this.host)
       for (const s of symSims) runActions(s.tl.onEnterFrame!, this.host)
@@ -969,6 +1066,7 @@ export class FlatPlayer {
 
   play(): void {
     if (this.playing) return
+    if (this.transRaf) { cancelAnimationFrame(this.transRaf); this.transRaf = 0 } // the main tick becomes the sole transition driver
     this.playing = true
     this.last = performance.now()
     this.simAcc = 0
@@ -990,6 +1088,7 @@ export class FlatPlayer {
         }
       }
       this.frame = f
+      this.advanceParams(dt * this.fps) // P3: advance in-progress per-instance state transitions
 
       // 2) onEnterFrame at a FIXED step (60 Hz) -> framerate-independent physics. The set of active
       // symbols is frozen for this tick (the frame does not move between steps, except a gotoFrame from an action).
@@ -1028,6 +1127,7 @@ export class FlatPlayer {
     this.simActive = false // no more playback -> the render goes back to the real values (not interpolated)
     cancelAnimationFrame(this.raf)
     this.stopAudio()
+    this.ensureTransitions() // hand any in-progress state transition off to its own driver (keeps animating)
   }
   toggle(): void {
     if (this.playing) this.pause()
@@ -1041,6 +1141,7 @@ export class FlatPlayer {
   /** Releases the listeners. To be called when the player is no longer used. */
   destroy(): void {
     this.pause()
+    if (this.transRaf) { cancelAnimationFrame(this.transRaf); this.transRaf = 0 } // stop the transition driver on a torn-down player
     window.removeEventListener('resize', this.onResize)
     globalThis.removeEventListener('keydown', this.onKeyDown)
     globalThis.removeEventListener('keyup', this.onKeyUp)

@@ -53,6 +53,24 @@ flatc <file> --render -o out.png [--frame N] [--at k=v[,k2=v2]] [--steps N] [--s
   matches the `text … font "Quicksand"` you authored. Browsers ignore it (they bind families via
   `FontFace`); it only steers headless `--render`.
 
+## Preview a `.flat` symbol — `--preview`
+
+Wrap ONE symbol of a `.flat` library into a playable, auto-sized Doc — no hand-authored wrapper. Outputs a
+`.flatpack` (drop it in the browser player) or, with `--render`, a PNG.
+
+```
+flatc --preview <library.flat> [--symbol NAME] [-o out.flatpack | --render -o out.png]
+                [--bbox all|frame0] [--pad N] [--set p=v[,p2=v2]] [--frame N] [--scale S]
+```
+
+- `--symbol NAME` picks the symbol (default: the first; others are listed on stderr).
+- **`--bbox all`** (default) auto-sizes to the UNION of bounds over every frame (sub-timelines unfrozen),
+  so drifting/rotating/growing motion is never clipped. `--bbox frame0` is the old frame-0-only measure;
+  `--pad N` adds a margin (default 24).
+- **`--set p=v`** sets the symbol's exposed [params](animating-symbols.md#exposed-parameters-params): a
+  `color` (`hull=#1a5`), a `number`/`bool` (`wave=1.5`), or a `state` by name (`door=open`). Baked into the
+  preview (flatpack + render).
+
 ## Media packing — `--assets`
 
 ```

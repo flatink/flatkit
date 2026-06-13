@@ -11,13 +11,15 @@
 //  cel/transform). It NEVER imports `polygon-clipping`, React, or the store
 //  -> embeddable as-is in a lightweight standalone player.
 // -----------------------------------------------------------------------------
-import type { Doc, Group, Instance, Item, Layer, Region, Text } from '@flatkit/types'
+import type { Doc, Group, Instance, Item, Layer, Region, SymbolDef, Text } from '@flatkit/types'
 import { regionBBox, type BBox } from '@flatkit/engine/bbox'
 import { regionPaint, type Paint, type Tint } from '@flatkit/engine/paint'
 import { cssFilterString, type Filter } from '@flatkit/engine/filters'
 import { containerLayers, getSymbol, hiddenLayerIds, isContainer, isGroup, isInstance, isText, isImage, isRegion, maskMap, guideMap } from '@flatkit/engine/layers'
 import { pathToBezier, transformPath, type Path } from '@flatkit/engine/path'
 import { resolveInstanceFrame, type BaseOf } from '@flatkit/engine/timeline'
+import { stateFrame, initialStateValue } from '@flatkit/engine/states'
+import { resolveInstanceParams } from '@flatkit/engine/params'
 import { resolveLayerAt } from '@flatkit/engine/cel'
 import type { ExprContext } from '@flatkit/engine/expr'
 import { apply, compose, IDENTITY, type Transform } from '@flatkit/engine/transform'
@@ -35,6 +37,10 @@ export type RenderCtx = {
   image?: (assetId: string) => CanvasImageSource | null
   // PLAYER: per-object interaction state for `self.hovered`/`self.grabbed`/`self.pressed` in channel exprs.
   itemState?: (id: string) => { hovered: number; grabbed: number; pressed: number } | undefined
+  // PLAYER: per-instance exposed param values (P3 states) → drive the instance's local frame + its subtree scope.
+  paramsFor?: (instanceId: string) => Record<string, number> | undefined
+  // Current instance's COLOR params (param name → hex) for `fill <param>` regions in its subtree.
+  colorParams?: Record<string, string>
   // EDITOR: preview of a transform/move applied IN PLACE (z-index preserved) to the items
   // whose id is in `ids` -- `m` (translation or affine) wraps their drawing.
   preview?: { ids: Set<string>; m: Transform }
@@ -151,9 +157,9 @@ function accumDevBBox(doc: Doc, items: Item[], frame: number, matrix: Transform,
       if (isInstance(it) && seen.has(it.symbolId)) continue
       const t = compose(matrix, it.transform)
       if (isInstance(it)) {
-        const sym = getSymbol(doc, it.symbolId)
-        const local = sym?.timeline ? resolveInstanceFrame(it.playback, frame, sym.timeline.durationFrames) : frame
-        const sub: RenderCtx = { fps: subFps(sym?.timeline?.fps, rctx), expr: rctx.expr }
+        const { sym, expr } = instanceScope(doc, it, rctx)
+        const local = instanceLocalFrame(it, sym, frame, expr)
+        const sub: RenderCtx = { fps: subFps(sym?.timeline?.fps, rctx), expr }
         const next = new Set([...seen, it.symbolId])
         for (const l of containerLayers(doc, it)) if (l.visible) accumDevBBox(doc, resolveLayerAt(l, local, { fps: sub.fps, ctx: sub.expr, parent: t }), local, t, next, acc, sub)
       } else if (isGroup(it) && it.timeline) {
@@ -383,6 +389,32 @@ const subFps = (tlFps: number | undefined, parent: RenderCtx): number => tlFps ?
 const MAX_NEST = 256
 
 /**
+ * Local timeline frame of an instance. A symbol's STATE MACHINE (P3) takes precedence: its exposed param
+ * (read from the expression ctx — a state name resolves to a number elsewhere; here we expect the numeric
+ * state position) drives the playhead via `stateFrame`. Otherwise the normal playback mode applies.
+ */
+function instanceLocalFrame(it: Instance, sym: SymbolDef | undefined, frame: number, expr: ExprContext | undefined): number {
+  const sm = sym?.states?.[0]
+  if (sm) {
+    const raw = expr?.[sm.param]
+    return stateFrame(sm, typeof raw === 'number' ? raw : initialStateValue(sm))
+  }
+  return sym?.timeline ? resolveInstanceFrame(it.playback, frame, sym.timeline.durationFrames) : frame
+}
+
+/** Enter an instance's sub-scope: merge its exposed params (declared/call-site/state-initial + runtime
+ *  override) into the expr scope, and surface its color params. Shared by render/bbox/shape paths so the
+ *  driven local frame and the subtree expressions read the SAME param values. */
+function instanceScope(doc: Doc, it: Instance, rctx: RenderCtx): { sym: SymbolDef | undefined; expr: ExprContext | undefined; color: Record<string, string> } {
+  const sym = getSymbol(doc, it.symbolId)
+  const resolved = resolveInstanceParams(sym, it)
+  const runtime = rctx.paramsFor?.(it.id)
+  const numeric = runtime ? { ...resolved.numeric, ...runtime } : resolved.numeric
+  const expr = Object.keys(numeric).length ? { ...rctx.expr, ...numeric } : rctx.expr
+  return { sym, expr, color: resolved.color }
+}
+
+/**
  * Draws the content of a container (already posed by the parent layer):
  *  - library instance = new scope (local frame via resolveInstanceFrame);
  *  - local symbol (group WITH a timeline) = new scope synced on the parent frame;
@@ -400,10 +432,12 @@ function renderContainerChildren(
   depth = 0,
 ) {
   if (isInstance(it)) {
-    const sym = getSymbol(doc, it.symbolId)
     // EDITOR (freezeNested): sub-scope frozen at 0; otherwise local frame (full animation, player).
-    const local = rctx.freezeNested ? 0 : sym?.timeline ? resolveInstanceFrame(it.playback, frame, sym.timeline.durationFrames) : frame
-    renderLayers(ctx, doc, containerLayers(doc, it), local, hidden, seen, { fps: subFps(sym?.timeline?.fps, rctx), expr: rctx.expr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState }, parent, depth + 1)
+    // Exposed params scope this instance's subtree (declared/call-site/state-initial + runtime override);
+    // color params feed `fill <param>` regions.
+    const { sym, expr: subExpr, color } = instanceScope(doc, it, rctx)
+    const local = rctx.freezeNested ? 0 : instanceLocalFrame(it, sym, frame, subExpr)
+    renderLayers(ctx, doc, containerLayers(doc, it), local, hidden, seen, { fps: subFps(sym?.timeline?.fps, rctx), expr: subExpr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, paramsFor: rctx.paramsFor, colorParams: color }, parent, depth + 1)
   } else if (isGroup(it) && it.timeline) {
     renderLayers(ctx, doc, it.layers, rctx.freezeNested ? 0 : frame, hidden, seen, { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState }, parent, depth + 1)
   } else {
@@ -445,9 +479,9 @@ function collectShape(
       if (isInstance(it) && seen.has(it.symbolId)) continue
       const t = compose(matrix, it.transform)
       if (isInstance(it)) {
-        const sym = getSymbol(doc, it.symbolId)
-        const local = sym?.timeline ? resolveInstanceFrame(it.playback, frame, sym.timeline.durationFrames) : frame
-        const sub: RenderCtx = { fps: subFps(sym?.timeline?.fps, rctx), expr: rctx.expr }
+        const { sym, expr } = instanceScope(doc, it, rctx)
+        const local = instanceLocalFrame(it, sym, frame, expr)
+        const sub: RenderCtx = { fps: subFps(sym?.timeline?.fps, rctx), expr }
         const next = new Set([...seen, it.symbolId])
         for (const l of containerLayers(doc, it)) if (l.visible) collectShape(doc, resolveLayerAt(l, local, { fps: sub.fps, ctx: sub.expr, parent: t }), local, t, next, path, sub)
       } else if (isGroup(it) && it.timeline) {
@@ -506,7 +540,8 @@ function paintStyle(ctx: CanvasRenderingContext2D, paint: Paint, bbox: ReturnTyp
   return g
 }
 
-function fillStyleFor(ctx: CanvasRenderingContext2D, region: Region): string | CanvasGradient {
+function fillStyleFor(ctx: CanvasRenderingContext2D, region: Region, colorParams?: Record<string, string>): string | CanvasGradient {
+  if (region.fillParam) { const c = colorParams?.[region.fillParam]; if (c) return c } // `fill <param>` → the instance's color (else fall back to region.color)
   return paintStyle(ctx, regionPaint(region), regionBBox(region), region.color)
 }
 
@@ -598,12 +633,12 @@ function renderOneItem(
         const lb = regionBBox(reg)
         const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
         if (lb) expandRect(acc, matOf(ctx.getTransform()), lb.minX, lb.minY, lb.maxX, lb.maxY)
-        paintLeaf(ctx, undefined, reg.filters, opacity, acc, scaleOf(ctx), (c) => paintRegion(c, reg))
+        paintLeaf(ctx, undefined, reg.filters, opacity, acc, scaleOf(ctx), (c) => paintRegion(c, reg, rctx.colorParams))
       } else {
         // HOT path (the majority of regions): no allocation (no closure).
         ctx.save()
         if (opacity < 1) ctx.globalAlpha *= opacity
-        paintRegion(ctx, reg)
+        paintRegion(ctx, reg, rctx.colorParams)
         ctx.restore()
       }
     }
@@ -611,10 +646,10 @@ function renderOneItem(
 }
 
 /** Paints a region (fill + outline) into `c`. Module function (zero allocation per call). */
-function paintRegion(c: CanvasRenderingContext2D, reg: Region) {
+function paintRegion(c: CanvasRenderingContext2D, reg: Region, colorParams?: Record<string, string>) {
   const path = regionPath(reg)
   if (!reg.noFill) {
-    c.fillStyle = fillStyleFor(c, reg)
+    c.fillStyle = fillStyleFor(c, reg, colorParams)
     c.fill(path, 'evenodd')
   }
   if (reg.stroke) {

@@ -86,6 +86,8 @@ function printAction(a: Action, depth: number): string {
       return ind + `${a.name} = ${a.value}`
     case 'setIndex':
       return ind + `set ${a.name}[${a.index}] = ${a.value}`
+    case 'setParam':
+      return ind + `${a.target}.${a.param} = ${a.value}`
     case 'if': {
       let s = ind + `if ${a.cond} ` + block(a.then, depth)
       if (a.else) s += ` else ` + block(a.else, depth)
@@ -539,11 +541,20 @@ class Parser {
       return null
     }
     this.skipSpace()
-    if (this.peek() === '.') { // QUALIFIED procedure call: pkg.proc(args)
+    if (this.peek() === '.') { // `Name.param = value` (set an instance's exposed param) OR qualified call `pkg.proc(args)`
       this.next()
       const suffix = this.word()
       this.skipSpace()
-      if (!suffix || this.peek() !== '(') { this.err('"(" expected for a qualified call "pkg.proc(…)"', m); this.skipLine(); return null }
+      if (this.peek() === '=') { // <Instance>.<param> = value — value may be a state NAME or an expression
+        if (!suffix) { this.err('parameter name expected after "."', m); this.skipLine(); return null }
+        this.next()
+        this.skipSpace()
+        const value = this.lineExpr()
+        if (!value) { this.err('value (state name or expression) expected after "="', m); return null }
+        this.endStatement() // NB: value not lint-checked as an expression — it may be a bare state name, resolved at runtime
+        return { do: 'setParam', target: name, param: suffix, value }
+      }
+      if (!suffix || this.peek() !== '(') { this.err('"(" expected for a qualified call "pkg.proc(…)" or "=" for "Name.param = value"', m); this.skipLine(); return null }
       const args = this.callArgs()
       for (const a of args) this.exprSite(a, m)
       this.endStatement()

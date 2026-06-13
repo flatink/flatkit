@@ -12,7 +12,7 @@
 //
 //  PURE module (no DOM).
 // ─────────────────────────────────────────────────────────────────────────────
-import type { Asset, Doc, Folder, Group, Image, Instance, Item, Layer, Region, SymbolDef, Text } from '@flatkit/types'
+import type { Asset, Doc, Folder, Group, Image, Instance, Item, Layer, ParamDef, Region, StateAnchor, StateMachine, SymbolDef, Text } from '@flatkit/types'
 import type { Path } from './path'
 import type { Paint, Stop, Tint } from './paint'
 import type { Filter } from './filters'
@@ -120,6 +120,7 @@ type Ctx = { symName: (id: string) => string; inlineExpr: boolean; folderPath?: 
 function printRegion(r: Region, d: string): string {
   let s = `path "${d}"`
   if (r.noFill) s += ' nofill'
+  else if (r.fillParam) s += ` fill ${r.fillParam}` // fill bound to a symbol color param
   else s += ` fill ${printPaint(r.paint ?? { type: 'solid', color: r.color })}`
   if (r.stroke) {
     s += ` stroke ${printPaint(r.stroke.paint)} ${n(r.stroke.width)}`
@@ -167,7 +168,12 @@ function printImage(im: Image, withExpr: boolean): string {
 function printInstance(it: Instance, ctx: Ctx): string {
   const sym = ctx.symName(it.symbolId)
   const asName = it.name !== sym ? ` as ${q(it.name)}` : ''
-  return `instance ${q(sym)}${asName}${printTransform(it.transform)}` + printPoseAttrs(it, ctx.inlineExpr)
+  return `instance ${q(sym)}${asName}${printTransform(it.transform)}` + printPoseAttrs(it, ctx.inlineExpr) + printCallSiteParams(it.params)
+}
+/** Call-site param values: ` { name = value, … }` (empty/absent → nothing). */
+function printCallSiteParams(params?: Record<string, string>): string {
+  const entries = params ? Object.entries(params) : []
+  return entries.length ? ` { ${entries.map(([k, v]) => `${k} = ${v}`).join(', ')} }` : ''
 }
 
 function printItem(it: Item, depth: number, ctx: Ctx): string | null {
@@ -250,8 +256,30 @@ function printSymbol(sym: SymbolDef, ctx: Ctx): string {
   const path = sym.folderId && ctx.folderPath ? ctx.folderPath(sym.folderId) : ''
   const inClause = path ? ` in ${q(path)}` : '' // library folder (organization)
   const head = sym.timeline ? printTimeline(sym.timeline, 1) + '\n' : ''
+  const params = sym.params?.length ? printParams(sym.params, 1) + '\n' : ''
+  const states = sym.states?.length ? sym.states.map((sm) => printStateMachine(sm, 1)).join('\n') + '\n' : ''
   const layers = printLayers(sym.layers, 1, ctx)
-  return `symbol ${q(sym.name)}${inClause} {\n${head}${layers}\n}`
+  return `symbol ${q(sym.name)}${inClause} {\n${head}${params}${states}${layers}\n}`
+}
+
+/** `params { <type> <name> = <default> [range <min> <max>] ["doc"] … }` */
+function printParams(params: ParamDef[], depth: number): string {
+  const ind = IND.repeat(depth)
+  const lines = params.map((p) => {
+    let s = `${IND.repeat(depth + 1)}${p.type} ${p.name} = ${p.default}`
+    if (p.min != null || p.max != null) s += ` range ${n(p.min ?? p.max ?? 0)} ${n(p.max ?? p.min ?? 0)}`
+    if (p.doc) s += ` ${q(p.doc)}`
+    return s
+  })
+  return `${ind}params {\n${lines.join('\n')}\n${ind}}`
+}
+
+/** `states <param> { <name> at <frame> … [initial <name>] [transition <n> [ease <e>]] }` */
+function printStateMachine(sm: StateMachine, depth: number): string {
+  const parts = sm.states.map((s) => `${s.name} at ${n(s.frame)}`)
+  if (sm.initial) parts.push(`initial ${sm.initial}`)
+  if (sm.transition != null) parts.push(`transition ${n(sm.transition)}${sm.ease ? ` ease ${printEasing(sm.ease)}` : ''}`)
+  return `${IND.repeat(depth)}states ${sm.param} { ${parts.join('  ')} }`
 }
 
 /** Prints a `.flat` library (list of symbols). `folders` (optional) → folder paths (`in "A/B"`). */
@@ -925,10 +953,52 @@ class FlatParser {
     const folderId = this.is('in') ? (this.next(), this.folderIdForPath(this.str())) : undefined // library folder
     this.eat('{')
     const timeline = this.is('timeline') ? this.timeline() : undefined
+    const states: StateMachine[] = []
+    const params: ParamDef[] = []
+    for (;;) { // `states` and `params` blocks (any order) precede the layers
+      if (this.is('states')) states.push(this.stateMachine())
+      else if (this.is('params')) params.push(...this.paramsBlock())
+      else break
+    }
     const layers: Layer[] = []
     while (!this.is('}')) layers.push(...this.layer())
     this.eat('}')
-    return { id: uid('sym'), name, layers, ...(timeline ? { timeline } : {}), ...(folderId ? { folderId } : {}) }
+    return { id: uid('sym'), name, layers, ...(timeline ? { timeline } : {}), ...(params.length ? { params } : {}), ...(states.length ? { states } : {}), ...(folderId ? { folderId } : {}) }
+  }
+  /** `params { <type> <name> = <default> [range <min> <max>] ["doc"] … }` — color | number | bool. */
+  private paramsBlock(): ParamDef[] {
+    this.eat('params'); this.eat('{')
+    const out: ParamDef[] = []
+    while (!this.is('}')) {
+      const type = this.next().v
+      if (type !== 'color' && type !== 'number' && type !== 'bool') throw new Error(`param type expected (color/number/bool): "${type}"`)
+      const name = this.next().v
+      this.eat('=')
+      const def = this.next().v // raw default literal (#color / number / true|false)
+      let min: number | undefined, max: number | undefined
+      if (this.is('range')) { this.next(); min = this.num(); max = this.num() }
+      const doc = this.peek()?.k === 'str' ? this.str() : undefined
+      out.push({ name, type, default: def, ...(min != null ? { min } : {}), ...(max != null ? { max } : {}), ...(doc ? { doc } : {}) })
+    }
+    this.eat('}')
+    return out
+  }
+  /** `states <param> { <name> at <frame> … [initial <name>] [transition <n> [ease <e>]] }` */
+  private stateMachine(): StateMachine {
+    this.eat('states')
+    const param = this.next().v
+    this.eat('{')
+    const anchors: StateAnchor[] = []
+    let initial: string | undefined, transition: number | undefined, ease: Easing | undefined
+    // `initial`/`transition` are keywords UNLESS followed by `at` (then they're a state name — disambiguated
+    // by lookahead, so a state may legitimately be named "initial"/"transition").
+    while (!this.is('}')) {
+      if (this.is('initial') && this.t[this.p + 1]?.v !== 'at') { this.next(); initial = this.next().v }
+      else if (this.is('transition') && this.t[this.p + 1]?.v !== 'at') { this.next(); transition = this.num(); if (this.is('ease')) { this.next(); ease = this.easing() } }
+      else { const name = this.next().v; this.eat('at'); const frame = this.num(); anchors.push({ name, frame }) }
+    }
+    this.eat('}')
+    return { param, states: anchors, ...(initial ? { initial } : {}), ...(transition != null ? { transition } : {}), ...(ease ? { ease } : {}) }
   }
   // Returns the layer + its nested children FLATTENED (flat model: siblings + `parent`).
   private layer(parent?: string): Layer[] {
@@ -1065,10 +1135,17 @@ class FlatParser {
     let noHit = false
     let filters: Filter[] | undefined
     let color = '#000000'
+    let fillParam: string | undefined
     for (;;) {
       if (this.is('nofill')) { this.next(); noFill = true }
       else if (this.is('filter')) { (filters ??= []).push(this.filter()) }
-      else if (this.is('fill')) { this.next(); paint = this.paint(); color = paintColor(paint) }
+      else if (this.is('fill')) {
+        this.next()
+        const k = this.peek()
+        // `fill <paramName>`: a bare identifier (not a #color, linear/radial, or `none`) = a symbol color param.
+        if (k && k.k === 'id' && k.v !== 'linear' && k.v !== 'radial' && k.v !== 'none') { fillParam = this.next().v }
+        else { paint = this.paint(); color = paintColor(paint) }
+      }
       else if (this.is('stroke')) {
         this.next(); const sp = this.paint(); const w = this.num()
         const st: NonNullable<Region['stroke']> = { width: w, paint: sp }
@@ -1087,6 +1164,7 @@ class FlatParser {
     }
     const r: Region = { id: uid('r'), color, path }
     if (paint && paint.type !== 'solid') r.paint = paint
+    if (fillParam) r.fillParam = fillParam
     if (noFill) r.noFill = true
     if (stroke) r.stroke = stroke
     if (opacity != null) r.opacity = opacity
@@ -1113,7 +1191,21 @@ class FlatParser {
     if (this.is('as')) { this.next(); name = this.str() }
     const transform = this.transform(name)
     const a = this.poseAttrs()
-    return { id: uid('i'), kind: 'instance', name, transform, symbolId: '@' + symName, ...leafAttrs(a), ...exprAttr(a) }
+    const params = this.is('{') ? this.callSiteParams() : undefined // `instance "X" { hull = #fff, wave = 1.5 }`
+    return { id: uid('i'), kind: 'instance', name, transform, symbolId: '@' + symName, ...leafAttrs(a), ...exprAttr(a), ...(params ? { params } : {}) }
+  }
+  /** Call-site values for a symbol's exposed params: `{ name = <literal> [, name2 = …] }` (single-token literals). */
+  private callSiteParams(): Record<string, string> {
+    this.eat('{')
+    const out: Record<string, string> = {}
+    while (!this.is('}')) {
+      const key = this.next().v
+      this.eat('=')
+      out[key] = this.next().v
+      if (this.is(',')) this.next()
+    }
+    this.eat('}')
+    return out
   }
   private text(): Text {
     this.eat('text')

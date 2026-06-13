@@ -171,6 +171,33 @@ describe('flatc — CLI', () => {
     }
   })
 
+  it('--preview --set resolves a state name to its numeric value and bakes it into the preview', async () => {
+    const lib = join(cli, '__door.flat')
+    writeFileSync(lib, [
+      'symbol "Door" {',
+      '  timeline 24 24',
+      '  states door { closed at 0  open at 24  initial closed }',
+      '  layer "panel" { path "M0 0L20 0L20 40L0 40Z" fill #884422 }',
+      '}',
+      '',
+    ].join('\n'))
+    const outOpen = join(cli, '__door_open.flatpack')
+    const outClosed = join(cli, '__door_closed.flatpack')
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      expect(await run(['node', 'flatc', lib, '--preview', '--set', 'door=open', '-o', outOpen])).toBe(0)
+      expect(await run(['node', 'flatc', lib, '--preview', '--set', 'door=closed', '-o', outClosed])).toBe(0)
+      const instOf = (f: string) => JSON.parse(readFileSync(f, 'utf8')).layers[0].items[0].params
+      expect(instOf(outOpen)).toEqual({ door: 'open' }) // set on the preview instance (resolved at render)
+      expect(instOf(outClosed)).toEqual({ door: 'closed' })
+    } finally {
+      spy.mockRestore()
+      rmSync(lib, { force: true })
+      rmSync(outOpen, { force: true })
+      rmSync(outClosed, { force: true })
+    }
+  })
+
   it('--preview --symbol NAME selects the symbol; a missing name fails ≠0', async () => {
     const lib = join(cli, '__multi.flat')
     writeFileSync(lib, 'symbol "Dot" {\n  layer "l" { path "M-8 -8L8 -8L8 8L-8 8Z" fill #ff0000 }\n}\nsymbol "Badge" {\n  layer "l" { path "M-30 -30L30 -30L30 30L-30 30Z" fill #000000 }\n}\n')

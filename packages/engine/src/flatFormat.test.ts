@@ -866,3 +866,94 @@ describe('flatFormat — pose rotate/scale sugar (degrees, around pivot)', () =>
     expect(printFlat(parseFlat(text))).toBe(text)
   })
 })
+
+describe('flatFormat — symbol states block (P3)', () => {
+  const doorFlat = [
+    'symbol "Door" {',
+    '  timeline 24 24',
+    '  states door { closed at 0  open at 24  initial closed  transition 12 ease easeInOut }',
+    '  layer "panel" {',
+    '    path "M0 0L20 0L20 40L0 40Z" fill #884422',
+    '  }',
+    '}',
+    '',
+  ].join('\n')
+
+  it('parses a states machine onto the symbol', () => {
+    const sym = parseFlat(doorFlat)[0]
+    expect(sym.states).toHaveLength(1)
+    const sm = sym.states![0]
+    expect(sm.param).toBe('door')
+    expect(sm.states).toEqual([{ name: 'closed', frame: 0 }, { name: 'open', frame: 24 }])
+    expect(sm.initial).toBe('closed')
+    expect(sm.transition).toBe(12)
+    expect(sm.ease).toBe('easeInOut')
+  })
+
+  it('round-trips stably', () => {
+    expect(printFlat(parseFlat(doorFlat))).toBe(doorFlat)
+  })
+
+  it('a minimal states block (no initial/transition) round-trips', () => {
+    const t = ['symbol "Light" {', '  timeline 24 2', '  states lit { off at 0  on at 1 }', '  layer "l" {', '    path "M0 0L1 0L1 1Z" fill #ffff00', '  }', '}', ''].join('\n')
+    expect(printFlat(parseFlat(t))).toBe(t)
+  })
+})
+
+describe('flatFormat — symbol params block + fill <param> + call-site (params interface)', () => {
+  const boat = [
+    'symbol "Boat" {',
+    '  params {',
+    '    color hull = #c0392b "Hull color"',
+    '    color sail = #2980b9',
+    '    number wave = 1 range 0 2 "Bob amplitude"',
+    '    bool flag = true',
+    '  }',
+    '  layer "body" {',
+    '    path "M0 0L40 0L40 20L0 20Z" fill hull',
+    '    instance "Pennant" as "Flag" at 30,0 { tone = warm, size = 1.5 }',
+    '  }',
+    '}',
+    '',
+    'symbol "Pennant" {',
+    '  layer "l" {',
+    '    path "M0 0L8 4L0 8Z" fill #ffffff',
+    '  }',
+    '}',
+    '',
+  ].join('\n')
+
+  it('parses params (type/default/range/doc), fill <param>, and call-site values', () => {
+    const [boatSym, pennant] = parseFlat(boat)
+    expect(boatSym.params).toEqual([
+      { name: 'hull', type: 'color', default: '#c0392b', doc: 'Hull color' },
+      { name: 'sail', type: 'color', default: '#2980b9' },
+      { name: 'wave', type: 'number', default: '1', min: 0, max: 2, doc: 'Bob amplitude' },
+      { name: 'flag', type: 'bool', default: 'true' },
+    ])
+    const region = boatSym.layers[0].items[0] as { fillParam?: string }
+    expect(region.fillParam).toBe('hull')
+    const inst = boatSym.layers[0].items[1] as { params?: Record<string, string> }
+    expect(inst.params).toEqual({ tone: 'warm', size: '1.5' })
+    expect(pennant.name).toBe('Pennant')
+  })
+
+  it('round-trips stably', () => {
+    expect(printFlat(parseFlat(boat))).toBe(boat)
+  })
+})
+
+describe('flatFormat — states/params reserved-word & range edge cases (review fixes)', () => {
+  it('a state named `initial`/`transition` is disambiguated by the `at` lookahead', () => {
+    const t = ['symbol "S" {', '  timeline 24 6', '  states s { initial at 0  transition at 3  done at 6  initial done }', '  layer "l" {', '    path "M0 0L1 0L1 1Z" fill #000000', '  }', '}', ''].join('\n')
+    const sm = parseFlat(t)[0].states![0]
+    expect(sm.states.map((a) => a.name)).toEqual(['initial', 'transition', 'done']) // names, not keywords
+    expect(sm.initial).toBe('done')
+    expect(printFlat(parseFlat(t))).toBe(t) // stable round-trip
+  })
+
+  it('a number param range round-trips (and a min-only range still serializes)', () => {
+    const t = ['symbol "P" {', '  params {', '    number wave = 1 range 0 2', '  }', '  layer "l" {', '    path "M0 0L1 0L1 1Z" fill #000000', '  }', '}', ''].join('\n')
+    expect(printFlat(parseFlat(t))).toBe(t)
+  })
+})

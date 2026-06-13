@@ -78,6 +78,8 @@ Usage:
   --bbox all|frame0 (with --preview) auto-size to the UNION over all frames (default 'all', no clipping of
                     drifting/rotating/growing motion) or just frame 0 ('frame0', the old behavior)
   --pad N           (with --preview) padding in px around the symbol's bounds (default 24)
+  --set p=v[,p2=v2] (with --preview) set the symbol's exposed params; a state param takes a state NAME
+                    or a number (e.g. --set door=open), others take a number → baked into the preview
   --frame N         (with --render) target frame (default 0)
   --at k=v[,k2=v2]  (with --render) force variables → capture a given state (e.g. a step of an escape)
   --steps N         (with --render) run N fixed sim steps (60 Hz, every-frame) BEFORE capture → see a
@@ -245,7 +247,7 @@ async function renderOnce(filePath: string, out: string, frame: number, vars: Re
  * hand-authoring a wrapper `.flatink`. The root timeline borrows the symbol's own fps/duration so a `synced`
  * instance loops at its natural rate. Throws if the lib is empty or the named symbol is missing.
  */
-function buildPreviewDoc(flatPath: string, symbolName: string, pad: number, bboxMode: 'all' | 'frame0'): { doc: Doc; symbol: SymbolDef; others: string[] } {
+function buildPreviewDoc(flatPath: string, symbolName: string, pad: number, bboxMode: 'all' | 'frame0', setSpec: Record<string, string> = {}): { doc: Doc; symbol: SymbolDef; others: string[] } {
   const { symbols } = parseFlatLib(readFileSync(flatPath, 'utf8'))
   if (!symbols.length) throw new Error('no symbols found in this .flat library')
   let symbol = symbols[0]
@@ -283,13 +285,25 @@ function buildPreviewDoc(flatPath: string, symbolName: string, pad: number, bbox
     doc = { ...doc, width: 512, height: 512 } // empty/degenerate symbol: fall back to a fixed centered stage
     instance.transform = { ...IDENTITY, e: 256, f: 256 }
   }
+
+  // `--set param=value`: set the preview instance's exposed params (call-site values, raw literals). The
+  // renderer resolves them per the symbol's ParamDef / state machines (color → fill, number/bool → scope,
+  // state name → driven frame). A light validation warns on names the symbol does not expose.
+  const entries = Object.entries(setSpec)
+  if (entries.length) {
+    const known = new Set([...(symbol.states ?? []).map((s) => s.param), ...(symbol.params ?? []).map((p) => p.name)])
+    for (const [k, v] of entries) {
+      if (!known.has(k)) process.stderr.write(`flatc: --set ${k}: "${symbol.name}" exposes no such param (${[...known].join(', ') || 'none'})\n`)
+      else (instance.params ??= {})[k] = v
+    }
+  }
   return { doc, symbol, others: symbols.filter((s) => s !== symbol).map((s) => s.name) }
 }
 
 /** --preview: wraps one symbol of a `.flat` into a playable Doc, then writes a .flatpack (default) or a PNG (with --render). */
-async function previewOnce(flatPath: string, symbolName: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, doRender: boolean, pad: number, bboxMode: 'all' | 'frame0'): Promise<number> {
+async function previewOnce(flatPath: string, symbolName: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, doRender: boolean, pad: number, bboxMode: 'all' | 'frame0', setSpec: Record<string, string>): Promise<number> {
   let built: { doc: Doc; symbol: SymbolDef; others: string[] }
-  try { built = buildPreviewDoc(flatPath, symbolName, pad, bboxMode) }
+  try { built = buildPreviewDoc(flatPath, symbolName, pad, bboxMode, setSpec) }
   catch (e) { process.stderr.write(`flatc: ${(e as Error).message}\n`); return 1 }
   const { doc, symbol, others } = built
   const stem = `${basename(flatPath, extname(flatPath))}.${symbol.name}`
@@ -314,6 +328,7 @@ export function run(argv: string[]): number | Promise<number> {
   let bboxMode: 'all' | 'frame0' = 'all'
   let assetMode: AssetMode = 'inline'
   const vars: Record<string, number> = {}
+  const setSpec: Record<string, string> = {} // `--set param=value` (state name or number) for --preview
   const positional: string[] = []
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
@@ -333,6 +348,7 @@ export function run(argv: string[]): number | Promise<number> {
     else if (a === '--steps') steps = Math.max(0, Number(args[++i] ?? '0') || 0)
     else if (a === '--scale') scale = Number(args[++i] ?? '2') || 2
     else if (a === '--at') parseVars(args[++i] ?? '', vars)
+    else if (a === '--set') for (const pair of (args[++i] ?? '').split(',')) { const j = pair.indexOf('='); if (j > 0) setSpec[pair.slice(0, j).trim()] = pair.slice(j + 1).trim() }
     else if (a === '-h' || a === '--help') { printHelp(); return 0 }
     else positional.push(a)
   }
@@ -342,7 +358,7 @@ export function run(argv: string[]): number | Promise<number> {
   if (!existsSync(filePath)) { process.stderr.write(`flatc: not found: ${filePath}\n`); return 1 }
 
   const explicitFlats = positional.slice(1)
-  if (doPreview) return previewOnce(filePath, symbolName, out, frame, vars, scale, steps, doRender, pad, bboxMode)
+  if (doPreview) return previewOnce(filePath, symbolName, out, frame, vars, scale, steps, doRender, pad, bboxMode, setSpec)
   if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps)
   if (doPlay) return playOnce(filePath, scriptPath, doTrace)
   if (doWatch) {

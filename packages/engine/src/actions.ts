@@ -39,6 +39,10 @@ export interface ActionHost {
   setVar(name: string, v: number): void
   /** Writes `arr[i] = v` (array variable). */
   setIndex(name: string, i: number, v: number): void
+  /** Sets an instanced symbol's exposed param by instance name (`Door.door = open`). `value` is RAW: a
+   *  state NAME (resolved against the symbol's state machine) or an expression (evaluated). No-op if
+   *  the instance/param is unknown. */
+  setParam(target: string, param: string, value: string): void
   /** Calls a procedure defined by `fn name(params) { … }` (params already evaluated). */
   callProc(name: string, args: number[]): void
   /** Evaluates an expression in the current runtime context (variables, time…). */
@@ -79,6 +83,9 @@ function runAction(a: Action, host: ActionHost, budget: Budget): void {
       break
     case 'setIndex':
       host.setIndex(a.name, Math.round(host.evalNumber(a.index)), host.evalNumber(a.value))
+      break
+    case 'setParam':
+      host.setParam(a.target, a.param, a.value) // value RAW (state name or expr) → resolved by the host
       break
     case 'if':
       // Language convention: a value ≠ 0 is "true" (cf. expr.ts).

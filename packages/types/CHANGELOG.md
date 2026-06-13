@@ -1,5 +1,46 @@
 # @flatkit/types
 
+## 0.7.0
+
+### Minor Changes
+
+- Exposed typed **params** on `.flat` symbols — a symbol's public interface (restyle/tune without touching
+  internals, e.g. by a small model).
+
+  - New `params { <type> <name> = <default> [range <min> <max>] ["doc"] … }` block on a symbol. `<type>` is
+    `color`, `number`, or `bool`.
+  - **`color` params** feed a fill: `fill <param>` (new `Region.fillParam`), resolved per instance at render.
+  - **`number`/`bool` params** become variables in the symbol's expressions (`expr y "sin(time)*wave"`,
+    `"flag ? 1 : 0"`).
+  - Set at the instance call-site — `instance "Boat" { hull = #1a5, wave = 1.5 }` (new `Instance.params`) —
+    in `flatc --preview --set hull=#1a5,wave=1.5`, or (number/bool) at runtime via `Name.param = value`.
+  - New pure module `@flatkit/engine/params` (`resolveInstanceParams`): declared defaults + call-site values,
+    with state initials, into a per-instance `{ numeric, color }` scope (runtime overrides layered on top).
+  - Docs: "Exposed parameters" section in the Animating a symbol guide.
+
+  Note: param values referenced in a symbol's expressions are not yet added to the linter's known-identifier
+  set (a future editor/lint refinement); color params are call-site/preview/default only (no live runtime
+  color change yet).
+
+- Exposed **named states** on `.flat` symbols (first slice of the symbol "public interface").
+
+  - New `states <param> { <name> at <frame> … [initial <name>] [transition <n> [ease <e>]] }` block on a
+    symbol. It declares an exposed param whose value selects a named state, anchored to a frame of the
+    symbol's timeline.
+  - The param **drives the symbol's local playhead**: `door = closed`/`0` → the closed frame, `door = open`/`1`
+    → the open frame, `door = 0.5` → the authored in-between (so animating the variable plays the transition).
+    States live inside the ordinary variable/expression system — no bespoke runtime.
+  - `flatc --preview --set param=value` selects a state (by name or number) and bakes it into the preview,
+    for both the `.flatpack` and `--render` output.
+  - **Per-instance state from a program**: new `Name.param = value` action (`setParam`) addresses an instance
+    by name and sets its exposed state (a state name or an expression). The player animates the declared
+    `transition` automatically, and each instance keeps its own independent state.
+  - New pure module `@flatkit/engine/states` (`stateFrame`, `stateValueOf`, `initialStateValue`).
+  - Docs: "Named states" section (incl. `set Name.param = state`) in the Animating a symbol guide.
+
+  Next: the broader typed `params {}` interface (colors/numbers/toggles, `fill hull`), and reading another
+  object's state back by name in expressions.
+
 ## 0.6.0
 
 ### Minor Changes

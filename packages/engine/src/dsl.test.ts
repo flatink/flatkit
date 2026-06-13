@@ -415,3 +415,20 @@ describe('dsl — sound (play an audio clip)', () => {
     expect(r.units).toEqual([{ kind: 'event', event: 'enterFrame', body: [{ do: 'setVar', name: 'sound', value: '1' }] }])
   })
 })
+
+describe('dsl — setParam (Name.param = value)', () => {
+  it('round-trips a state assignment with a bare state name (no expression diagnostic)', () => {
+    const units: ScriptUnit[] = [{ kind: 'event', event: 'click', body: [{ do: 'setParam', target: 'Door', param: 'door', value: 'open' }] }]
+    const src = printUnits(units)
+    expect(src).toBe('when clicked {\n  Door.door = open\n}\n')
+    const r = parseUnits(src)
+    expect(r.diagnostics).toEqual([]) // `open` is a state name, not linted as a variable
+    expect(r.units).toEqual(units)
+  })
+
+  it('accepts an expression on the right-hand side too', () => {
+    const r = parseUnits('when clicked {\n  Gauge.level = score / 100\n}\n')
+    expect(r.diagnostics).toEqual([])
+    expect(r.units[0]).toEqual({ kind: 'event', event: 'click', body: [{ do: 'setParam', target: 'Gauge', param: 'level', value: 'score / 100' }] })
+  })
+})

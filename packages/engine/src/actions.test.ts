@@ -15,6 +15,7 @@ function mock() {
     labelFrame: (n) => labels[n],
     setVar: (n, v) => vars.set(n, v),
     setIndex: (n, i, v) => { const a = vars.get(n); if (Array.isArray(a)) a[i] = v },
+    setParam: (t, p, v) => calls.push(`setParam:${t}.${p}=${v}`),
     callProc: () => {},
     emit: (name, value) => events.push(value === undefined ? { name } : { name, value }),
     textContent: (id) => texts[id] ?? '',

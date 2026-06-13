@@ -26,9 +26,14 @@ There are no booleans — comparisons and logic yield `1` / `0`.
 sin cos tan  asin acos atan atan2
 abs sqrt pow exp log  floor ceil round sign
 min max  hypot  clamp(x, lo, hi)  lerp(a, b, t)  mod(a, b)  between(x, lo, hi)
+rad(deg)  deg(rad)  turns(n)
 ```
 
 Constants: `PI`, `TAU` (2π), `E`.
+
+**Angles are RADIANS** (the `rotation` channel, `sin`/`cos`/`atan2`). Author in degrees with the helpers:
+`rad(45)` (degrees → radians), `turns(n)` (n full turns → radians, e.g. `rotation = turns(time)` spins once
+per second), `deg(r)` (the inverse, for readouts).
 
 ## Reserved names
 
