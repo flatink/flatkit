@@ -41,6 +41,9 @@
     "onlyBuiltDependencies": [
       "esbuild",
       "skia-canvas"
-    ]
+    ],
+    "overrides": {
+      "esbuild": ">=0.28.1"
+    }
   }
 }
