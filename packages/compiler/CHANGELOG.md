@@ -1,5 +1,18 @@
 # @flatkit/compiler
 
+## 0.5.0
+
+### Minor Changes
+
+- `flatc --preview <library.flat>`: wrap a single symbol from a `.flat` library into a minimal, playable `Doc` — a single instance centered on a stage auto-sized to the symbol's bounds — without hand-authoring a wrapper `.flatink`. Outputs a `.flatpack` to drop in the player (default) or a PNG with `--render`. `--symbol NAME` selects the symbol (default: the first; others are listed), `--pad N` sets the padding (default 24px); with `--render` the usual `--frame` / `--scale` / `--at` / `--steps` apply, and the symbol's own (possibly nested) timeline plays as the root frame advances.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @flatkit/types@0.5.0
+  - @flatkit/engine@0.5.0
+  - @flatkit/player@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes

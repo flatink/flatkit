@@ -31,6 +31,24 @@ flatc: scene.flatpack ✓  2 symbol(s) · 2 lib(s) · 2 package(s) · 1 media
 Full usage: `pnpm flatc --help`. The binary is also exposed under the name `flatc`
 (`packages/compiler` → `bin/flatc.mjs`) for `npx` use.
 
+## Preview a single asset (`--preview`)
+
+A `.flat` is a symbol **library**, not a playable document — the player runs a `Doc`. To eyeball one
+asset (with its own timeline, nested symbols and all) without hand-authoring a wrapper `.flatink`,
+`--preview` wraps a symbol into a minimal playable `Doc`: a single instance, centered on a stage
+auto-sized to the symbol's bounds.
+
+```bash
+pnpm flatc examples/cli/hero.flat --preview -o hero.flatpack   # → a .flatpack to drop in the player
+pnpm flatc examples/cli/hero.flat --preview --render -o hero.png --frame 12   # → a PNG snapshot
+```
+
+- `--symbol NAME` picks which symbol to wrap (default: the first in the lib; the others are listed);
+- `--pad N` sets the padding around the symbol (default 24px — absorbs motion that overshoots the
+  frame-0 bounds);
+- with `--render`, the usual `--frame` / `--scale` / `--at` / `--steps` apply (the symbol's own
+  timeline plays as the root frame advances). Output defaults to `<library>.<symbol>.flatpack` / `.png`.
+
 ## Packages (`use "…"`)
 
 A program imports reusable code with `use "name"`. Resolution order (the v1 "registry"):

@@ -12,15 +12,17 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, watch, mkdirSync, copyFileSync } from 'node:fs'
 import { resolve, dirname, basename, extname, join, relative, isAbsolute } from 'node:path'
 import { compileFlatpack, packToJSON, type MediaMap } from '../compile'
-import { parseProgramFull } from '@flatkit/engine/flatFormat'
+import { parseProgramFull, parseFlatLib } from '@flatkit/engine/flatFormat'
 import { hasPackage } from '@flatkit/engine/stdlib'
 import { parseUnits } from '@flatkit/engine/dsl'
 import { sanitizeDoc } from '@flatkit/engine/validateDoc'
 import { unitsToFunctions } from '@flatkit/engine/scriptDoc'
+import { containerBBox } from '@flatkit/engine/groups'
+import { IDENTITY } from '@flatkit/engine/transform'
 import { lintDocReport, docHasErrors } from '../programDoc'
 import { playHeadless, type Gesture } from '@flatkit/player/debug'
 import type { FuncDef } from '@flatkit/engine/actions'
-import type { Doc } from '@flatkit/types'
+import type { Doc, Instance, Layer, SymbolDef } from '@flatkit/types'
 
 const MIME: Record<string, string> = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
@@ -50,6 +52,7 @@ Usage:
   flatc <program.flatink> --watch
   flatc --play <program.flatink | scene.flatpack> --script <gestures.json>
   flatc --render <program.flatink | scene.flatpack> -o out.png [--frame N] [--at k=v[,k2=v2]] [--scale S]
+  flatc --preview <library.flat> [--symbol NAME] [-o out.flatpack | --render -o out.png]
 
   program.flatink   the program (composition + logic, text DSL)
   assets.flat       visual asset libs (default: every .flat in the program's folder)
@@ -68,6 +71,11 @@ Usage:
                     "expect" self-verifies: { "type": "expect", "sends": ["done"], "vars": { "score": 3 } } → exits ≠0 on mismatch
                     (sends = sequence of names emitted SINCE the last expect; vars = current state). Great in CI.
   --render          render a PNG IMAGE (headless skia): see what we draw (positioning)
+  --preview         wrap ONE symbol of a <library.flat> into a playable Doc (a single centered instance on an
+                    auto-sized stage) → a .flatpack to drop in the browser player, or a PNG with --render.
+                    No wrapper .flatink to author by hand. Output defaults to <library>.<symbol>.flatpack/.png
+  --symbol NAME     (with --preview) which symbol to wrap (default: the first in the lib)
+  --pad N           (with --preview) padding in px around the symbol's bounds (default 24)
   --frame N         (with --render) target frame (default 0)
   --at k=v[,k2=v2]  (with --render) force variables → capture a given state (e.g. a step of an escape)
   --steps N         (with --render) run N fixed sim steps (60 Hz, every-frame) BEFORE capture → see a
@@ -210,11 +218,8 @@ function parseVars(spec: string, into: Record<string, number>): void {
   }
 }
 
-/** --render: renders the file to PNG (headless skia). Async (SVG decode + raster). */
-async function renderOnce(filePath: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number): Promise<number> {
-  let doc: Doc
-  try { doc = loadDoc(filePath) } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
-  const outPath = out ? resolve(out) : join(dirname(filePath), basename(filePath, extname(filePath)) + '.png')
+/** Renders a Doc to a PNG file (headless skia). Async (SVG decode + raster). Shared by --render and --preview. */
+async function renderDocToFile(doc: Doc, outPath: string, frame: number, vars: Record<string, number>, scale: number, steps: number): Promise<number> {
   try {
     const { renderDocToPng } = await import('./render')
     const png = await renderDocToPng(doc, { frame, vars: Object.keys(vars).length ? vars : undefined, scale, steps: steps || undefined })
@@ -224,11 +229,75 @@ async function renderOnce(filePath: string, out: string, frame: number, vars: Re
   return 0
 }
 
+/** --render: renders the file to PNG (headless skia). Async (SVG decode + raster). */
+async function renderOnce(filePath: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number): Promise<number> {
+  let doc: Doc
+  try { doc = loadDoc(filePath) } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
+  const outPath = out ? resolve(out) : join(dirname(filePath), basename(filePath, extname(filePath)) + '.png')
+  return renderDocToFile(doc, outPath, frame, vars, scale, steps)
+}
+
+/**
+ * Wraps ONE symbol from a `.flat` library into a minimal, playable Doc: a single centered instance on a
+ * canvas auto-sized to the symbol's frame-0 bounds (+ padding). Lets you preview a library asset without
+ * hand-authoring a wrapper `.flatink`. The root timeline borrows the symbol's own fps/duration so a `synced`
+ * instance loops at its natural rate. Throws if the lib is empty or the named symbol is missing.
+ */
+function buildPreviewDoc(flatPath: string, symbolName: string, pad: number): { doc: Doc; symbol: SymbolDef; others: string[] } {
+  const { symbols } = parseFlatLib(readFileSync(flatPath, 'utf8'))
+  if (!symbols.length) throw new Error('no symbols found in this .flat library')
+  let symbol = symbols[0]
+  if (symbolName) {
+    const found = symbols.find((s) => s.name === symbolName)
+    if (!found) throw new Error(`symbol "${symbolName}" not found — available: ${symbols.map((s) => s.name).join(', ')}`)
+    symbol = found
+  }
+
+  const instance: Instance = { id: 'preview_instance', kind: 'instance', name: symbol.name, transform: { ...IDENTITY }, symbolId: symbol.id }
+  const layer: Layer = { id: 'preview_layer', name: 'preview', visible: true, locked: false, opacity: 1, items: [instance] }
+  const tl = symbol.timeline
+  const timeline = { fps: tl?.fps ?? 24, durationFrames: tl?.durationFrames ?? 1, tracks: [] }
+  // ALL symbols stay in the library (the chosen one may instance the others) — only `instance` is on stage.
+  let doc: Doc = { width: 1, height: 1, layers: [layer], symbols, timeline }
+
+  // Auto-size & center: measure the instance's frame-0 bounds, pad, recenter at the canvas middle. (bbox
+  // freezes nested timelines at frame 0, so animated motion may exceed it — that's what `pad` absorbs.)
+  const bb = containerBBox(doc, instance, 0)
+  if (bb) {
+    doc = { ...doc, width: Math.max(1, Math.ceil(bb.maxX - bb.minX) + pad * 2), height: Math.max(1, Math.ceil(bb.maxY - bb.minY) + pad * 2) }
+    instance.transform = { ...IDENTITY, e: pad - bb.minX, f: pad - bb.minY }
+  } else {
+    doc = { ...doc, width: 512, height: 512 } // empty/degenerate symbol: fall back to a fixed centered stage
+    instance.transform = { ...IDENTITY, e: 256, f: 256 }
+  }
+  return { doc, symbol, others: symbols.filter((s) => s !== symbol).map((s) => s.name) }
+}
+
+/** --preview: wraps one symbol of a `.flat` into a playable Doc, then writes a .flatpack (default) or a PNG (with --render). */
+async function previewOnce(flatPath: string, symbolName: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, doRender: boolean, pad: number): Promise<number> {
+  let built: { doc: Doc; symbol: SymbolDef; others: string[] }
+  try { built = buildPreviewDoc(flatPath, symbolName, pad) }
+  catch (e) { process.stderr.write(`flatc: ${(e as Error).message}\n`); return 1 }
+  const { doc, symbol, others } = built
+  const stem = `${basename(flatPath, extname(flatPath))}.${symbol.name}`
+  let code: number
+  if (doRender) {
+    code = await renderDocToFile(doc, out ? resolve(out) : join(dirname(flatPath), stem + '.png'), frame, vars, scale, steps)
+  } else {
+    const outPath = out ? resolve(out) : join(dirname(flatPath), stem + '.flatpack')
+    writeFileSync(outPath, packToJSON(doc))
+    process.stdout.write(`flatc: ${basename(outPath)} ✓  preview of "${symbol.name}" · ${doc.width}×${doc.height} · play it in the browser player\n`)
+    code = 0
+  }
+  if (!symbolName && others.length) process.stderr.write(`flatc: previewed "${symbol.name}"; other symbols in this lib: ${others.join(', ')} (pick with --symbol <name>)\n`)
+  return code
+}
+
 export function run(argv: string[]): number | Promise<number> {
   const args = argv.slice(2)
-  let out = '', scriptPath = ''
-  let checkOnly = false, doWatch = false, doPlay = false, doRender = false, doTrace = false
-  let frame = 0, scale = 2, steps = 0
+  let out = '', scriptPath = '', symbolName = ''
+  let checkOnly = false, doWatch = false, doPlay = false, doRender = false, doTrace = false, doPreview = false
+  let frame = 0, scale = 2, steps = 0, pad = 24
   let assetMode: AssetMode = 'inline'
   const vars: Record<string, number> = {}
   const positional: string[] = []
@@ -242,6 +311,9 @@ export function run(argv: string[]): number | Promise<number> {
     else if (a === '--play') doPlay = true
     else if (a === '--trace') doTrace = true
     else if (a === '--render') doRender = true
+    else if (a === '--preview') doPreview = true
+    else if (a === '--symbol') symbolName = args[++i] ?? ''
+    else if (a === '--pad') pad = Math.max(0, Number(args[++i] ?? '24') || 0)
     else if (a === '--frame') frame = Number(args[++i] ?? '0') || 0
     else if (a === '--steps') steps = Math.max(0, Number(args[++i] ?? '0') || 0)
     else if (a === '--scale') scale = Number(args[++i] ?? '2') || 2
@@ -255,6 +327,7 @@ export function run(argv: string[]): number | Promise<number> {
   if (!existsSync(filePath)) { process.stderr.write(`flatc: not found: ${filePath}\n`); return 1 }
 
   const explicitFlats = positional.slice(1)
+  if (doPreview) return previewOnce(filePath, symbolName, out, frame, vars, scale, steps, doRender, pad)
   if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps)
   if (doPlay) return playOnce(filePath, scriptPath, doTrace)
   if (doWatch) {

@@ -88,6 +88,42 @@ describe('flatc — CLI', () => {
     }
   })
 
+  it('--preview <library.flat> → wraps one symbol into a playable, auto-sized Doc', async () => {
+    const out = join(cli, '__preview.flatpack')
+    try {
+      expect(await run(['node', 'flatc', join(cli, 'hero.flat'), '--preview', '-o', out])).toBe(0)
+      const doc = JSON.parse(readFileSync(out, 'utf8'))
+      expect(doc.symbols.map((s: { name: string }) => s.name)).toContain('Hero') // the lib is kept
+      expect(doc.layers).toHaveLength(1)
+      const inst = doc.layers[0].items[0]
+      expect(inst.kind).toBe('instance')
+      expect(inst.symbolId).toBe(doc.symbols.find((s: { name: string }) => s.name === 'Hero').id) // resolved ref
+      // Hero spans ±24 (48×48); with the default 24px pad the stage is 96×96 and the instance is centered.
+      expect(doc.width).toBe(96)
+      expect(doc.height).toBe(96)
+      expect(inst.transform.e).toBe(48)
+      expect(inst.transform.f).toBe(48)
+    } finally {
+      rmSync(out, { force: true })
+    }
+  })
+
+  it('--preview --symbol NAME selects the symbol; a missing name fails ≠0', async () => {
+    const lib = join(cli, '__multi.flat')
+    writeFileSync(lib, 'symbol "Dot" {\n  layer "l" { path "M-8 -8L8 -8L8 8L-8 8Z" fill #ff0000 }\n}\nsymbol "Badge" {\n  layer "l" { path "M-30 -30L30 -30L30 30L-30 30Z" fill #000000 }\n}\n')
+    const out = join(cli, '__multi.flatpack')
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      expect(await run(['node', 'flatc', lib, '--preview', '--symbol', 'Badge', '-o', out])).toBe(0)
+      expect(JSON.parse(readFileSync(out, 'utf8')).layers[0].items[0].name).toBe('Badge')
+      expect(await run(['node', 'flatc', lib, '--preview', '--symbol', 'Nope', '-o', out])).toBe(1) // unknown symbol
+    } finally {
+      spy.mockRestore()
+      rmSync(lib, { force: true })
+      rmSync(out, { force: true })
+    }
+  })
+
   it('--render <file> -o out.png → headless PNG (skia)', async () => {
     let hasSkia = true
     const skiaPkg: string = 'skia-canvas' // non-literal specifier: not resolved at build time (optional native dep)
