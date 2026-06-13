@@ -105,6 +105,7 @@ function printPoseAttrs(it: Poseable, withExpr: boolean): string {
   if (it.tint && it.tint.amount > 0) s += ` tint ${it.tint.color} ${n(it.tint.amount)}`
   if (it.blend) s += ` blend ${it.blend}`
   if ('hitbox' in it && it.hitbox) s += ` hitbox ${n(it.hitbox.w)} ${n(it.hitbox.h)}`
+  if ('clip' in it && it.clip) s += ` clip ${n(it.clip.x)} ${n(it.clip.y)} ${n(it.clip.w)} ${n(it.clip.h)}`
   if (it.filters) for (const f of it.filters) s += ' ' + printFilter(f)
   // Inlined channel expressions (`.flat`) — on ALL poseable leaves (group/instance/text/image).
   if (withExpr && it.expressions) for (const ch of EXPR_CHANNELS) { const ex = it.expressions[ch]; if (ex) s += ` expr ${ch} ${q(ex)}` }
@@ -123,7 +124,7 @@ function printRegion(r: Region, d: string): string {
   else if (r.fillParam) s += ` fill ${r.fillParam}` // fill bound to a symbol color param
   else s += ` fill ${printPaint(r.paint ?? { type: 'solid', color: r.color })}`
   if (r.stroke) {
-    s += ` stroke ${printPaint(r.stroke.paint)} ${n(r.stroke.width)}`
+    s += ` stroke ${r.strokeParam ?? printPaint(r.stroke.paint)} ${n(r.stroke.width)}` // param ref or literal paint
     if (r.stroke.cap) s += ` cap ${r.stroke.cap}`
     if (r.stroke.join) s += ` join ${r.stroke.join}`
     if (r.stroke.miterLimit != null) s += ` miter ${n(r.stroke.miterLimit)}`
@@ -851,7 +852,7 @@ function tokenize(src: string): Tok[] {
   return out
 }
 
-type ParsedAttrs = { opacity?: number; pivot?: { x: number; y: number }; tint?: Tint; filters?: Filter[]; expressions?: Partial<Record<ExprChannel, string>>; noHit?: boolean; blend?: BlendMode; hitbox?: { w: number; h: number } }
+type ParsedAttrs = { opacity?: number; pivot?: { x: number; y: number }; tint?: Tint; filters?: Filter[]; expressions?: Partial<Record<ExprChannel, string>>; noHit?: boolean; blend?: BlendMode; hitbox?: { w: number; h: number }; clip?: { x: number; y: number; w: number; h: number } }
 
 /** An `align <point> of "target" [offset]` pending: `tf` is the SHARED ref with the item, mutated
  *  in place by resolveAligns once the scene is parsed (the bbox of `target` is then computable). */
@@ -952,11 +953,12 @@ class FlatParser {
     const name = this.str()
     const folderId = this.is('in') ? (this.next(), this.folderIdForPath(this.str())) : undefined // library folder
     this.eat('{')
-    const timeline = this.is('timeline') ? this.timeline() : undefined
+    let timeline: Timeline | undefined
     const states: StateMachine[] = []
     const params: ParamDef[] = []
-    for (;;) { // `states` and `params` blocks (any order) precede the layers
-      if (this.is('states')) states.push(this.stateMachine())
+    for (;;) { // header blocks accepted in ANY order before the layers (timeline / params / states)
+      if (this.is('timeline')) timeline = this.timeline()
+      else if (this.is('states')) states.push(this.stateMachine())
       else if (this.is('params')) params.push(...this.paramsBlock())
       else break
     }
@@ -1135,19 +1137,23 @@ class FlatParser {
     let noHit = false
     let filters: Filter[] | undefined
     let color = '#000000'
-    let fillParam: string | undefined
+    let fillParam: string | undefined, strokeParam: string | undefined
+    // `fill`/`stroke` accept a bare identifier = a symbol COLOR param ref (not a #color, linear/radial, none).
+    const isParamRef = () => { const k = this.peek(); return !!k && k.k === 'id' && k.v !== 'linear' && k.v !== 'radial' && k.v !== 'none' }
     for (;;) {
       if (this.is('nofill')) { this.next(); noFill = true }
       else if (this.is('filter')) { (filters ??= []).push(this.filter()) }
       else if (this.is('fill')) {
         this.next()
-        const k = this.peek()
-        // `fill <paramName>`: a bare identifier (not a #color, linear/radial, or `none`) = a symbol color param.
-        if (k && k.k === 'id' && k.v !== 'linear' && k.v !== 'radial' && k.v !== 'none') { fillParam = this.next().v }
+        if (isParamRef()) { fillParam = this.next().v }
         else { paint = this.paint(); color = paintColor(paint) }
       }
       else if (this.is('stroke')) {
-        this.next(); const sp = this.paint(); const w = this.num()
+        this.next()
+        let sp: Paint
+        if (isParamRef()) { strokeParam = this.next().v; sp = { type: 'solid', color: '#000000' } } // resolved per instance
+        else sp = this.paint()
+        const w = this.num()
         const st: NonNullable<Region['stroke']> = { width: w, paint: sp }
         for (;;) {
           if (this.is('cap')) { this.next(); st.cap = this.next()!.v as NonNullable<Region['stroke']>['cap'] }
@@ -1156,7 +1162,7 @@ class FlatParser {
           else if (this.is('dash')) { this.next(); const ds: number[] = [this.num()]; while (this.is(',')) { this.eat(','); ds.push(this.num()) } st.dash = ds }
           else break
         }
-        stroke = st; if (!paint && !noFill) color = paintColor(sp)
+        stroke = st; if (!paint && !noFill && !strokeParam) color = paintColor(sp)
       }
       else if (this.is('opacity')) { this.next(); opacity = this.num() }
       else if (this.is('nohit')) { this.next(); noHit = true }
@@ -1165,6 +1171,7 @@ class FlatParser {
     const r: Region = { id: uid('r'), color, path }
     if (paint && paint.type !== 'solid') r.paint = paint
     if (fillParam) r.fillParam = fillParam
+    if (strokeParam) r.strokeParam = strokeParam
     if (noFill) r.noFill = true
     if (stroke) r.stroke = stroke
     if (opacity != null) r.opacity = opacity
@@ -1182,7 +1189,7 @@ class FlatParser {
     const layers: Layer[] = []
     while (!this.is('}')) layers.push(...this.layer())
     this.eat('}')
-    return { id: uid('g'), kind: 'group', name, transform, layers, ...leafAttrs(a), ...(a.hitbox ? { hitbox: a.hitbox } : {}), ...exprAttr(a), ...(timeline ? { timeline } : {}) }
+    return { id: uid('g'), kind: 'group', name, transform, layers, ...leafAttrs(a), ...(a.hitbox ? { hitbox: a.hitbox } : {}), ...(a.clip ? { clip: a.clip } : {}), ...exprAttr(a), ...(timeline ? { timeline } : {}) }
   }
   private instance(): Instance {
     this.eat('instance')
@@ -1192,7 +1199,7 @@ class FlatParser {
     const transform = this.transform(name)
     const a = this.poseAttrs()
     const params = this.is('{') ? this.callSiteParams() : undefined // `instance "X" { hull = #fff, wave = 1.5 }`
-    return { id: uid('i'), kind: 'instance', name, transform, symbolId: '@' + symName, ...leafAttrs(a), ...exprAttr(a), ...(params ? { params } : {}) }
+    return { id: uid('i'), kind: 'instance', name, transform, symbolId: '@' + symName, ...leafAttrs(a), ...(a.clip ? { clip: a.clip } : {}), ...exprAttr(a), ...(params ? { params } : {}) }
   }
   /** Call-site values for a symbol's exposed params: `{ name = <literal> [, name2 = …] }` (single-token literals). */
   private callSiteParams(): Record<string, string> {
@@ -1309,6 +1316,7 @@ class FlatParser {
       else if (this.is('nohit')) { this.next(); a.noHit = true }
       else if (this.is('blend')) { this.next(); a.blend = this.next().v as BlendMode }
       else if (this.is('hitbox')) { this.next(); const w = this.num(); const h = this.num(); a.hitbox = { w, h } }
+      else if (this.is('clip')) { this.next(); const x = this.num(); const y = this.num(); const w = this.num(); const h = this.num(); a.clip = { x, y, w, h } }
       else break
     }
     return a

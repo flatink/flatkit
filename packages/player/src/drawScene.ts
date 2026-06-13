@@ -431,6 +431,11 @@ function renderContainerChildren(
   parent: Transform = IDENTITY, // = WORLD space of this container (the children live inside it)
   depth = 0,
 ) {
+  // `clip x y w h`: rectangular clip in the container's LOCAL space (ctx is already transformed to it).
+  // SELF-bounded save/restore — a bare ctx.clip() can only be undone by restore(), and the filtered/tinted
+  // path draws on a POOLED scratch canvas with no surrounding save, so the clip would leak to a later
+  // unrelated subtree reusing that canvas. Wrapping here covers every caller path.
+  if (it.clip) { ctx.save(); ctx.beginPath(); ctx.rect(it.clip.x, it.clip.y, it.clip.w, it.clip.h); ctx.clip() }
   if (isInstance(it)) {
     // EDITOR (freezeNested): sub-scope frozen at 0; otherwise local frame (full animation, player).
     // Exposed params scope this instance's subtree (declared/call-site/state-initial + runtime override);
@@ -444,6 +449,7 @@ function renderContainerChildren(
     // Group without a timeline = same scope as the parent (not a sub-scope) -> follows the scope's frame.
     renderLayers(ctx, doc, containerLayers(doc, it), frame, hidden, seen, rctx, parent, depth + 1)
   }
+  if (it.clip) ctx.restore()
 }
 
 /**
@@ -659,7 +665,8 @@ function paintRegion(c: CanvasRenderingContext2D, reg: Region, colorParams?: Rec
     c.lineJoin = s.join ?? 'round'
     if (s.miterLimit != null) c.miterLimit = s.miterLimit
     c.setLineDash(s.dash ?? [])
-    c.strokeStyle = paintStyle(c, s.paint, regionBBox(reg), reg.color)
+    const paramColor = reg.strokeParam ? colorParams?.[reg.strokeParam] : undefined // `stroke <param>` → instance color
+    c.strokeStyle = paramColor || paintStyle(c, s.paint, regionBBox(reg), reg.color) // empty/undefined → literal paint
     c.stroke(path)
   }
 }

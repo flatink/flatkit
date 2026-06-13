@@ -257,6 +257,7 @@ export type Region = {
   paint?: Paint // optional rich paint (gradient); absent = solid `color`
   fillParam?: string // fill bound to a symbol COLOR param (`fill <paramName>`); resolved per instance at render
   stroke?: Stroke // stroke; absent = none
+  strokeParam?: string // stroke color bound to a symbol COLOR param (`stroke <paramName> <width>`); resolved per instance
   noFill?: boolean // true = no fill (path/stroke only, e.g. a pen line)
   xform?: Transform // accumulated display orientation (transform frame) — geometry stays baked; present = "oriented object" (no re-merge)
   opacity?: number // object opacity 0..1 (absent = 1)
@@ -288,6 +289,7 @@ export type Group = {
   blend?: BlendMode // blend mode (add/screen = additive light, multiply = shadow); absent = normal
   hitbox?: { w: number; h: number } // EXPLICIT drop zone (local rect centered on the origin, ±w/2 × ±h/2): used as the `when dropped on` target instead of the content bbox; avoids invisible paths
   expressions?: Partial<Record<ExprChannel, string>> // expression animation (cel model) — takes priority over the tween
+  clip?: ClipRect // rectangular clip in LOCAL coords (`clip x y w h`); content outside is cut
 }
 
 /** Instance of a reusable symbol: a transform + a reference to the symbol. */
@@ -307,7 +309,11 @@ export type Instance = {
   blend?: BlendMode // blend mode (add/screen = additive light, multiply = shadow); absent = normal
   expressions?: Partial<Record<ExprChannel, string>> // expression animation (cel model) — takes priority over the tween
   params?: Record<string, string> // call-site values for the symbol's exposed `params` (literal: #color / number / true|false / state name); resolved per the symbol's ParamDef
+  clip?: ClipRect // rectangular clip in LOCAL coords (`clip x y w h`); content outside is cut
 }
+
+/** A rectangular clip region in a container's LOCAL coordinates (`clip <x> <y> <w> <h>`). */
+export type ClipRect = { x: number; y: number; w: number; h: number }
 
 /**
  * Library folder (pure organization, Flash style): a tree by `parent`. SYMBOLS stay FLAT (referenced by

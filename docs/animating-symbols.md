@@ -131,10 +131,12 @@ symbol "Boat" {
 
 - `params { <type> <name> = <default> [range <min> <max>] ["doc"] … }` — `<type>` is `color`, `number`,
   or `bool`. The default, range, and doc string make the interface self-describing.
-- **`color` params** are used as a fill: `fill hull` (where a `#color` would go). They are resolved per
-  instance at render — they are *not* available in numeric expressions.
+- **`color` params** are used as a paint — `fill hull` **or** `stroke hull <width>` (anywhere a `#color`
+  literal goes). Resolved per instance at render; *not* available in numeric expressions.
 - **`number` / `bool` params** become **variables in the symbol's expressions** (`wave`, `flag`). `bool`
   reads as `1`/`0`.
+
+> The `timeline`, `params`, and `states` header blocks may appear in **any order** before the layers.
 
 Set params at the instance **call-site** (literals), in `--preview`, or — for `number`/`bool` — at
 runtime (`Boat.wave = 1.5`, see below):

@@ -957,3 +957,65 @@ describe('flatFormat — states/params reserved-word & range edge cases (review 
     expect(printFlat(parseFlat(t))).toBe(t)
   })
 })
+
+describe('flatFormat — stroke <param> (G) + free symbol section order (H)', () => {
+  it('G: `stroke <param>` parses to strokeParam and round-trips', () => {
+    const t = [
+      'symbol "Wave" {',
+      '  params {',
+      '    color edge = #336699',
+      '  }',
+      '  layer "l" {',
+      '    path "M0 0L20 0" nofill stroke edge 2',
+      '  }',
+      '}',
+      '',
+    ].join('\n')
+    const reg = parseFlat(t)[0].layers[0].items[0] as { strokeParam?: string; stroke?: { width: number } }
+    expect(reg.strokeParam).toBe('edge')
+    expect(reg.stroke?.width).toBe(2)
+    expect(printFlat(parseFlat(t))).toBe(t) // stable round-trip
+  })
+
+  it('H: `params`/`states` before `timeline` parses (order-independent); printer emits a canonical order', () => {
+    const scrambled = [
+      'symbol "S" {',
+      '  params { number wave = 1 }',
+      '  timeline 24 8',
+      '  states door { closed at 0  open at 8 }',
+      '  layer "l" {',
+      '    path "M0 0L1 0L1 1Z" fill #000000',
+      '  }',
+      '}',
+      '',
+    ].join('\n')
+    const sym = parseFlat(scrambled)[0] // no throw despite params-before-timeline
+    expect(sym.timeline?.durationFrames).toBe(8)
+    expect(sym.params?.[0].name).toBe('wave')
+    expect(sym.states?.[0].param).toBe('door')
+    // canonical order = timeline → params → states; re-parsing the printed form is stable
+    const printed = printFlat([sym])
+    expect(printed.indexOf('timeline')).toBeLessThan(printed.indexOf('params {'))
+    expect(printFlat(parseFlat(printed))).toBe(printed)
+  })
+})
+
+describe('flatFormat — clip on a container (D)', () => {
+  it('parses `clip x y w h` on a group and round-trips', () => {
+    const t = [
+      'symbol "Cut" {',
+      '  layer "l" {',
+      '    group "G" at 50,50 clip -40 -40 80 40 {',
+      '      layer "c" {',
+      '        path "M-30 -30L30 -30L30 30L-30 30Z" fill #4488cc',
+      '      }',
+      '    }',
+      '  }',
+      '}',
+      '',
+    ].join('\n')
+    const g = parseFlat(t)[0].layers[0].items[0] as { clip?: { x: number; y: number; w: number; h: number } }
+    expect(g.clip).toEqual({ x: -40, y: -40, w: 80, h: 40 })
+    expect(printFlat(parseFlat(t))).toBe(t)
+  })
+})

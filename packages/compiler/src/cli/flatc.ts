@@ -84,7 +84,8 @@ Usage:
   --at k=v[,k2=v2]  (with --render) force variables → capture a given state (e.g. a step of an escape)
   --steps N         (with --render) run N fixed sim steps (60 Hz, every-frame) BEFORE capture → see a
                     stateful act unfold without forcing every derived variable by hand in --at
-  --scale S         (with --render) resolution factor (default 2)
+  --scale S|auto    (with --render) resolution factor (default 2); 'auto' picks one from the canvas size
+                    (enlarges small/thin assets so fine filaments stay legible, large assets stay 1x)
   -h, --help        this help
 
 Media referenced by 'asset "id" "path" kind' are embedded (paths relative to the program).
@@ -222,6 +223,13 @@ function parseVars(spec: string, into: Record<string, number>): void {
   }
 }
 
+/** `--scale auto`: pick a resolution factor from the canvas size — enlarge small/thin content (so fine
+ *  filaments stay legible) while leaving large content at 1×. `max(160/long, 48/short)`, clamped [1, 8]. */
+function autoScale(w: number, h: number): number {
+  const maxSide = Math.max(1, w, h), minSide = Math.max(1, Math.min(w, h))
+  return Math.max(1, Math.min(8, Math.round(Math.max(160 / maxSide, 48 / minSide))))
+}
+
 /** Renders a Doc to a PNG file (headless skia). Async (SVG decode + raster). Shared by --render and --preview. */
 async function renderDocToFile(doc: Doc, outPath: string, frame: number, vars: Record<string, number>, scale: number, steps: number): Promise<number> {
   try {
@@ -234,11 +242,11 @@ async function renderDocToFile(doc: Doc, outPath: string, frame: number, vars: R
 }
 
 /** --render: renders the file to PNG (headless skia). Async (SVG decode + raster). */
-async function renderOnce(filePath: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number): Promise<number> {
+async function renderOnce(filePath: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, scaleAuto: boolean): Promise<number> {
   let doc: Doc
   try { doc = loadDoc(filePath) } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
   const outPath = out ? resolve(out) : join(dirname(filePath), basename(filePath, extname(filePath)) + '.png')
-  return renderDocToFile(doc, outPath, frame, vars, scale, steps)
+  return renderDocToFile(doc, outPath, frame, vars, scaleAuto ? autoScale(doc.width, doc.height) : scale, steps)
 }
 
 /**
@@ -301,7 +309,7 @@ function buildPreviewDoc(flatPath: string, symbolName: string, pad: number, bbox
 }
 
 /** --preview: wraps one symbol of a `.flat` into a playable Doc, then writes a .flatpack (default) or a PNG (with --render). */
-async function previewOnce(flatPath: string, symbolName: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, doRender: boolean, pad: number, bboxMode: 'all' | 'frame0', setSpec: Record<string, string>): Promise<number> {
+async function previewOnce(flatPath: string, symbolName: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, doRender: boolean, pad: number, bboxMode: 'all' | 'frame0', setSpec: Record<string, string>, scaleAuto: boolean): Promise<number> {
   let built: { doc: Doc; symbol: SymbolDef; others: string[] }
   try { built = buildPreviewDoc(flatPath, symbolName, pad, bboxMode, setSpec) }
   catch (e) { process.stderr.write(`flatc: ${(e as Error).message}\n`); return 1 }
@@ -309,7 +317,9 @@ async function previewOnce(flatPath: string, symbolName: string, out: string, fr
   const stem = `${basename(flatPath, extname(flatPath))}.${symbol.name}`
   let code: number
   if (doRender) {
-    code = await renderDocToFile(doc, out ? resolve(out) : join(dirname(flatPath), stem + '.png'), frame, vars, scale, steps)
+    // auto scale from the CONTENT size (minus the padding), so thin filaments still trigger an upscale.
+    const sc = scaleAuto ? autoScale(doc.width - 2 * pad, doc.height - 2 * pad) : scale
+    code = await renderDocToFile(doc, out ? resolve(out) : join(dirname(flatPath), stem + '.png'), frame, vars, sc, steps)
   } else {
     const outPath = out ? resolve(out) : join(dirname(flatPath), stem + '.flatpack')
     writeFileSync(outPath, packToJSON(doc))
@@ -325,6 +335,7 @@ export function run(argv: string[]): number | Promise<number> {
   let out = '', scriptPath = '', symbolName = ''
   let checkOnly = false, doWatch = false, doPlay = false, doRender = false, doTrace = false, doPreview = false
   let frame = 0, scale = 2, steps = 0, pad = 24
+  let scaleAuto = false
   let bboxMode: 'all' | 'frame0' = 'all'
   let assetMode: AssetMode = 'inline'
   const vars: Record<string, number> = {}
@@ -346,7 +357,7 @@ export function run(argv: string[]): number | Promise<number> {
     else if (a === '--bbox') bboxMode = args[++i] === 'frame0' ? 'frame0' : 'all'
     else if (a === '--frame') frame = Number(args[++i] ?? '0') || 0
     else if (a === '--steps') steps = Math.max(0, Number(args[++i] ?? '0') || 0)
-    else if (a === '--scale') scale = Number(args[++i] ?? '2') || 2
+    else if (a === '--scale') { const v = args[++i] ?? '2'; if (v === 'auto') scaleAuto = true; else scale = Number(v) || 2 }
     else if (a === '--at') parseVars(args[++i] ?? '', vars)
     else if (a === '--set') for (const pair of (args[++i] ?? '').split(',')) { const j = pair.indexOf('='); if (j > 0) setSpec[pair.slice(0, j).trim()] = pair.slice(j + 1).trim() }
     else if (a === '-h' || a === '--help') { printHelp(); return 0 }
@@ -358,8 +369,8 @@ export function run(argv: string[]): number | Promise<number> {
   if (!existsSync(filePath)) { process.stderr.write(`flatc: not found: ${filePath}\n`); return 1 }
 
   const explicitFlats = positional.slice(1)
-  if (doPreview) return previewOnce(filePath, symbolName, out, frame, vars, scale, steps, doRender, pad, bboxMode, setSpec)
-  if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps)
+  if (doPreview) return previewOnce(filePath, symbolName, out, frame, vars, scale, steps, doRender, pad, bboxMode, setSpec, scaleAuto)
+  if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps, scaleAuto)
   if (doPlay) return playOnce(filePath, scriptPath, doTrace)
   if (doWatch) {
     const code = compileOnce(filePath, explicitFlats, out, checkOnly, assetMode)

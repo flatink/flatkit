@@ -70,6 +70,8 @@ flatc --preview <library.flat> [--symbol NAME] [-o out.flatpack | --render -o ou
 - **`--set p=v`** sets the symbol's exposed [params](animating-symbols.md#exposed-parameters-params): a
   `color` (`hull=#1a5`), a `number`/`bool` (`wave=1.5`), or a `state` by name (`door=open`). Baked into the
   preview (flatpack + render).
+- **`--scale auto`** picks the render factor from the symbol's size — enlarges small/thin assets (so a fine
+  filament stays legible) and leaves large ones at 1×. Otherwise `--scale S` (default 2).
 
 ## Media packing — `--assets`
 

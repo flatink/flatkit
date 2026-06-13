@@ -1,5 +1,26 @@
 # @flatkit/engine
 
+## 0.8.0
+
+### Minor Changes
+
+- Symbol params, clipping & CLI ergonomics:
+
+  - **`stroke <param>`**: a `color` param can now bind a stroke, not just a fill (`path "…" nofill stroke edge 2`).
+    New `Region.strokeParam`, resolved per instance at render — strokes are re-themable like fills.
+  - **Free symbol section order**: `timeline`, `params`, and `states` blocks are accepted in **any order**
+    before the layers (previously `params`/`states` before `timeline` gave a misleading "layer expected" error).
+  - **`clip` on a container**: `group`/`instance` accept `clip <x> <y> <w> <h>` — a rectangular clip in local
+    coords (new `Group.clip`/`Instance.clip`, `ClipRect` type). Cuts content outside the rect (e.g. the "feet"
+    of an emerging shape) without a dedicated mask layer. Render-only (hit-test/bbox ignore it).
+  - **`flatc --preview/--render --scale auto`**: picks the resolution factor from the content size — enlarges
+    small/thin assets so fine filaments stay legible, leaves large assets at 1×.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @flatkit/types@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes

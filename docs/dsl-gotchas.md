@@ -36,6 +36,16 @@
 - **`filter` on a path**: accepted (`path "…" fill #000 filter glow 6 #fff`). No need to wrap
   in a `group` just to add a shadow/glow. (Also works on group/image/text.)
 - **`linear(angle, …)` gradient**: `0` = → (left to right), `90` = ↓ (top to bottom).
+- **Rings / holes = ONE path with multiple closed subpaths** — fill is **even-odd**, so a nested subpath
+  cuts a hole: `path "M-30 -30L30 -30L30 30L-30 30Z M-15 -15L15 -15L15 15L-15 15Z" fill #c33` is a solid
+  filled ring (frame + hole). No need to fake it with `nofill stroke`.
+- **Stroke width SCALES with the group**: a child of a `group`/instance at `scale 0.4` (or a `pose scale`)
+  draws its stroke at 0.4× too (the stroke is drawn in the scaled space). So a thin ring stays
+  proportional when you shrink the group — don't compensate the width by hand.
+- **`clip <x> <y> <w> <h>` on a group/instance**: cuts content to a rectangle (the container's LOCAL
+  coords) — e.g. hide the "feet" of an emerging shape: `group "Arc" clip -100 -60 200 60 { … }`. For an
+  arbitrary clip shape, use a `mask` layer instead. **Render-only**: hit-testing and the preview/auto-size
+  bbox ignore it (clipped-away area stays clickable / counts toward the framing) — it's a visual cut.
 
 ## Text
 
@@ -68,6 +78,12 @@
 - **Preview without clipping**: `flatc --preview` defaults to `--bbox all` (union over every frame, so
   drifting/rotating/growing motion fits). `--bbox frame0` is the old frame-0 measure; `--pad N` adds a
   margin.
+- **Preview origin is STABLE across frames**: the canvas is auto-sized once (the union), independent of
+  `--frame`. So rendering several frames of an oscillating/translating symbol gives the SAME frame each
+  time — the object moves *inside* a fixed canvas, it does not "jump". No need for an invisible anchor.
+- **Exposed interface** (`params {}` / `states {}`): a symbol can publish typed params (color/number/bool,
+  `fill <param>`) and named states (`states door { closed at 0 open at 24 }`, driven by `Name.param = open`).
+  See [Animating a symbol](animating-symbols.md). Restyle/tune without touching internals.
 
 ## Drag & drop
 
