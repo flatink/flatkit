@@ -213,7 +213,13 @@ export type Interactor = {
 /** Presence + pose of a container at a keyframe (matched by `id` across cels). */
 export type Pose = {
   id: string // id of a container in the roster (`layer.items`)
-  transform?: Transform // absolute pose (absent = identity)
+  transform?: Transform // absolute pose (the position `at x,y` / `matrix(...)`; absent = inherit the body's resting transform)
+  // Decomposed geometry OVERRIDES, applied around the body's pivot at render time (degrees for `rotate`).
+  // PATCH semantics: any absent channel is INHERITED (from `transform`/the body's resting pose), never reset.
+  // Authored as `pose "N" [at x,y] [rotate <deg>] [scale <s> | scaleX <sx> scaleY <sy>]`.
+  rotate?: number // rotation in DEGREES around the pivot (absent = inherit)
+  scaleX?: number // horizontal scale around the pivot (absent = inherit)
+  scaleY?: number // vertical scale around the pivot (absent = inherit)
   opacity?: number // 0..1 (absent = 1)
   tint?: Tint // Flash-style tint (absent = none)
   spin?: SpinDir // spin direction TOWARD the next cel (absent = shortest arc)

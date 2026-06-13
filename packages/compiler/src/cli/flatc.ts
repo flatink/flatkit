@@ -17,7 +17,7 @@ import { hasPackage } from '@flatkit/engine/stdlib'
 import { parseUnits } from '@flatkit/engine/dsl'
 import { sanitizeDoc } from '@flatkit/engine/validateDoc'
 import { unitsToFunctions } from '@flatkit/engine/scriptDoc'
-import { containerBBox } from '@flatkit/engine/groups'
+import { containerBBox, containerBBoxUnion } from '@flatkit/engine/groups'
 import { IDENTITY } from '@flatkit/engine/transform'
 import { lintDocReport, docHasErrors } from '../programDoc'
 import { playHeadless, type Gesture } from '@flatkit/player/debug'
@@ -75,6 +75,8 @@ Usage:
                     auto-sized stage) → a .flatpack to drop in the browser player, or a PNG with --render.
                     No wrapper .flatink to author by hand. Output defaults to <library>.<symbol>.flatpack/.png
   --symbol NAME     (with --preview) which symbol to wrap (default: the first in the lib)
+  --bbox all|frame0 (with --preview) auto-size to the UNION over all frames (default 'all', no clipping of
+                    drifting/rotating/growing motion) or just frame 0 ('frame0', the old behavior)
   --pad N           (with --preview) padding in px around the symbol's bounds (default 24)
   --frame N         (with --render) target frame (default 0)
   --at k=v[,k2=v2]  (with --render) force variables → capture a given state (e.g. a step of an escape)
@@ -243,7 +245,7 @@ async function renderOnce(filePath: string, out: string, frame: number, vars: Re
  * hand-authoring a wrapper `.flatink`. The root timeline borrows the symbol's own fps/duration so a `synced`
  * instance loops at its natural rate. Throws if the lib is empty or the named symbol is missing.
  */
-function buildPreviewDoc(flatPath: string, symbolName: string, pad: number): { doc: Doc; symbol: SymbolDef; others: string[] } {
+function buildPreviewDoc(flatPath: string, symbolName: string, pad: number, bboxMode: 'all' | 'frame0'): { doc: Doc; symbol: SymbolDef; others: string[] } {
   const { symbols } = parseFlatLib(readFileSync(flatPath, 'utf8'))
   if (!symbols.length) throw new Error('no symbols found in this .flat library')
   let symbol = symbols[0]
@@ -256,13 +258,24 @@ function buildPreviewDoc(flatPath: string, symbolName: string, pad: number): { d
   const instance: Instance = { id: 'preview_instance', kind: 'instance', name: symbol.name, transform: { ...IDENTITY }, symbolId: symbol.id }
   const layer: Layer = { id: 'preview_layer', name: 'preview', visible: true, locked: false, opacity: 1, items: [instance] }
   const tl = symbol.timeline
-  const timeline = { fps: tl?.fps ?? 24, durationFrames: tl?.durationFrames ?? 1, tracks: [] }
+  const dur = Math.max(1, tl?.durationFrames ?? 1)
+  const timeline = { fps: tl?.fps ?? 24, durationFrames: dur, tracks: [] }
   // ALL symbols stay in the library (the chosen one may instance the others) — only `instance` is on stage.
   let doc: Doc = { width: 1, height: 1, layers: [layer], symbols, timeline }
 
-  // Auto-size & center: measure the instance's frame-0 bounds, pad, recenter at the canvas middle. (bbox
-  // freezes nested timelines at frame 0, so animated motion may exceed it — that's what `pad` absorbs.)
-  const bb = containerBBox(doc, instance, 0)
+  // Auto-size & center. Default `--bbox all`: UNION over every frame of the symbol (sub-timelines NOT
+  // frozen) so motion that drifts/rotates/grows is never clipped. `--bbox frame0` keeps the old frame-0
+  // measure (+`--pad` to absorb motion).
+  // Sample at most ~240 evenly-spaced frames (+ the last) so a long/abusive `durationFrames` can't blow
+  // up memory/time; a sparse union is virtually as tight as every-frame for real motion.
+  const sampleFrames = (n: number): number[] => {
+    const step = Math.max(1, Math.ceil(n / 240))
+    const fs: number[] = []
+    for (let f = 0; f < n; f += step) fs.push(f)
+    if (fs[fs.length - 1] !== n - 1) fs.push(n - 1)
+    return fs
+  }
+  const bb = bboxMode === 'all' ? containerBBoxUnion(doc, instance, sampleFrames(dur)) : containerBBox(doc, instance, 0)
   if (bb) {
     doc = { ...doc, width: Math.max(1, Math.ceil(bb.maxX - bb.minX) + pad * 2), height: Math.max(1, Math.ceil(bb.maxY - bb.minY) + pad * 2) }
     instance.transform = { ...IDENTITY, e: pad - bb.minX, f: pad - bb.minY }
@@ -274,9 +287,9 @@ function buildPreviewDoc(flatPath: string, symbolName: string, pad: number): { d
 }
 
 /** --preview: wraps one symbol of a `.flat` into a playable Doc, then writes a .flatpack (default) or a PNG (with --render). */
-async function previewOnce(flatPath: string, symbolName: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, doRender: boolean, pad: number): Promise<number> {
+async function previewOnce(flatPath: string, symbolName: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, doRender: boolean, pad: number, bboxMode: 'all' | 'frame0'): Promise<number> {
   let built: { doc: Doc; symbol: SymbolDef; others: string[] }
-  try { built = buildPreviewDoc(flatPath, symbolName, pad) }
+  try { built = buildPreviewDoc(flatPath, symbolName, pad, bboxMode) }
   catch (e) { process.stderr.write(`flatc: ${(e as Error).message}\n`); return 1 }
   const { doc, symbol, others } = built
   const stem = `${basename(flatPath, extname(flatPath))}.${symbol.name}`
@@ -298,6 +311,7 @@ export function run(argv: string[]): number | Promise<number> {
   let out = '', scriptPath = '', symbolName = ''
   let checkOnly = false, doWatch = false, doPlay = false, doRender = false, doTrace = false, doPreview = false
   let frame = 0, scale = 2, steps = 0, pad = 24
+  let bboxMode: 'all' | 'frame0' = 'all'
   let assetMode: AssetMode = 'inline'
   const vars: Record<string, number> = {}
   const positional: string[] = []
@@ -314,6 +328,7 @@ export function run(argv: string[]): number | Promise<number> {
     else if (a === '--preview') doPreview = true
     else if (a === '--symbol') symbolName = args[++i] ?? ''
     else if (a === '--pad') pad = Math.max(0, Number(args[++i] ?? '24') || 0)
+    else if (a === '--bbox') bboxMode = args[++i] === 'frame0' ? 'frame0' : 'all'
     else if (a === '--frame') frame = Number(args[++i] ?? '0') || 0
     else if (a === '--steps') steps = Math.max(0, Number(args[++i] ?? '0') || 0)
     else if (a === '--scale') scale = Number(args[++i] ?? '2') || 2
@@ -327,7 +342,7 @@ export function run(argv: string[]): number | Promise<number> {
   if (!existsSync(filePath)) { process.stderr.write(`flatc: not found: ${filePath}\n`); return 1 }
 
   const explicitFlats = positional.slice(1)
-  if (doPreview) return previewOnce(filePath, symbolName, out, frame, vars, scale, steps, doRender, pad)
+  if (doPreview) return previewOnce(filePath, symbolName, out, frame, vars, scale, steps, doRender, pad, bboxMode)
   if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps)
   if (doPlay) return playOnce(filePath, scriptPath, doTrace)
   if (doWatch) {

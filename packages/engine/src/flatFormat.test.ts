@@ -830,3 +830,39 @@ describe('flatFormat -- feedback sugar (EDU #10)', () => {
     expect(parseProgramFull(src).imports).toBeUndefined()
   })
 })
+
+describe('flatFormat — pose rotate/scale sugar (degrees, around pivot)', () => {
+  const spinner = (): SymbolDef => ({
+    id: 'sp', name: 'Spinner',
+    timeline: { fps: 24, durationFrames: 8, tracks: [] },
+    layers: [{
+      id: 'L', name: 'wheel', visible: true, locked: false, opacity: 1,
+      items: [{ id: 'w', kind: 'group', name: 'Wheel', transform: T(50, 50), pivot: { x: 10, y: 10 }, layers: [] } as Group],
+      cels: [
+        { frame: 0, tween: true, poses: [{ id: 'w', rotate: 0, scaleX: 2, scaleY: 2 } as never] },
+        { frame: 8, poses: [{ id: 'w', rotate: 90 } as never] },
+      ],
+    }],
+  })
+
+  it('serializes rotate <deg> / scale and round-trips', () => {
+    const text = printFlat([spinner()])
+    expect(text).toContain('rotate 0 scale 2')
+    expect(text).toContain('pose "Wheel" rotate 90') // no `at` → inherits the body position
+    expect(printFlat(parseFlat(text))).toBe(text) // stable
+  })
+
+  it('parses the decomposed channels back onto the pose', () => {
+    const back = parseFlat(printFlat([spinner()]))[0]
+    const p0 = back.layers[0].cels![0].poses[0]
+    expect([p0.rotate, p0.scaleX, p0.scaleY]).toEqual([0, 2, 2])
+    expect(p0.transform).toBeUndefined() // position inherited, not baked into a matrix
+    expect(back.layers[0].cels![1].poses[0].rotate).toBe(90)
+  })
+
+  it('scaleX/scaleY (non-uniform) serialize separately', () => {
+    const text = printFlat([{ ...spinner(), layers: [{ ...spinner().layers[0], cels: [{ frame: 0, poses: [{ id: 'w', scaleX: 2, scaleY: 3 } as never] }] }] }])
+    expect(text).toContain('scaleX 2 scaleY 3')
+    expect(printFlat(parseFlat(text))).toBe(text)
+  })
+})

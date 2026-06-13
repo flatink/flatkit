@@ -220,7 +220,7 @@ const lerp = (a: number, b: number, t: number): number => a + (b - a) * t
  *  - 'ccw' → counter-clockwise (decreasing angle) + `turns` full turns.
  * Lifts the limit of rotations ≥ π and full turns (which a bare matrix loses).
  */
-function rotDelta(a: number, b: number, rotate?: SpinDir, turns = 0): number {
+export function rotDelta(a: number, b: number, rotate?: SpinDir, turns = 0): number {
   const TAU = Math.PI * 2
   const norm = (x: number) => ((x % TAU) + TAU) % TAU
   if (rotate === 'cw') return norm(b - a) + turns * TAU

@@ -1,0 +1,132 @@
+# Animating a symbol (`.flat`)
+
+> How a `.flat` symbol moves over time: the **timeline / cel / pose** model (Flash-style), the `pose`
+> keywords (`rotate`, `scale`, `opacity`, `spin`…), pivots, tweens, and how to preview the result.
+> If you only need static composition, see [Scene & drawing](scene-and-drawing.md).
+
+## The model in one paragraph
+
+A symbol owns a **timeline** (`timeline <fps> <durationFrames>`). Each animated **layer** is a time
+track: a sequence of **cels** (layer-wide keyframes). A cel lists the **poses** of the containers
+present at that frame (a `pose` per roster item) and, optionally, the **matter** (static drawing) at
+that key. Between two cels the layer either **holds** the last key or **tweens** toward the next one.
+
+```
+symbol "Wheel" {
+  timeline 24 24                 ← 24 fps, 24 frames (loops once per second)
+  layer "spin" {
+    group "Rim" at 100,100 pivot 0,0 {   ← the roster: declared ONCE, posed by the cels below
+      layer "art" { circle 0 0 40 nofill stroke #333 8 }
+    }
+    cel 0 tween { pose "Rim" rotate 0 }
+    cel 24       { pose "Rim" rotate 360 }   ← one full turn around the pivot, in DEGREES
+  }
+}
+```
+
+Preview it without authoring a wrapper:
+
+```
+flatc --preview Wheel.flat --render -o wheel.png   # a PNG (frame 0)
+flatc --preview Wheel.flat -o wheel.flatpack        # a playable .flatpack for the browser player
+```
+
+## `pose` — the keyframe of a container
+
+```
+pose "Name" [at <x>,<y>] [rotate <deg>] [scale <s> | scaleX <sx> scaleY <sy>]
+            [opacity <o>] [tint <#color> <amount>] [spin cw|ccw] [turns <n>] [filter …]
+```
+
+- **`rotate <deg>` and `scale`/`scaleX`/`scaleY` are in human units** (degrees, multipliers) and apply
+  **around the group's `pivot`** — no matrices, no radians, no trigonometry. `rotate 90` is a quarter
+  turn; `scale 2` is double size.
+- **`at <x>,<y>`** places the container's local **origin** in parent space. `rotate`/`scale` then turn
+  and scale around the `pivot` point (see below), keeping it anchored.
+- **`matrix(a,b,c,d,e,f)`** is still accepted as an escape hatch, but you almost never need it.
+
+### Patch semantics — a pose only overrides what it states
+
+A pose **inherits** every channel it does not mention from the container's resting pose (its declaration
+in the roster) — position, rotation, scale, opacity, tint, filters. So:
+
+```
+pose "Boat" opacity 0.5        ← keeps the Boat's declared position/rotation/scale; only dims it
+pose "Boat" rotate 3           ← keeps its position and scale; only tilts it 3°
+```
+
+You do **not** re-state `at x,y` in every cel just to change opacity. (This is a change from older
+builds where a partial pose snapped to `0,0`.)
+
+## Pivot vs `at` — where things turn
+
+- **`pivot <x>,<y>`** (set on the container in the roster, in its **local** coordinates) is the center
+  of rotation **and** scale **and** tween interpolation. Default is the local origin `0,0`.
+- **`at <x>,<y>`** (on the pose) is where the local origin lands in the parent.
+
+**Rule of thumb:** set the group's `pivot` to its visual center, then `rotate`/`scale`/`spin` turn it in
+place. A wheel whose art is centered on its local origin needs no pivot; a wheel drawn off-origin must
+set `pivot` to its hub, or it will **orbit** instead of spin.
+
+```
+group "Hand" at 200,200 pivot 0,-60 {   ← pivot at the clock center, 60px below the hand's tip
+  layer "art" { rect -4 -60 8 60 fill #111 }
+}
+…
+cel 0 tween { pose "Hand" rotate 0 }
+cel 60       { pose "Hand" rotate 360 }  ← sweeps around the pivot, not its own middle
+```
+
+## Tweens, easing, spin
+
+- **`cel N tween { … }`** interpolates this cel → the next for every container present in both. Without
+  `tween`, the cel **holds** until the next key.
+- **`ease <curve>`** on the cel: `linear` · `easeIn` · `easeOut` · `easeInOut` · `cubic(a,b,c,d)`.
+- **`spin cw|ccw`** + **`turns <n>`** force the rotation **direction** and add full turns across the
+  tween, so a 350° → 10° move can go the short way (`ccw`) or wind several times (`turns 2`). The spin
+  is **around the pivot**, like every other rotation.
+- **`morph`** on a cel tweens the *shape* of the `matter` (drawing) toward the next key.
+
+## Driving a channel with an expression (`expr`)
+
+Instead of keyframes you can bind a channel to an expression on the container itself:
+
+```
+group "Fan" pivot 0,0 expr rotation "turns(time)" { … }   ← one turn per second
+```
+
+- The animatable channels are `x`, `y`, `scaleX`, `scaleY`, `rotation`, `opacity`.
+- **`rotation` is in RADIANS** (like `sin`/`cos`/`atan2`). Use the helpers to stay in degrees:
+  - `rad(deg)` → radians, e.g. `expr rotation "rad(45)"`
+  - `turns(n)` → `n` full turns in radians, e.g. `expr rotation "turns(time)"` or `"turns(time * 0.5)"`
+  - `deg(rad)` → the inverse, for readouts.
+
+## Looping & instancing
+
+The timeline loops over `[0, durationFrames)`. An `instance` of the symbol plays **synced** by default
+(loops at the symbol's own rate); `singleFrame` freezes it on one frame. `--preview` borrows the
+symbol's fps/duration so the wrapped instance loops at its natural rate.
+
+## Render order (a real caveat)
+
+Within **one animated layer**, the **matter (static drawing) always renders behind the posed
+containers** — declaration order between a bare `path` and an animated `group` is **not** preserved,
+because the cel model stores matter and the container roster separately.
+
+**If a static shape must sit IN FRONT of an animated group**, give it its own group (so it becomes a
+posed container too) or, simpler, **put it on its own layer** above. Layers always honor their stacking
+order. This is the reliable way to control z-order around animation.
+
+## Previewing without clipping
+
+`flatc --preview` auto-sizes the stage to the symbol's bounds. By default (`--bbox all`) it measures the
+**union over every frame** (sub-timelines unfrozen), so a part that drifts, rotates, or grows is **never
+clipped**. Use `--bbox frame0` for the old frame-0-only measure, and `--pad N` to add a margin.
+
+```
+flatc --preview Boat.flat --render -o boat.png            # union bbox (default) — full motion fits
+flatc --preview Boat.flat --bbox frame0 --pad 40 -o b.png # frame-0 bounds + 40px margin
+```
+
+See also: [Tooling](tooling.md) for the full `flatc` reference, and
+[Gotchas](dsl-gotchas.md) for sharp edges.

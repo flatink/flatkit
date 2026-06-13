@@ -186,6 +186,9 @@ const printEasing = (e: Easing): string => (typeof e === 'string' ? e : `cubic($
 function printPose(p: Pose, depth: number, rosterName: (id: string) => string): string {
   let s = `${IND.repeat(depth)}pose ${q(rosterName(p.id))}`
   if (p.transform) s += printTransform(p.transform) || ' at 0,0'
+  if (p.rotate != null) s += ` rotate ${n(p.rotate)}`
+  if (p.scaleX != null && p.scaleX === p.scaleY) s += ` scale ${n(p.scaleX)}`
+  else { if (p.scaleX != null) s += ` scaleX ${n(p.scaleX)}`; if (p.scaleY != null) s += ` scaleY ${n(p.scaleY)}` }
   if (p.opacity != null) s += ` opacity ${n(p.opacity)}`
   if (p.tint) s += ` tint ${p.tint.color} ${n(p.tint.amount)}`
   if (p.spin) s += ` spin ${p.spin}`
@@ -1000,15 +1003,20 @@ class FlatParser {
     const name = this.str()
     const transform = (this.is('at') || this.is('matrix')) ? this.transform() : undefined
     let opacity: number | undefined, tint: Tint | undefined, spin: 'cw' | 'ccw' | undefined, turns: number | undefined, filters: Filter[] | undefined
+    let rotate: number | undefined, scaleX: number | undefined, scaleY: number | undefined
     for (;;) {
       if (this.is('opacity')) { this.next(); opacity = this.num() }
+      else if (this.is('rotate')) { this.next(); rotate = this.num() } // DEGREES, around the body's pivot
+      else if (this.is('scale')) { this.next(); scaleX = scaleY = this.num() }
+      else if (this.is('scaleX')) { this.next(); scaleX = this.num() }
+      else if (this.is('scaleY')) { this.next(); scaleY = this.num() }
       else if (this.is('tint')) { this.next(); const color = this.next().v; const amount = this.num(); tint = { color, amount } }
       else if (this.is('spin')) { this.next(); spin = this.next().v as 'cw' | 'ccw' }
       else if (this.is('turns')) { this.next(); turns = this.num() }
       else if (this.is('filter')) { (filters ??= []).push(this.filter()) }
       else break
     }
-    return { id: '@' + name, ...(transform ? { transform } : {}), ...(opacity != null ? { opacity } : {}), ...(tint ? { tint } : {}), ...(spin ? { spin } : {}), ...(turns ? { turns } : {}), ...(filters ? { filters } : {}) }
+    return { id: '@' + name, ...(transform ? { transform } : {}), ...(rotate != null ? { rotate } : {}), ...(scaleX != null ? { scaleX } : {}), ...(scaleY != null ? { scaleY } : {}), ...(opacity != null ? { opacity } : {}), ...(tint ? { tint } : {}), ...(spin ? { spin } : {}), ...(turns ? { turns } : {}), ...(filters ? { filters } : {}) }
   }
   private matter(): Region[] {
     this.eat('matter'); this.eat('{')
@@ -1238,7 +1246,8 @@ class FlatParser {
       this.eat(')')
       return { type: 'radial', cx, cy, r, stops }
     }
-    throw new Error(`paint expected: "${k?.v ?? 'end'}"`)
+    if (k?.v === 'none') throw new Error('paint expected: "none" — for an unfilled shape write `nofill` (e.g. `path "…" nofill stroke #000 2`), not `fill none`')
+    throw new Error(`paint expected: "${k?.v ?? 'end'}" (a color #rrggbb, or linear(…)/radial(…))`)
   }
   private stops(): Stop[] {
     const out: Stop[] = []

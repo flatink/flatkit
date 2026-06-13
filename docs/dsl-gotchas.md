@@ -48,6 +48,27 @@
   No more gauges/needles just to display a measurement (angle, timer, score…).
 - **Centering an `image`**: the origin is the top-left corner → center with `at -W/2,-H/2`.
 
+## Animation (pose / cel / timeline)
+
+> Full guide: **[Animating a symbol](animating-symbols.md)**. The sharp edges:
+
+- **`pose` rotates/scales in human units**: `pose "G" rotate 90 scale 2` — **degrees** and multipliers,
+  **around the group's `pivot`**. No hand-written `matrix(cosθ, sinθ, …)`, no radians. `scaleX`/`scaleY`
+  for non-uniform. `matrix(…)` still works as an escape hatch.
+- **A pose only overrides what it states** (patch, not replace): `pose "G" opacity 0.5` keeps G's
+  declared position/rotation/scale. Don't re-type `at x,y` in every cel.
+- **Set the `pivot` to the visual center** or a part **orbits** instead of spinning in place. `pivot`
+  (local, on the roster item) = the center of rotation/scale; `at x,y` (on the pose) = where the local
+  origin lands. `spin cw|ccw` / `turns N` also turn around the pivot.
+- **`expr rotation` is in RADIANS**, like `sin`/`cos`. Stay in degrees with the helpers: `rad(45)`,
+  `turns(time)` (one turn per second), `deg(r)`. e.g. `expr rotation "turns(time * 0.5)"`.
+- **Render order**: in an animated layer the static **matter draws BEHIND the posed containers**, and
+  declaration order between a bare `path` and an animated `group` is NOT preserved. To put a static
+  shape in front of an animation, give it its own **layer above** (or wrap it in a group).
+- **Preview without clipping**: `flatc --preview` defaults to `--bbox all` (union over every frame, so
+  drifting/rotating/growing motion fits). `--bbox frame0` is the old frame-0 measure; `--pad N` adds a
+  margin.
+
 ## Drag & drop
 
 - **Drop semantics**: by default the **object's center** (its x/y channels) is tested against

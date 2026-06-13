@@ -32,9 +32,10 @@ Read in order if you're new, or jump to a topic:
 
 1. **[Getting started](getting-started.md)** — your first `.flatink`, compiled and played.
 2. **[Scene & drawing](scene-and-drawing.md)** — layers, shapes, text, images, paints, filters, transforms.
-3. **[Behavior & interactions](behavior-and-interactions.md)** — events, actions, drag/drop, interactors, feedback.
-4. **[Expressions & stdlib](expressions-and-stdlib.md)** — the expression language, math, `self`/`mouse`/`time`, and the `use "…"` packages.
-5. **[Tooling](tooling.md)** — the `flatc` CLI: compile, render, headless play, gesture scripts, CI.
+3. **[Animating a symbol](animating-symbols.md)** — the timeline/cel/pose model, `rotate`/`scale`/`spin`, pivots, tweens, easing.
+4. **[Behavior & interactions](behavior-and-interactions.md)** — events, actions, drag/drop, interactors, feedback.
+5. **[Expressions & stdlib](expressions-and-stdlib.md)** — the expression language, math, `self`/`mouse`/`time`, and the `use "…"` packages.
+6. **[Tooling](tooling.md)** — the `flatc` CLI: compile, render, headless play, gesture scripts, CI.
 
 **Appendix — [Gotchas & best practices](dsl-gotchas.md)**: hard-won pitfalls from real production. Skim
 it once you know the basics.

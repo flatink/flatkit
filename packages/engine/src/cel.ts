@@ -18,7 +18,7 @@ import { lerpTint, lerpPaint, lerpStroke, type Tint } from './paint'
 import { lerpFilters, type Filter } from './filters'
 import { lerpColor } from './color'
 import { samplePathAt, projectToPath, lerpPath, type Path } from './path'
-import { applyEasing, lerpTransformPivot, EXPR_CHANNELS, type ExprChannel } from './timeline'
+import { applyEasing, rotDelta, EXPR_CHANNELS, type ExprChannel } from './timeline'
 import { compileExpr, evalExpr, exprScope, type Compiled } from './expr'
 import { isPoseable, isText } from './layers'
 import type { Point, Region, Item, Layer, Pose, Cel, ResolveOpts } from '@flatkit/types'
@@ -88,7 +88,7 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
   for (const p of A.poses) {
     const body = layer.items.find((b) => b.id === p.id)
     if (!body || !isPoseable(body)) continue
-    let pose = opts.guide ? guidedPose(p, A, B, frame, body.pivot, opts.guide, opts.orient) : poseAt(p, A, B, frame, body.pivot)
+    let pose = opts.guide ? guidedPose(p, A, B, frame, body, opts.guide, opts.orient) : poseAt(p, A, B, frame, body)
     if ('expressions' in body && body.expressions) pose = applyExprChannels(body.expressions, pose, frame, opts, body.id)
     out.push({ ...body, transform: pose.transform, opacity: pose.opacity, ...(pose.tint ? { tint: pose.tint } : { tint: undefined }), ...(pose.filters ? { filters: pose.filters } : { filters: undefined }) } as Item)
   }
@@ -98,27 +98,81 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
 // ── Internal ────────────────────────────────────────────────────────────────
 
 type ResolvedPose = { transform: Transform; opacity: number; tint?: Tint; filters?: Filter[] }
+/** The resting attributes of a body (roster item) a pose patches on top of. */
+type PoseBody = { transform?: Transform; pivot?: Point; opacity?: number; tint?: Tint; filters?: Filter[] }
 
-/** Effective pose of a container at `frame` (tween A→B if requested, otherwise HOLD of A). */
-function poseAt(p: Pose, A: Cel, B: Cel | undefined, frame: number, pivot?: Point): ResolvedPose {
-  const aT = p.transform ?? IDENTITY
-  const aO = p.opacity ?? 1
+const DEG = Math.PI / 180
+
+/** Decomposed geometry of a pose, around the body's pivot. */
+type PoseGeom = { px: number; py: number; rot: number; sx: number; sy: number; explicitRot: boolean }
+
+/**
+ * Decompose a pose's geometry around the body's pivot. The decomposed channels (`rotate` in DEGREES,
+ * `scaleX`, `scaleY`) are PATCHES: an absent channel is inherited from the base (the pose's own
+ * `transform`, else the body's resting transform) — never reset (#2). `px`/`py` is the pivot's
+ * parent-space position (kept fixed by rotate/scale). `rot` keeps the AUTHORED angle (degrees → radians,
+ * not wrapped) so a `rotate 360` tween is a full turn, not a no-op of the decomposed matrix.
+ */
+function poseGeom(p: Pose, baseT: Transform, pivot: Point): PoseGeom {
+  const src = p.transform ?? baseT // `at`/`matrix(...)` on the pose, else inherit the body's position (#2)
+  const d = decompose(src)
+  const pv = apply(src, pivot)
+  return {
+    px: pv.x, py: pv.y,
+    rot: p.rotate != null ? p.rotate * DEG : d.rotation,
+    sx: p.scaleX ?? d.scaleX,
+    sy: p.scaleY ?? d.scaleY,
+    explicitRot: p.rotate != null,
+  }
+}
+
+/** Recompose a matrix from pose geometry, around the pivot (rotation·scale turn around it; pivot → px/py). */
+function geomToMatrix(g: PoseGeom, pivot: Point): Transform {
+  const cos = Math.cos(g.rot), sin = Math.sin(g.rot)
+  const la = g.sx * cos, lb = g.sx * sin, lc = -g.sy * sin, ld = g.sy * cos
+  return { a: la, b: lb, c: lc, d: ld, e: g.px - (la * pivot.x + lc * pivot.y), f: g.py - (lb * pivot.x + ld * pivot.y) }
+}
+
+/** Resolved matrix of a single (HOLD) pose. A matrix-only pose (no `rotate`/`scale`) is returned exactly
+ *  (no decompose/recompose round-trip → preserves any shear). */
+function poseMatrix(p: Pose, baseT: Transform, pivot: Point): Transform {
+  if (p.rotate == null && p.scaleX == null && p.scaleY == null) return p.transform ?? baseT
+  return geomToMatrix(poseGeom(p, baseT, pivot), pivot)
+}
+
+/**
+ * Effective pose of a container at `frame` (tween A→B if requested, otherwise HOLD of A).
+ * PATCH semantics: any channel a pose does not state (position, rotation, scale, opacity, tint, filters)
+ * is inherited from the body's resting attributes — `pose "G" opacity 0.5` keeps the body's place (#2).
+ */
+function poseAt(p: Pose, A: Cel, B: Cel | undefined, frame: number, body: PoseBody): ResolvedPose {
+  const pivot = body.pivot ?? { x: 0, y: 0 }
+  const baseT = body.transform ?? IDENTITY
+  const aO = p.opacity ?? body.opacity ?? 1
+  const aTint = p.tint ?? body.tint
+  const aFilters = p.filters ?? body.filters
   if (A.tween && B) {
     const q = B.poses.find((x) => x.id === p.id)
     if (q) {
       const span = B.frame - A.frame
       const t = applyEasing(span <= 0 ? 0 : (frame - A.frame) / span, A.ease)
-      const piv = pivot ?? { x: 0, y: 0 }
-      const transform = lerpTransformPivot(aT, q.transform ?? IDENTITY, t, piv, p.spin, p.turns)
+      const ga = poseGeom(p, baseT, pivot), gb = poseGeom(q, baseT, pivot)
+      // Rotation: `spin`/`turns` force the direction (+ full turns); when BOTH ends state `rotate`,
+      // interpolate LINEARLY in degrees (0→360 = a full turn, ±172° stays ±172°); otherwise take the
+      // shortest arc (matrix-only, or a mixed pair — avoids a spurious long sweep from a wrapped angle).
+      const rot = p.spin ? ga.rot + rotDelta(ga.rot, gb.rot, p.spin, p.turns) * t
+        : ga.explicitRot && gb.explicitRot ? lerp(ga.rot, gb.rot, t)
+          : ga.rot + rotDelta(ga.rot, gb.rot, undefined, 0) * t
+      const g: PoseGeom = { px: lerp(ga.px, gb.px, t), py: lerp(ga.py, gb.py, t), sx: lerp(ga.sx, gb.sx, t), sy: lerp(ga.sy, gb.sy, t), rot, explicitRot: false }
       return {
-        transform,
-        opacity: clamp01(lerp(aO, q.opacity ?? 1, t)),
-        tint: lerpTintPair(p.tint, q.tint, t),
-        filters: lerpFilters(p.filters, q.filters, t),
+        transform: geomToMatrix(g, pivot),
+        opacity: clamp01(lerp(aO, q.opacity ?? body.opacity ?? 1, t)),
+        tint: lerpTintPair(aTint, q.tint ?? body.tint, t),
+        filters: lerpFilters(aFilters, q.filters ?? body.filters, t),
       }
     }
   }
-  return { transform: aT, opacity: aO, tint: p.tint, filters: p.filters }
+  return { transform: poseMatrix(p, baseT, pivot), opacity: aO, tint: aTint, filters: aFilters }
 }
 
 /**
@@ -127,17 +181,18 @@ function poseAt(p: Pose, A: Cel, B: Cel | undefined, frame: number, pivot?: Poin
  * over the span) → the forward pass projects toward the end, the return reprojects toward the start
  * (ping-pong on the SAME guide, with no special case).
  */
-function guidedPose(p: Pose, A: Cel, B: Cel | undefined, frame: number, pivot: Point | undefined, guide: Path, orient?: boolean): ResolvedPose {
-  const base = poseAt(p, A, B, frame, pivot) // scale/rotation/opacity/tint (position is overwritten by the guide)
-  const piv = pivot ?? { x: 0, y: 0 }
-  const projOf = (t?: Transform) => projectToPath(guide, apply(t ?? IDENTITY, piv))
-  let t = projOf(p.transform)
+function guidedPose(p: Pose, A: Cel, B: Cel | undefined, frame: number, body: PoseBody, guide: Path, orient?: boolean): ResolvedPose {
+  const base = poseAt(p, A, B, frame, body) // scale/rotation/opacity/tint (position is overwritten by the guide)
+  const piv = body.pivot ?? { x: 0, y: 0 }
+  const baseT = body.transform ?? IDENTITY
+  const projOf = (pose: Pose) => projectToPath(guide, apply(poseMatrix(pose, baseT, piv), piv))
+  let t = projOf(p)
   if (A.tween && B) {
     const q = B.poses.find((x) => x.id === p.id)
     if (q) {
       const span = B.frame - A.frame
       const tt = applyEasing(span <= 0 ? 0 : (frame - A.frame) / span, A.ease)
-      t = projOf(p.transform) + (projOf(q.transform) - projOf(p.transform)) * tt
+      t = projOf(p) + (projOf(q) - projOf(p)) * tt
     }
   }
   return { transform: applyGuide(base.transform, guide, t, piv, orient), opacity: base.opacity, tint: base.tint, filters: base.filters }

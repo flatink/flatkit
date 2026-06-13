@@ -108,6 +108,69 @@ describe('flatc — CLI', () => {
     }
   })
 
+  it('--preview --bbox all unions over all frames (drifting motion is not clipped); frame0 keeps the old measure', async () => {
+    const lib = join(cli, '__drift.flat')
+    // "Dot" drifts from x=0 to x=100 over the timeline — frame 0 sees a 10px box, the union sees ~110px.
+    writeFileSync(lib, [
+      'symbol "Drift" {',
+      '  timeline 24 8',
+      '  layer "l" {',
+      '    group "Dot" at 0,0 {',
+      '      layer "c" {',
+      '        path "M-5 -5L5 -5L5 5L-5 5Z" fill #ff0000',
+      '      }',
+      '    }',
+      '    cel 0 tween {',
+      '      pose "Dot" at 0,0',
+      '    }',
+      '    cel 8 {',
+      '      pose "Dot" at 100,0',
+      '    }',
+      '  }',
+      '}',
+      '',
+    ].join('\n'))
+    const outAll = join(cli, '__drift_all.flatpack')
+    const out0 = join(cli, '__drift_0.flatpack')
+    try {
+      expect(await run(['node', 'flatc', lib, '--preview', '-o', outAll])).toBe(0) // default = all
+      expect(await run(['node', 'flatc', lib, '--preview', '--bbox', 'frame0', '-o', out0])).toBe(0)
+      const wAll = JSON.parse(readFileSync(outAll, 'utf8')).width
+      const w0 = JSON.parse(readFileSync(out0, 'utf8')).width
+      expect(wAll).toBeGreaterThan(w0 + 80) // ~100px of drift captured by the union, clipped at frame 0
+    } finally {
+      rmSync(lib, { force: true })
+      rmSync(outAll, { force: true })
+      rmSync(out0, { force: true })
+    }
+  })
+
+  it('--preview --bbox all caps the frame sampling (a huge durationFrames does not blow up)', async () => {
+    const lib = join(cli, '__huge.flat')
+    // 1e9 frames: an unbounded union would allocate a billion-element array. The sampler caps it.
+    writeFileSync(lib, [
+      'symbol "Huge" {',
+      '  timeline 24 1000000000',
+      '  layer "l" {',
+      '    group "Dot" at 0,0 { layer "c" { path "M-5 -5L5 -5L5 5L-5 5Z" fill #ff0000 } }',
+      '    cel 0 tween { pose "Dot" at 0,0 }',
+      '    cel 8 { pose "Dot" at 100,0 }',
+      '  }',
+      '}',
+      '',
+    ].join('\n'))
+    const out = join(cli, '__huge.flatpack')
+    try {
+      const t0 = performance.now()
+      expect(await run(['node', 'flatc', lib, '--preview', '-o', out])).toBe(0)
+      expect(performance.now() - t0).toBeLessThan(2000) // bounded work, not O(1e9)
+      expect(JSON.parse(readFileSync(out, 'utf8')).width).toBeGreaterThan(100) // still captures the drift
+    } finally {
+      rmSync(lib, { force: true })
+      rmSync(out, { force: true })
+    }
+  })
+
   it('--preview --symbol NAME selects the symbol; a missing name fails ≠0', async () => {
     const lib = join(cli, '__multi.flat')
     writeFileSync(lib, 'symbol "Dot" {\n  layer "l" { path "M-8 -8L8 -8L8 8L-8 8Z" fill #ff0000 }\n}\nsymbol "Badge" {\n  layer "l" { path "M-30 -30L30 -30L30 30L-30 30Z" fill #000000 }\n}\n')

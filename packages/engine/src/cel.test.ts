@@ -349,3 +349,67 @@ describe('cel — self in a channel binding', () => {
     expect((resolveLayerAt(layer([mk('keep', '(((')]), 0, { ctx: {} })[0] as { content: string }).content).toBe('keep')
   })
 })
+
+describe('cel — pose patch semantics + rotate/scale sugar (degrees, around pivot)', () => {
+  const gAt = (id: string, e: number, f: number, pivot?: { x: number; y: number }): Group =>
+    ({ id, kind: 'group', name: id, transform: translation(e, f), layers: [], ...(pivot ? { pivot } : {}) })
+
+  it('#2 partial pose inherits position: `pose opacity 0.5` keeps the body place', () => {
+    const l = layer([gAt('g', 20, 30)], [{ frame: 0, poses: [{ id: 'g', opacity: 0.5 }] }])
+    const out = resolveLayerAt(l, 0)
+    expect(decompose((out[0] as Group).transform).x).toBeCloseTo(20, 5)
+    expect(decompose((out[0] as Group).transform).y).toBeCloseTo(30, 5)
+    expect(out[0].opacity).toBe(0.5)
+  })
+
+  it('#1 `rotate <deg>` rotates around the body pivot, keeping the pivot in place', () => {
+    const piv = { x: 5, y: 5 }
+    const l = layer([gAt('g', 100, 100, piv)], [{ frame: 0, poses: [{ id: 'g', rotate: 90 }] }])
+    const t = (resolveLayerAt(l, 0)[0] as Group).transform
+    expect(decompose(t).rotation).toBeCloseTo(Math.PI / 2, 5) // 90° in radians, written as degrees
+    // pivot (5,5) maps to the same parent point as the resting transform: (105,105)
+    expect(t.a * 5 + t.c * 5 + t.e).toBeCloseTo(105, 5)
+    expect(t.b * 5 + t.d * 5 + t.f).toBeCloseTo(105, 5)
+  })
+
+  it('#1 `scale` overrides scale, `rotate` alone inherits the base scale', () => {
+    const base: Group = { id: 'g', kind: 'group', name: 'g', transform: recompose({ x: 0, y: 0, scaleX: 3, scaleY: 3, rotation: 0 }), layers: [] }
+    const scaled = resolveLayerAt(layer([base], [{ frame: 0, poses: [{ id: 'g', scaleX: 2, scaleY: 2 }] }]), 0)
+    expect(decompose((scaled[0] as Group).transform).scaleX).toBeCloseTo(2, 5)
+    const rotOnly = resolveLayerAt(layer([base], [{ frame: 0, poses: [{ id: 'g', rotate: 45 }] }]), 0)
+    expect(decompose((rotOnly[0] as Group).transform).scaleX).toBeCloseTo(3, 5) // scale inherited from base
+    expect(decompose((rotOnly[0] as Group).transform).rotation).toBeCloseTo(Math.PI / 4, 5)
+  })
+
+  it('#1 tween interpolates rotate 0 → 90 around the pivot', () => {
+    const piv = { x: 0, y: 0 }
+    const l = layer([gAt('g', 0, 0, piv)], [
+      { frame: 0, poses: [{ id: 'g', rotate: 0 }], tween: true },
+      { frame: 10, poses: [{ id: 'g', rotate: 90 }] },
+    ])
+    expect(decompose((resolveLayerAt(l, 5)[0] as Group).transform).rotation).toBeCloseTo(Math.PI / 4, 5)
+  })
+
+  it('explicit `at` on a pose still overrides the inherited position', () => {
+    const l = layer([gAt('g', 20, 30)], [{ frame: 0, poses: [{ id: 'g', transform: translation(7, 8), rotate: 0 }] }])
+    const d = decompose((resolveLayerAt(l, 0)[0] as Group).transform)
+    expect([d.x, d.y]).toEqual([7, 8])
+  })
+
+  it('#3 explicit `rotate 0 → 360` is a FULL turn (linear in degrees, not a decomposed no-op)', () => {
+    const l = layer([gAt('g', 0, 0)], [
+      { frame: 0, poses: [{ id: 'g', rotate: 0 }], tween: true },
+      { frame: 12, poses: [{ id: 'g', rotate: 360 }] },
+    ])
+    expect(decompose((resolveLayerAt(l, 3)[0] as Group).transform).rotation).toBeCloseTo(Math.PI / 2, 5) // 90°
+    expect(decompose((resolveLayerAt(l, 6)[0] as Group).transform).rotation).toBeCloseTo(Math.PI, 5) // 180°
+  })
+
+  it('#3 explicit rotate keeps the long way (no shortest-arc snap): -172° → 172° passes through 0', () => {
+    const l = layer([gAt('g', 0, 0)], [
+      { frame: 0, poses: [{ id: 'g', rotate: -172 }], tween: true },
+      { frame: 10, poses: [{ id: 'g', rotate: 172 }] },
+    ])
+    expect(decompose((resolveLayerAt(l, 5)[0] as Group).transform).rotation).toBeCloseTo(0, 5) // midpoint, not ±180
+  })
+})

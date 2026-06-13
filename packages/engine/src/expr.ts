@@ -375,6 +375,9 @@ export const MATH_CTX: ExprContext = {
   clamp: (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x)),
   lerp: (a: number, b: number, t: number) => a + (b - a) * t,
   mod: (a: number, b: number) => ((a % b) + b) % b,
+  rad: (deg: number) => (deg * Math.PI) / 180, // degrees → radians (the `rotation` channel is radians)
+  deg: (rad: number) => (rad * 180) / Math.PI, // radians → degrees
+  turns: (n: number) => n * Math.PI * 2, // full turns → radians, e.g. `rotation = turns(time)` spins once/second
   between: (x: number, lo: number, hi: number) => (x >= lo && x <= hi ? 1 : 0), // interval test (zone/collision) → 1/0
 }
 

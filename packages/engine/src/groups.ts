@@ -41,7 +41,7 @@ export function transformRegion(t: Transform, r: Region): Region {
  * material drawn in the cels is ignored and the selection frame is off. Sub-scopes are FROZEN at frame 0
  * (consistent with the editor's `freezeNested` render); `frame` only applies to direct layers.
  */
-export function containerBBox(doc: Doc, container: Group | Instance, frame = 0, base: Transform = container.transform): BBox | null {
+export function containerBBox(doc: Doc, container: Group | Instance, frame = 0, base: Transform = container.transform, deep = false): BBox | null {
   const boxes: BBox[] = []
   const walk = (layers: Layer[], t: Transform, f: number, seen: Set<string>) => {
     for (const layer of layers) {
@@ -50,7 +50,8 @@ export function containerBBox(doc: Doc, container: Group | Instance, frame = 0, 
         if (isContainer(it)) {
           if (isInstance(it) && seen.has(it.symbolId)) continue
           const next = isInstance(it) ? new Set([...seen, it.symbolId]) : seen
-          walk(containerLayers(doc, it), compose(t, it.transform), 0, next) // sub-scope frozen at 0
+          // `deep` threads the frame INTO nested timelines (union-over-frames); default freezes sub-scopes at 0.
+          walk(containerLayers(doc, it), compose(t, it.transform), deep ? f : 0, next)
         } else if (isText(it)) {
           boxes.push(boxBBox(it.transform, it.box.w, it.box.h, t))
         } else if (isImage(it)) {
@@ -65,6 +66,19 @@ export function containerBBox(doc: Doc, container: Group | Instance, frame = 0, 
   const start = isInstance(container) ? new Set([container.symbolId]) : new Set<string>()
   walk(containerLayers(doc, container), base, frame, start)
   return combineBBox(boxes)
+}
+
+/**
+ * UNION of a container's bbox across `frames` (sub-timelines NOT frozen) → the box that holds the whole
+ * animation, so motion that drifts/rotates/grows past frame 0 is never clipped. Used by `--preview`.
+ */
+export function containerBBoxUnion(doc: Doc, container: Group | Instance, frames: number[], base: Transform = container.transform): BBox | null {
+  const boxes: BBox[] = []
+  for (const f of frames) {
+    const b = containerBBox(doc, container, f, base, true)
+    if (b) boxes.push(b)
+  }
+  return boxes.length ? combineBBox(boxes) : null
 }
 
 /** Bounding box of a transformed local box [0,0]–[w,h] (text, image). `outer` = the context. */
