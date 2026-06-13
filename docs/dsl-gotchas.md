@@ -84,6 +84,13 @@
 - **Exposed interface** (`params {}` / `states {}`): a symbol can publish typed params (color/number/bool,
   `fill <param>`) and named states (`states door { closed at 0 open at 24 }`, driven by `Name.param = open`).
   See [Animating a symbol](animating-symbols.md). Restyle/tune without touching internals.
+- **A container shows only on cels that pose it** — a cel is a full snapshot, so a container omitted from a
+  cel disappears there (that's how a symbol *exits*). For a container that stays put: declare it on its own
+  **cel-less layer** (always shown, declared once), or use **`cel N hold { … }`** to carry the previous
+  cel's poses forward (compile-time sugar — you only write what changes). It's per-*keyframe*, not per-frame.
+- **`--preview --set` bakes the values into the flatpack** (onto the wrapped instance's `params`), so a
+  pre-themed `.flatpack` plays correctly in the browser too — provided the player bundle is current (a
+  stale bundle won't resolve `fill <param>` → black; rebuild after a `@flatkit/*` bump).
 
 ## Drag & drop
 

@@ -859,6 +859,28 @@ type ParsedAttrs = { opacity?: number; pivot?: { x: number; y: number }; tint?: 
 type PendingAlign = { tf: Transform; point: string; target: string; dx: number; dy: number; name?: string }
 const ANCHOR_POINTS: ReadonlySet<string> = new Set(['center', 'top', 'bottom', 'left', 'right', 'topleft', 'topright', 'bottomleft', 'bottomright'])
 
+/**
+ * Compile-time `cel … hold {}` sugar: a `hold` cel CARRIES FORWARD the previous cel's poses for every
+ * container it does not itself mention, so a static/unchanged container persists without re-typing it
+ * each keyframe. Pure rewrite (left→right, so chained holds accumulate) → the runtime sees a normal,
+ * complete cel; the default (omission removes a container) is unchanged. `spin`/`turns` (tween-direction
+ * hints) are dropped on carry — a carried pose is a HOLD, not a re-stated motion. Strips the `hold` flag.
+ */
+function expandHoldCels(cels: Cel[]): void {
+  for (let i = 0; i < cels.length; i++) {
+    const c = cels[i] as Cel & { hold?: boolean }
+    if (!c.hold) continue
+    delete c.hold
+    if (i === 0) continue // nothing to carry from
+    const present = new Set(c.poses.map((p) => p.id))
+    for (const p of cels[i - 1].poses) {
+      if (present.has(p.id)) continue
+      const { spin: _s, turns: _t, ...rest } = p // carry as a static HOLD (no inherited tween direction)
+      c.poses.push({ ...rest })
+    }
+  }
+}
+
 class FlatParser {
   private p = 0
   private cw = 800 // canvas dimensions (updated when parsing `size`) → `at center` anchor
@@ -1026,6 +1048,7 @@ class FlatParser {
     while (this.is('path') || this.is('circle') || this.is('ellipse') || this.is('rect') || this.is('group') || this.is('instance') || this.is('text') || this.is('image')) items.push(this.item())
     const cels: Cel[] = []
     while (this.is('cel')) cels.push(this.cel())
+    expandHoldCels(cels) // `cel … hold {}` → carry the previous cel's poses for unmentioned containers
     const children: Layer[] = []
     while (!this.is('}')) children.push(...this.layer(id)) // nested layers → siblings pointing to `parent`
     this.eat('}')
@@ -1052,10 +1075,11 @@ class FlatParser {
   private cel(): Cel {
     this.eat('cel')
     const frame = this.num()
-    let tween = false, shapeTween = false, ease: Easing | undefined
+    let tween = false, shapeTween = false, hold = false, ease: Easing | undefined
     for (;;) {
       if (this.is('tween')) { this.next(); tween = true }
       else if (this.is('morph')) { this.next(); shapeTween = true }
+      else if (this.is('hold')) { this.next(); hold = true } // carry the previous cel's poses forward (compile-time)
       else if (this.is('ease')) { this.next(); ease = this.easing() }
       else break
     }
@@ -1068,7 +1092,8 @@ class FlatParser {
       else throw new Error(`pose/matter expected: "${this.peek()?.v ?? 'end'}"`)
     }
     this.eat('}')
-    return { frame, poses, ...(tween ? { tween } : {}), ...(shapeTween ? { shapeTween } : {}), ...(ease ? { ease } : {}), ...(matter ? { matter } : {}) }
+    // `hold` is transient (compile-time sugar) → stripped by expandHoldCels after the layer's cels are parsed.
+    return { frame, poses, ...(tween ? { tween } : {}), ...(shapeTween ? { shapeTween } : {}), ...(ease ? { ease } : {}), ...(matter ? { matter } : {}), ...(hold ? { hold } : {}) } as Cel
   }
   private pose(): Pose {
     this.eat('pose')

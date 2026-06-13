@@ -1019,3 +1019,55 @@ describe('flatFormat — clip on a container (D)', () => {
     expect(printFlat(parseFlat(t))).toBe(t)
   })
 })
+
+describe('flatFormat — `cel … hold {}` carries the previous cel\'s poses (compile-time sugar)', () => {
+  const src = [
+    'symbol "Pond" {',
+    '  timeline 24 60',
+    '  layer "l" {',
+    '    group "Base" at 0,0 { layer "a" { path "M0 0L10 0L10 10Z" fill #3a6ea5 } }',
+    '    group "Ring" at 0,0 pivot 0,0 { layer "a" { path "M0 0L5 0L5 5Z" fill #ffffff } }',
+    '    cel 0 tween { pose "Base" at 0,0  pose "Ring" scale 1 }',
+    '    cel 30 hold tween { pose "Ring" scale 4 }',
+    '    cel 60 hold { pose "Ring" scale 1 }',
+    '  }',
+    '}',
+    '',
+  ].join('\n')
+
+  it('carries unmentioned containers forward (chained), and strips the hold flag', () => {
+    const sym = parseFlat(src)[0]
+    const nameOf = (id: string) => (sym.layers[0].items.find((it) => it.id === id) as { name: string }).name
+    const names = (i: number) => sym.layers[0].cels![i].poses.map((p) => nameOf(p.id)).sort()
+    expect(names(0)).toEqual(['Base', 'Ring'])
+    expect(names(1)).toEqual(['Base', 'Ring']) // Base carried into the hold cel
+    expect(names(2)).toEqual(['Base', 'Ring']) // chained: carried from cel 30 (which already had it)
+    expect((sym.layers[0].cels![1] as { hold?: boolean }).hold).toBeUndefined() // transient flag stripped
+  })
+
+  it('expands to full cels: printed output has no `hold`, and re-parses identically (idempotent)', () => {
+    const printed = printFlat(parseFlat(src))
+    expect(printed).not.toMatch(/\bhold\b/)
+    expect(printFlat(parseFlat(printed))).toBe(printed) // stable once expanded
+  })
+
+  it('a carried pose drops spin/turns (it is a HOLD, not a re-stated motion)', () => {
+    const t = [
+      'symbol "S" {',
+      '  timeline 24 20',
+      '  layer "l" {',
+      '    group "W" pivot 0,0 { layer "a" { path "M0 0L5 0L5 5Z" fill #000000 } }',
+      '    group "X" pivot 0,0 { layer "a" { path "M0 0L5 0L5 5Z" fill #111111 } }',
+      '    cel 0 tween { pose "W" spin cw turns 1  pose "X" rotate 0 }',
+      '    cel 20 hold { pose "X" rotate 90 }',
+      '  }',
+      '}',
+      '',
+    ].join('\n')
+    const sym = parseFlat(t)[0]
+    const wId = sym.layers[0].items.find((it) => (it as { name?: string }).name === 'W')!.id
+    const carried = sym.layers[0].cels![1].poses.find((p) => p.id === wId)!
+    expect(carried.spin).toBeUndefined()
+    expect(carried.turns).toBeUndefined()
+  })
+})

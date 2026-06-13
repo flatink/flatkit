@@ -1,5 +1,26 @@
 # @flatkit/types
 
+## 0.9.0
+
+### Minor Changes
+
+- **`cel … hold { }`** — compile-time keyframe sugar. A `hold` cel carries the previous cel's poses forward
+  for every container it doesn't itself mention, so a static/unchanged container persists without re-typing
+  it on every keyframe:
+
+  ```
+  cel 0  tween { pose "Base" at 0,0   pose "Ring" scale 1 }
+  cel 30 hold tween { pose "Ring" scale 4 }   # Base carried automatically
+  cel 60 hold       { pose "Ring" scale 1 }
+  ```
+
+  It's a pure rewrite (the compiler expands it to full cels; `spin`/`turns` are dropped on carry since a
+  carried pose is a HOLD), so the runtime is unchanged and the default — an omitted container is removed,
+  i.e. a symbol _exits_ by no longer being posed — still holds. Opt-in per cel.
+
+  Docs: a "Presence across cels" section in the Animating a symbol guide (a cel is a full snapshot; static
+  elements belong on their own cel-less layer; `cel hold` avoids repetition).
+
 ## 0.8.0
 
 ### Minor Changes

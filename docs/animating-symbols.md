@@ -87,6 +87,30 @@ cel 60       { pose "Hand" rotate 360 }  ← sweeps around the pivot, not its ow
   is **around the pivot**, like every other rotation.
 - **`morph`** on a cel tweens the *shape* of the `matter` (drawing) toward the next key.
 
+## Presence across cels — a cel is a full snapshot
+
+Each `cel` is a **keyframe = the full set of containers present at that instant** (Flash style). A container
+is shown only on the cels that **pose** it; one omitted from a cel **disappears** there. So a container
+visible across a span must be posed on **each cel of that span** (it's per-*keyframe*, not per-frame — three
+keyframes ⇒ three poses, not one per frame). This is also how a symbol **exits**: stop posing it.
+
+Two ways to avoid re-typing an unchanged container:
+
+- **Static element → its own layer WITHOUT cels.** A cel-less layer renders its items at every frame, so a
+  static base/background is declared **once** and never flickers. (Same idea as the render-order note below.)
+- **`cel N hold { … }`** — carry the previous cel's poses forward for every container this cel does *not*
+  mention, then apply the stated overrides. Pure authoring sugar (the compiler expands it to full cels), so
+  you only write what changes:
+
+```
+cel 0  tween { pose "Base" at 0,0   pose "Ring" scale 1 }
+cel 30 hold tween { pose "Ring" scale 4 }   # Base carried automatically
+cel 60 hold       { pose "Ring" scale 1 }
+```
+
+`hold` is opt-in per cel; without it the default (an omitted container is removed) is unchanged — so
+exits still work.
+
 ## Driving a channel with an expression (`expr`)
 
 Instead of keyframes you can bind a channel to an expression on the container itself:
