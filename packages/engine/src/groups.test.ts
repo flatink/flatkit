@@ -70,6 +70,30 @@ describe('groups', () => {
     // local matter [-40,-40]..[40,40] moved by (300,250) → [260,210]..[340,290]
     expect(containerBBox(doc, inst)).toEqual({ minX: 260, minY: 210, maxX: 340, maxY: 290 })
   })
+
+  // Editor static state preview: the frozen (default) bbox of a state-driven instance reflects its
+  // SELECTED state's frame, not frame 0 — so the selection box matches the rendered/clicked shape.
+  it('containerBBox of a state-driven instance freezes at the selected state frame', () => {
+    const panel = (): Group => ({ id: 'panel', kind: 'group', name: 'Panel', transform: IDENTITY, layers: [{ id: 'pl', name: 'c', visible: true, locked: false, opacity: 1, items: [rectRegion('r', -10, -10, 20, 20)] }] })
+    const doc: Doc = {
+      width: 200, height: 200, layers: [], symbols: [{
+        id: 'door', name: 'Door',
+        states: [{ param: 'door', states: [{ name: 'closed', frame: 0 }, { name: 'open', frame: 10 }], initial: 'closed' }],
+        layers: [{
+          id: 'sl', name: 'c', visible: true, locked: false, opacity: 1, items: [panel()],
+          cels: [
+            { frame: 0, tween: true, poses: [{ id: 'panel', transform: translation(0, 0) }] },
+            { frame: 10, poses: [{ id: 'panel', transform: translation(100, 0) }] },
+          ],
+        }],
+      }],
+    }
+    const inst = (params?: Record<string, string>) => ({ id: 'i', kind: 'instance' as const, name: 'Door', symbolId: 'door', transform: IDENTITY, ...(params ? { params } : {}) })
+    // closed (initial) → frame 0 → panel at x=0 → rect [-10,-10]..[10,10]
+    expect(containerBBox(doc, inst())).toEqual({ minX: -10, minY: -10, maxX: 10, maxY: 10 })
+    // open (call-site) → frame 10 → panel at x=100 → rect [90,-10]..[110,10]
+    expect(containerBBox(doc, inst({ door: 'open' }))).toEqual({ minX: 90, minY: -10, maxX: 110, maxY: 10 })
+  })
 })
 
 describe('dropZoneBounds (drop zone)', () => {

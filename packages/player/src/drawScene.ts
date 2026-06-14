@@ -19,7 +19,7 @@ import { containerLayers, getSymbol, hiddenLayerIds, isContainer, isGroup, isIns
 import { pathToBezier, transformPath, type Path } from '@flatkit/engine/path'
 import { resolveInstanceFrame, type BaseOf } from '@flatkit/engine/timeline'
 import { stateFrame, initialStateValue } from '@flatkit/engine/states'
-import { resolveInstanceParams } from '@flatkit/engine/params'
+import { resolveInstanceParams, frozenInstanceFrame } from '@flatkit/engine/params'
 import { resolveLayerAt } from '@flatkit/engine/cel'
 import type { ExprContext } from '@flatkit/engine/expr'
 import { apply, compose, IDENTITY, type Transform } from '@flatkit/engine/transform'
@@ -437,11 +437,13 @@ function renderContainerChildren(
   // unrelated subtree reusing that canvas. Wrapping here covers every caller path.
   if (it.clip) { ctx.save(); ctx.beginPath(); ctx.rect(it.clip.x, it.clip.y, it.clip.w, it.clip.h); ctx.clip() }
   if (isInstance(it)) {
-    // EDITOR (freezeNested): sub-scope frozen at 0; otherwise local frame (full animation, player).
+    // EDITOR (freezeNested): the nested timeline does not play — frozen. BUT a STATE is a static config
+    // (door "open"), not playback → a state-driven symbol freezes at its selected state's frame (so the
+    // editor shows it open), else 0. PLAYER (no freeze): the full local frame (animation + driven states).
     // Exposed params scope this instance's subtree (declared/call-site/state-initial + runtime override);
     // color params feed `fill <param>` regions.
     const { sym, expr: subExpr, color } = instanceScope(doc, it, rctx)
-    const local = rctx.freezeNested ? 0 : instanceLocalFrame(it, sym, frame, subExpr)
+    const local = rctx.freezeNested ? frozenInstanceFrame(sym, it) : instanceLocalFrame(it, sym, frame, subExpr)
     renderLayers(ctx, doc, containerLayers(doc, it), local, hidden, seen, { fps: subFps(sym?.timeline?.fps, rctx), expr: subExpr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, paramsFor: rctx.paramsFor, colorParams: color }, parent, depth + 1)
   } else if (isGroup(it) && it.timeline) {
     renderLayers(ctx, doc, it.layers, rctx.freezeNested ? 0 : frame, hidden, seen, { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState }, parent, depth + 1)

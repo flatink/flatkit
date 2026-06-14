@@ -11,6 +11,7 @@ import type { Doc, Group, Instance, Item, Layer, Path, Point, Region, SymbolDef 
 import { containerLayers, getSymbol, hiddenLayerIds, isContainer, isGroup, isInstance, isText, isImage, maskMap, guideMap } from '@flatkit/engine/layers'
 import { apply, invert, compose, IDENTITY, type Transform } from '@flatkit/engine/transform'
 import { resolveInstanceFrame, type Timeline } from '@flatkit/engine/timeline'
+import { frozenInstanceFrame } from '@flatkit/engine/params'
 import { resolveLayerAt } from '@flatkit/engine/cel'
 import { pathToPolygons } from '@flatkit/engine/path'
 import { guidePathOf } from './drawScene'
@@ -110,7 +111,9 @@ function hitRegion(r: Region, pt: Point): boolean {
 function subScopeFrame(it: Group | Instance, sym: SymbolDef | undefined, frame: number, freeze: boolean): number {
   const subScope = isInstance(it) || (isGroup(it) && !!it.timeline)
   if (!subScope) return frame
-  if (freeze) return 0
+  // EDITOR (freeze): frozen, but a state-driven instance hit-tests at its selected state's frame (its open
+  // shape), consistent with the render; non-state sub-scopes stay at 0.
+  if (freeze) return isInstance(it) ? frozenInstanceFrame(sym, it) : 0
   return isInstance(it) && sym?.timeline ? resolveInstanceFrame(it.playback, frame, sym.timeline.durationFrames) : frame
 }
 

@@ -8,7 +8,7 @@
 //  also surface here as numeric scope values so internal expressions agree with the driven playhead.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { SymbolDef, Instance, ParamDef } from '@flatkit/types'
-import { stateValueOf, initialStateValue } from './states'
+import { stateValueOf, initialStateValue, stateFrame } from './states'
 export type { ParamDef, ParamType } from '@flatkit/types'
 
 export type ResolvedParams = { numeric: Record<string, number>; color: Record<string, string> }
@@ -45,6 +45,18 @@ export function resolveInstanceParams(sym: SymbolDef | undefined, inst: Pick<Ins
     else numeric[def.name] = parseNumeric(def, raw)
   }
   return { numeric, color }
+}
+
+/**
+ * Static local frame of a FROZEN instance — the editor renders/sizes/hit-tests nested symbols frozen (their
+ * internal timeline does not play while a parent scope is edited). But a STATE is a static CONFIGURATION
+ * (a door posed "open"), not playback: a state-driven symbol freezes at its selected state's frame
+ * (call-site value / initial), so the editor shows the door open. No states → 0 (the previous behavior).
+ */
+export function frozenInstanceFrame(sym: SymbolDef | undefined, inst: Pick<Instance, 'params'>): number {
+  const sm = sym?.states?.[0]
+  if (!sm) return 0
+  return stateFrame(sm, resolveInstanceParams(sym, inst).numeric[sm.param] ?? initialStateValue(sm))
 }
 
 /** Default value of a single color param by name (for a render fallback when no instance override). */

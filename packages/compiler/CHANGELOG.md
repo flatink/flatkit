@@ -1,5 +1,14 @@
 # @flatkit/compiler
 
+## 0.10.0
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @flatkit/engine@0.10.0
+  - @flatkit/player@0.10.0
+  - @flatkit/types@0.10.0
+
 ## 0.9.0
 
 ### Minor Changes

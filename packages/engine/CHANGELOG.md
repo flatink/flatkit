@@ -1,5 +1,30 @@
 # @flatkit/engine
 
+## 0.10.0
+
+### Minor Changes
+
+- Editor static **state preview**: a state-driven symbol now appears in its selected state in the editor,
+  not frozen at frame 0.
+
+  A `states {}` value is a static CONFIGURATION (a door posed `open`), not playback. The editor freezes nested
+  symbols (their internal timeline does not advance while a parent scope is edited), but a state is exactly the
+  kind of frozen-yet-meaningful position that should still show. So when an instance's symbol exposes states,
+  its frozen local frame is now the frame of its selected state (call-site value / initial), interpolating for
+  a fractional/animated value — instead of always 0.
+
+  - New pure helper `frozenInstanceFrame(sym, inst)` in `@flatkit/engine/params`: the static frame of a frozen
+    instance — its selected state's frame if the symbol exposes states, else 0.
+  - Threaded through every editor path so render, **selection bounding box** (`@flatkit/engine` `containerBBox`),
+    and **hit-test** (`@flatkit/player/hit`) agree: the door is shown, boxed, and clicked in its open shape.
+  - Player playback is unchanged (the new branch only applies to the editor's frozen sub-scopes; the live
+    player resolves the full local frame, states included, as before).
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @flatkit/types@0.10.0
+
 ## 0.9.0
 
 ### Minor Changes

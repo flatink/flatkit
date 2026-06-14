@@ -4,11 +4,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Doc, Group, Instance, Item, Layer, Point, Region, Text, Path, Subpath } from '@flatkit/types'
 import { apply, compose, IDENTITY, invert, rotationOf, type Transform } from './transform'
-import { containerLayers, isContainer, isGroup, isInstance, isText, isImage, isRegion } from './layers'
+import { containerLayers, getSymbol, isContainer, isGroup, isInstance, isText, isImage, isRegion } from './layers'
 import { pointInRegion } from './regionHit'
 import { transformPath } from './path'
 import { combineBBox, regionBBox, type BBox } from './bbox'
 import { resolveLayerAt } from './cel'
+import { frozenInstanceFrame } from './params'
 
 /** Apply a transform to a region's path (+ the gradient box & angle). */
 export function transformRegion(t: Transform, r: Region): Region {
@@ -50,8 +51,11 @@ export function containerBBox(doc: Doc, container: Group | Instance, frame = 0, 
         if (isContainer(it)) {
           if (isInstance(it) && seen.has(it.symbolId)) continue
           const next = isInstance(it) ? new Set([...seen, it.symbolId]) : seen
-          // `deep` threads the frame INTO nested timelines (union-over-frames); default freezes sub-scopes at 0.
-          walk(containerLayers(doc, it), compose(t, it.transform), deep ? f : 0, next)
+          // `deep` threads the frame INTO nested timelines (union-over-frames). Default freezes sub-scopes,
+          // BUT a state-driven instance freezes at its selected state's frame (static config) so the
+          // selection box / position match the rendered state (door "open"); else 0.
+          const frozen = isInstance(it) ? frozenInstanceFrame(getSymbol(doc, it.symbolId), it) : 0
+          walk(containerLayers(doc, it), compose(t, it.transform), deep ? f : frozen, next)
         } else if (isText(it)) {
           boxes.push(boxBBox(it.transform, it.box.w, it.box.h, t))
         } else if (isImage(it)) {
@@ -64,7 +68,11 @@ export function containerBBox(doc: Doc, container: Group | Instance, frame = 0, 
     }
   }
   const start = isInstance(container) ? new Set([container.symbolId]) : new Set<string>()
-  walk(containerLayers(doc, container), base, frame, start)
+  // The TOP-LEVEL container is frozen too: a state-driven instance measured directly (the editor's
+  // selection box) freezes at its selected state's frame — consistent with render/hit — instead of `frame`.
+  const topSym = isInstance(container) ? getSymbol(doc, container.symbolId) : undefined
+  const topFrame = !deep && isInstance(container) && topSym?.states?.length ? frozenInstanceFrame(topSym, container) : frame
+  walk(containerLayers(doc, container), base, topFrame, start)
   return combineBBox(boxes)
 }
 

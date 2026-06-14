@@ -190,4 +190,33 @@ describe('hitContextAt -- frame-aware editor selection', () => {
     const doc: Doc = { width: 600, height: 600, layers, symbols: [] }
     expect(hitContextAt(doc, layers, undefined, 0, { x: 0, y: 0 })).toBeNull()
   })
+
+  // Editor static state preview: a state-driven instance is hit-tested (freeze=true) at its SELECTED
+  // state's frame — clicking its open-state shape selects it, matching what's rendered.
+  it('hit-tests a state-driven instance at its selected state frame (editor freeze)', () => {
+    const panel = { id: 'panel', kind: 'group' as const, name: 'Panel', transform: translation(0, 0), layers: [layerOf([region('pr', square(10, 10, 10))])] } // local rect [0,0]..[20,20]
+    const doc: Doc = {
+      width: 600, height: 600, layers: [], symbols: [{
+        id: 'door', name: 'Door',
+        states: [{ param: 'door', states: [{ name: 'closed', frame: 0 }, { name: 'open', frame: 10 }], initial: 'closed' }],
+        layers: [{
+          id: 'sl', name: 'c', visible: true, locked: false, opacity: 1, items: [panel],
+          cels: [
+            { frame: 0, tween: true, poses: [{ id: 'panel', transform: translation(0, 0) }] },
+            { frame: 10, poses: [{ id: 'panel', transform: translation(100, 0) }] },
+          ],
+        }],
+      }],
+    }
+    const inst = (params?: Record<string, string>) => ({ id: 'D', kind: 'instance' as const, name: 'Door', symbolId: 'door', transform: translation(0, 0), ...(params ? { params } : {}) })
+    const layersOf = (params?: Record<string, string>): Layer[] => [layerOf([inst(params)])]
+    const open = layersOf({ door: 'open' })
+    const closed = layersOf()
+    // open → panel at x=100 → the open shape is around (110,10), not (10,10)
+    expect(hitContextAt(doc, open, undefined, 0, { x: 110, y: 10 })?.item.id).toBe('D')
+    expect(hitContextAt(doc, open, undefined, 0, { x: 10, y: 10 })).toBeNull()
+    // closed (initial) → panel at x=0 → the reverse
+    expect(hitContextAt(doc, closed, undefined, 0, { x: 10, y: 10 })?.item.id).toBe('D')
+    expect(hitContextAt(doc, closed, undefined, 0, { x: 110, y: 10 })).toBeNull()
+  })
 })

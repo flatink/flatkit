@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveInstanceParams } from './params'
+import { resolveInstanceParams, frozenInstanceFrame } from './params'
 import type { Instance, SymbolDef } from '@flatkit/types'
 
 const sym = (over: Partial<SymbolDef> = {}): SymbolDef => ({
@@ -40,5 +40,27 @@ describe('params — resolveInstanceParams', () => {
 
   it('no symbol → empty maps', () => {
     expect(resolveInstanceParams(undefined, inst({ x: '1' }))).toEqual({ numeric: {}, color: {} })
+  })
+})
+
+describe('params — frozenInstanceFrame (editor static state preview)', () => {
+  const door = (over: Partial<SymbolDef> = {}): SymbolDef => ({
+    id: 's', name: 'Door', layers: [],
+    states: [{ param: 'door', states: [{ name: 'closed', frame: 0 }, { name: 'open', frame: 24 }], initial: 'closed' }],
+    ...over,
+  })
+
+  it('no states → 0 (nested timeline stays frozen at 0 in the editor)', () => {
+    expect(frozenInstanceFrame(sym(), inst())).toBe(0) // sym() has params but no states
+    expect(frozenInstanceFrame(undefined, inst())).toBe(0)
+  })
+
+  it('state-driven → the selected state’s frame (call-site), else the initial’s frame', () => {
+    expect(frozenInstanceFrame(door(), inst())).toBe(0) // initial = closed @0
+    expect(frozenInstanceFrame(door(), inst({ door: 'open' }))).toBe(24) // call-site open @24
+  })
+
+  it('fractional/animated value lerps between anchors (in-between frame)', () => {
+    expect(frozenInstanceFrame(door(), inst({ door: '0.5' }))).toBe(12) // halfway 0→24
   })
 })
