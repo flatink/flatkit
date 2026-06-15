@@ -15,3 +15,6 @@ coverage
 
 # LLM generation prompts (experimental, not shipped yet)
 prompts/
+
+# Local agent notes (not shipped)
+CLAUDE.md
