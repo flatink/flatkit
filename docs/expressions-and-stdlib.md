@@ -31,6 +31,10 @@ rad(deg)  deg(rad)  turns(n)
 
 Constants: `PI`, `TAU` (2π), `E`.
 
+> **`lerp` is the exponential smoother.** `lerp(v, target, k)` = `v + (target - v) * k` — so
+> `niv = lerp(niv, target, 0.1)` in `every frame` eases `niv` toward `target` (no new helper needed; the
+> target and rate stay explicit). For a timed 1→0 feedback ramp, see `pulse(since, dur)` in `use "feedback"`.
+
 **Angles are RADIANS** (the `rotation` channel, `sin`/`cos`/`atan2`). Author in degrees with the helpers:
 `rad(45)` (degrees → radians), `turns(n)` (n full turns → radians, e.g. `rotation = turns(time)` spins once
 per second), `deg(r)` (the inverse, for readouts). Or bind the **`rotationDeg`** channel (sugar for
@@ -76,7 +80,7 @@ Import bundled helpers with `use "<name>"`. They're embedded (no network, no fil
 use "collision"   # boxHit(ax,ay,bx,by,hw,hh) · dist(ax,ay,bx,by) · near(ax,ay,bx,by,r)
 use "easing"      # easeIn(t) · easeOut(t) · easeInOut(t) · smooth(t)        (t in 0..1)
 use "gesture"     # snap(v,step) · snapTo(v,target,r) · railT/railX/railY(px,py,ax,ay,bx,by) · angle(cx,cy,px,py) · inZone(px,py,x,y,w,h)
-use "feedback"    # lift(h) · dim(h) · tilt(g) · sink(g) · shake(bad,t)      (drive channels from self.hovered/grabbed)
+use "feedback"    # lift(h) · dim(h) · tilt(g) · sink(g) · shake(bad,t) · pulse(since,dur)  (channel reactions)
 ```
 
 Example:

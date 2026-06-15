@@ -136,6 +136,19 @@ object "Tile" {
 Or call the [`feedback` stdlib](expressions-and-stdlib.md#stdlib-packages) functions by hand
 (`lift`/`dim`/`tilt`/`sink`/`shake`).
 
+**Timed feedback** (a message/flash that fades over a readable duration) — `pulse(since, dur)` from
+`use "feedback"` is a linear `1→0` ramp over `dur` seconds since the instant `since`. Capture the instant
+in a handler so nothing is hidden:
+
+```
+var shown = -999
+object "Hint" { opacity = pulse(shown, 4) }     # visible 4 s after each trigger, then gone
+object "Piece" { when dropped on Wrong { shown = time } }
+```
+
+(A multiplicative decay like `v * 0.86` is fine for a quick flash but vanishes before TEXT can be read —
+`pulse` gives a duration you state.)
+
 ## Reuse / factoring
 
 Cut repetition with compile-time sugar (all resolved at parse → zero runtime cost):
