@@ -58,6 +58,10 @@ export function localVariables(units: ScriptUnit[]): Set<string> {
 /** Detects a `text(` call (whole word) in an expression → only allowed in a `send` payload. */
 const TEXT_CALL = /\btext\s*\(/
 
+/** A bare assignment (`x =`, `a[i] =`; NOT ==/<=/>=/!=) left inside an expression: the tell-tale of a
+ *  SECOND statement crammed onto one line (FlatInk ends a statement at the newline, so it got swallowed). */
+const SECOND_ASSIGN = /[\w\]]\s*=(?![=])/
+
 /** Analyze a DSL source and return all diagnostics (syntax + semantic). */
 export function lint(src: string, ctx: LintContext = {}): Diagnostic[] {
   const { units, diagnostics, sites } = parseUnits(src)
@@ -86,7 +90,12 @@ export function lint(src: string, ctx: LintContext = {}): Diagnostic[] {
       }
       const a = analyzeExpr(s.text)
       if (!a.ok) {
-        out.push({ line: s.line, col: s.col, message: `invalid expression: ${a.error}` })
+        // #1 footgun: two statements on one line. The 2nd `channel = …` got swallowed into this
+        // expression → a cryptic "unexpected character =". Detect the leftover assignment and say so.
+        const message = SECOND_ASSIGN.test(s.text)
+          ? 'two statements on one line — put each on its own line (FlatInk ends a statement at the newline)'
+          : `invalid expression: ${a.error}`
+        out.push({ line: s.line, col: s.col, message })
         continue
       }
       for (const fn of a.refs.calls) if (!knownFns.has(fn)) out.push({ line: s.line, col: s.col, message: `unknown function "${fn}"` })

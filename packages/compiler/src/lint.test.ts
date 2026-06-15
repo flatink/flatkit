@@ -34,6 +34,20 @@ describe('lint — expressions', () => {
     expect(d[0].message).toMatch(/invalid expression/)
   })
 
+  it('two statements on one line → friendly diagnosis (not "unexpected character")', () => {
+    const d = lint('y = a  x = b') // the #1 footgun: a 2nd `channel = …` crammed onto one line
+    expect(d.length).toBe(1)
+    expect(d[0].message).toMatch(/two statements on one line/)
+    expect(d[0].message).not.toMatch(/unexpected character/)
+  })
+
+  it('comparisons are NOT mistaken for a second statement (regex excludes ==/<=/>=/!=)', () => {
+    expect(lint('rotation = a <= b', { variables: ['a', 'b'] })).toEqual([]) // valid comparison → no diagnostic
+    const d = lint('rotation = a <=', { variables: ['a'] }) // invalid (incomplete) but NOT a 2nd statement
+    expect(d[0].message).toMatch(/invalid expression/)
+    expect(d[0].message).not.toMatch(/two statements/)
+  })
+
   it('unknown function', () => {
     const d = lint('rotation = wobble(time)')
     expect(d.some((x) => /unknown function "wobble"/.test(x.message))).toBe(true)
