@@ -309,10 +309,12 @@ export class FlatPlayer {
   private applyDrag(p: Point): void {
     const d = this.dragActive
     if (!d) return
-    if (d.it.axis === 'turn') { // rotation: the object points toward the cursor (pivot->pointer angle, in degrees)
+    if (d.it.axis === 'turn' || d.it.axis === 'turnDeg') { // the object points toward the cursor (pivot->pointer angle). `turn` = RADIANS (pairs with the `rotation` channel / `gesture.angle`); `turnDeg` = DEGREES (pairs with `rotationDeg`)
       const piv = d.it.pivot ?? { x: 0, y: 0 }
-      let a = (Math.atan2(p.y - piv.y, p.x - piv.x) * 180) / Math.PI
-      if (d.it.grid && d.it.grid > 0) a = Math.round(a / d.it.grid) * d.it.grid
+      const deg = d.it.axis === 'turnDeg'
+      let a = Math.atan2(p.y - piv.y, p.x - piv.x) // radians
+      if (deg) a = (a * 180) / Math.PI
+      if (d.it.grid && d.it.grid > 0) { const step = deg ? d.it.grid : (d.it.grid * Math.PI) / 180; a = Math.round(a / step) * step } // `snap` is authored in degrees
       if (d.it.varX) this.writeOut(d.it.varX, a)
       this.bustNamed()
       return

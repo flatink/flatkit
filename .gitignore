@@ -12,3 +12,6 @@ coverage
 .DS_Store
 *.log
 *.local
+
+# LLM generation prompts (experimental, not shipped yet)
+prompts/

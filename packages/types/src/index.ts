@@ -199,16 +199,16 @@ export type Interaction = { id: string; targetId: string; event: ItemEvent; over
  */
 export type Interactor = {
   targetId: string
-  // 'turn' = rotation→angle (varX); 'trace' = follow a path→progress 0..1 (varX);
+  // 'turn' = rotation→angle in RADIANS (varX); 'turnDeg' = same in DEGREES (varX); 'trace' = follow a path→progress 0..1 (varX);
   // 'reveal' = scratch/wipe→revealed fraction 0..1 (varX); 'link' = drag a thread→endX/endY (varX/varY) + target index (varT).
-  axis: 'xy' | 'x' | 'y' | 'turn' | 'trace' | 'reveal' | 'link'
-  varX?: string // X output (axes 'xy'/'x'), ANGLE in degrees ('turn'), PROGRESS 0..1 ('trace'), revealed FRACTION 0..1 ('reveal'), or the thread's endX ('link')
+  axis: 'xy' | 'x' | 'y' | 'turn' | 'turnDeg' | 'trace' | 'reveal' | 'link'
+  varX?: string // X output (axes 'xy'/'x'), ANGLE in radians ('turn') or degrees ('turnDeg'), PROGRESS 0..1 ('trace'), revealed FRACTION 0..1 ('reveal'), or the thread's endX ('link')
   varY?: string // Y output variable (axes 'xy' and 'y') or the thread's endY (axis 'link')
   varT?: string // axis 'link': INDEX (1..n) of the target reached on release, 0 if none
   confine?: string // clamp zone (drag); name of the GROUP-path to follow ('trace'); name of the GROUP of targets ('link')
-  grid?: number // snap: grid step (drag, px), angle step (turn, degrees), TOLERANCE (trace, px), or BRUSH radius (reveal, px)
+  grid?: number // snap: grid step (drag, px), angle step (turn/turnDeg, ALWAYS degrees), TOLERANCE (trace, px), or BRUSH radius (reveal, px)
   enabled?: string // expression: the drag is active only when it is true (≠ 0); absent = always active (dynamic lock, no ternary pattern)
-  pivot?: Point // WORLD rotation center for axis 'turn' (the object points toward the cursor)
+  pivot?: Point // WORLD rotation center for axis 'turn'/'turnDeg' (the object points toward the cursor)
 }
 
 // ── "cel" model ──────────────────────────────────────────────────────────────

@@ -72,6 +72,11 @@
   origin lands. `spin cw|ccw` / `turns N` also turn around the pivot.
 - **`expr rotation` is in RADIANS**, like `sin`/`cos`. Stay in degrees with the helpers: `rad(45)`,
   `turns(time)` (one turn per second), `deg(r)`. e.g. `expr rotation "turns(time * 0.5)"`.
+- **A channel binding REPLACES the base transform — it is NOT a delta.** `object "G" { x = bump }` sets
+  G's local x to `bump`, **overwriting** the group's declared `at X,Y` (x snaps to `bump` ≈ 0 → the element
+  jumps to the left edge whenever the expression is small). Re-inject the base position:
+  `x = $(X) + bump`. Same for `y`/`rotation`/`scaleX`/… — the channel value is absolute, not added to `at`.
+  Classic cause of "the animation appears in the wrong place."
 - **Render order**: in an animated layer the static **matter draws BEHIND the posed containers**, and
   declaration order between a bare `path` and an animated `group` is NOT preserved. To put a static
   shape in front of an animation, give it its own **layer above** (or wrap it in a group).
@@ -113,8 +118,10 @@
 Inside an `object "Name" { … }`, besides `drag x, y` / `dragX` / `dragY`:
 
 - **`turn <angle> around <x>,<y> [{ snap <deg> · enabled <expr> }]`**: pointer-driven
-  rotation. Writes into `<angle>` (degrees) the direction from the pivot to the cursor.
-  Great for clock hands, dials, protractors, knobs. Use it via `rotation = <angle>`.
+  rotation. Writes into `<angle>` the pivot→cursor direction **in radians** (like the `rotation` channel
+  and `gesture.angle`), so `rotation = <angle>` wires directly. To work in **degrees**, use the twin
+  **`turnDeg`** (writes degrees) paired with the **`rotationDeg = <angle>`** channel (sugar for
+  `rotation = rad(<angle>)`). `snap <deg>` is authored in degrees on both. Great for clock hands, dials, knobs.
 - **`trace <progress> along <TraceGroup> [{ tolerance <px> · enabled <expr> }]`**: follow a
   path with the finger. While the pointer stays within `tolerance` of the trace (the regions
   of the named group), `<progress>` rises from 0 to 1 (monotone, never goes back down).
@@ -227,7 +234,7 @@ and composes with `self.x`/`self.y` etc. (same `self`).
   ```
   symbol "Card"(label, tint = "#ffffff") {
     layer "c" { rect -40 -40 80 80 fill $(tint)
-                text "$(label)" font "sans-serif" size 20 align center line 1.2 color #000 box 80 80 as "lbl$(label)" }
+                text "$(label)" as "lbl$(label)" font "sans-serif" size 20 align center line 1.2 color #000 box 80 80 }
   }
   scene { layer "L" {
     repeat i from 0 to 4 { instance "Card"($(i+1)) as "C$(i)" at $(80 + i*90),200 }
@@ -244,6 +251,12 @@ and composes with `self.x`/`self.y` etc. (same `self`).
     param = error.
   - ⚠️ Compile-time sugar (re-serialized as groups, like `def`/`repeat`). For shared
     BEHAVIOR, see `each` below.
+  - ⚠️ **`.flatink`-only**: a parameterized `symbol "X"(…)` lives in the **program** (`.flatink`), NOT in a
+    `.flat` library. `.flat` libs hold **non-parameterized** symbols, instanced **without** parens
+    (`instance "Hero" as "H"`); a parameterized one is instanced **with** args (`instance "Card"("A")`).
+    Putting a `(…)` symbol in a `.flat` — or letting `flatc` auto-discover such a `.flat` in the folder —
+    surfaces as a misleading `"{" expected, "("` (the `.flat` parser doesn't take parameters). Rule of
+    thumb: parens ⇔ parameterized ⇔ inline in the `.flatink`.
 - **`each "Symbol" as i { … }`**: applies BEHAVIOR to every instance of a symbol, with
   index `i`.
   - **Channel bindings** on real instances (`each "Brick" as i { opacity = bricks[i] }`) →

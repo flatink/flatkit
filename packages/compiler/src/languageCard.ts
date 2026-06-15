@@ -30,6 +30,7 @@ myProc() · send "event"[, expr] · sound "assetId"
 
 ## Expressions (drive a channel, or compute in an action)
 channel = expr         channels: ${EXPR_CHANNELS.join(' ')}   (expression wins over keyframes)
+rotationDeg = expr     // sugar for rotation = rad(expr) — author angles in DEGREES (rotation & sin/cos/atan2 are RADIANS)
 operators: + - * / %   < > <= >= == !=   && || !   cond ? a : b
 context: time frame value · mouse.x mouse.y mouse.dx mouse.dy · keys.Space keys.ArrowLeft … (keys are 1/0, use directly: keys.Space ? … : …)
 Name.x Name.y Name.rotation Name.scaleX Name.scaleY Name.opacity   // any named object (identifier name), live on-screen value (read-only)
@@ -46,6 +47,8 @@ functions: ${STD_FUNCTIONS.join(' ')}
 drag x, y                      // object follows the pointer while held → writes vars x, y (bind them: x = vx, y = vy)
 dragX vx · dragY vy            // single-axis
 drag x, y { confine to Zone  snap 10 }   // bound to a named object's box · grid snap
+turn a around cx,cy { snap 15 }    // dial/knob → a = pivot→cursor angle in RADIANS (pair: rotation = a)
+turnDeg a around cx,cy { snap 15 } // same in DEGREES (pair: rotationDeg = a) · snap is degrees on both
 when dropped on Zone { … }     // fires on release when the object's center is inside the named zone
 
 ## Declarations

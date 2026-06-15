@@ -43,6 +43,16 @@ describe('dsl — interactors (drag / drop)', () => {
     roundtrip([{ kind: 'interactor', axis: 'turn', varX: 'a', pivot: { x: 100, y: 200 } }])
     roundtrip([{ kind: 'interactor', axis: 'turn', varX: 'a', pivot: { x: 100, y: 200 }, grid: 30, enabled: 'p == 0' }])
   })
+  it('turnDeg (degrees variant of turn): printing + round-trip', () => {
+    expect(printUnits([{ kind: 'interactor', axis: 'turnDeg', varX: 'a', pivot: { x: 0, y: 0 } }]))
+      .toBe('turnDeg a around 0,0\n')
+    roundtrip([{ kind: 'interactor', axis: 'turnDeg', varX: 'a', pivot: { x: 100, y: 200 }, grid: 15 }])
+  })
+  it('rotationDeg = e is authoring sugar for rotation = rad(e)', () => {
+    const r = parseUnits('rotationDeg = a\n')
+    expect(r.diagnostics).toEqual([])
+    expect(r.units).toEqual([{ kind: 'binding', channel: 'rotation', expr: 'rad(a)' }])
+  })
   it('trace (follow a path): printing + round-trip', () => {
     expect(printUnits([{ kind: 'interactor', axis: 'trace', varX: 'prog', confine: 'Path' }]))
       .toBe('trace prog along Path\n')

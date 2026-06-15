@@ -502,8 +502,17 @@ function expandSymbolInstances(scene: string, templates: Map<string, SymbolTempl
       if (!tmpl) throw new Error(`parameterized instance: symbol "${m[1]}" not defined (a "symbol "${m[1]}"(…)" is expected)`)
       const parenClose = matchParen(text, m.index + m[0].length - 1)
       if (parenClose < 0) { out += text.slice(cursor); break }
-      let end = text.indexOf('\n', parenClose)
-      if (end < 0) end = text.length
+      // The instance's trailing attrs (`as`/`at`/`align`/`opacity`/a call-site `{ … }` block) end at the
+      // newline OR at the first `}` that closes an ENCLOSING block (depth 0) — so an instance can share a
+      // line with the braces that close its layer/scene (`… at 50,50 } }`) without swallowing them.
+      let end = parenClose + 1, depth = 0
+      while (end < text.length) {
+        const c = text[end]
+        if (c === '\n') break
+        if (c === '{') depth++
+        else if (c === '}') { if (depth === 0) break; depth-- }
+        end++
+      }
       const built = buildSymbolGroup(tmpl, m[1], text.slice(m.index + m[0].length, parenClose), text.slice(parenClose + 1, end))
       if (registry) { const arr = registry.get(m[1]) ?? []; arr.push(built.groupName); registry.set(m[1], arr) }
       out += text.slice(cursor, m.index) + built.text

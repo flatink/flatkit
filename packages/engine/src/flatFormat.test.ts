@@ -604,6 +604,15 @@ describe('flatFormat — parameterized symbols (VISUAL template, expanded at par
     const src = ['size 100 100', 'scene { layer "L" { instance "Ghost"(1) at 0,0 } }'].join('\n')
     expect(() => parseProgramFull(src)).toThrow(/not defined/)
   })
+  it('an instance can share its line with the closing braces of its layer/scene (no brace swallowed)', () => {
+    // `… at 50,50 } }` on one line: the trailing `}}` close the layer+scene, not the generated group.
+    const src = [...tmpl, 'size 100 100', 'scene { layer "L" { instance "Tile"("A", "#ff0000") as "T1" at 50,50 } }'].join('\n')
+    const prog = parseProgramFull(src)
+    const t1 = grp(prog, 'T1')
+    expect(t1.transform).toMatchObject({ e: 50, f: 50 })
+    expect(txt(t1)).toBe('A')
+    expect(rgn(t1).color).toBe('#ff0000')
+  })
   it('each "Tmpl" as i { when clicked … } → one handler per generated instance (index substituted)', () => {
     const src = [
       'symbol "Key"(label) { layer "c" { text "$(label)" font "sans-serif" size 24 align center line 1.2 color #000000 box 60 60 } }',

@@ -90,6 +90,12 @@ at center  ·  at center,540  ·  at 120,center        # canvas-relative anchor 
 align <point> of "Name" [offset dx,dy]               # pin this item's origin onto another item's bbox
 ```
 
+> **Placement & naming gotchas.** On `text`/`image`, put `at …` / `matrix(…)` / `as "…"` **right after the
+> content** (the string, or `image "id" w h`), *before* style attributes (`font`/`box`/`fill`/…). So
+> `text "…" box W H at x,y` fails — write `text "…" at x,y box W H`. And **bare shapes
+> (`circle`/`rect`/`ellipse`/`path`) can't be named** with `as` at all: to reference one from behavior,
+> wrap it in a `group "Name"` (the name lives on the group).
+
 `align` points: `center`, `top`, `bottom`, `left`, `right`, `topleft`, `topright`, `bottomleft`,
 `bottomright`. It uses the target's **static** bbox (no expression channels) — placement only, no flow
 layout (stack with `repeat` + `$()`, see [factoring](behavior-and-interactions.md#reuse--factoring)).

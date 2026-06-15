@@ -35,7 +35,7 @@ export type ScriptUnit =
   | { kind: 'use'; name: string } // use "collision" — imports a package
   // "move" interactor (cf. RFC interactors): moves the object to the mouse, writes the position into explicit
   // variables. `drag x, y` (2 axes) · `dragX x` · `dragY y`. Slots: confine (zone) / snap (grid).
-  | { kind: 'interactor'; axis: 'xy' | 'x' | 'y' | 'turn' | 'trace' | 'reveal' | 'link'; varX?: string; varY?: string; varT?: string; confine?: string; grid?: number; enabled?: string; pivot?: { x: number; y: number } }
+  | { kind: 'interactor'; axis: 'xy' | 'x' | 'y' | 'turn' | 'turnDeg' | 'trace' | 'reveal' | 'link'; varX?: string; varY?: string; varT?: string; confine?: string; grid?: number; enabled?: string; pivot?: { x: number; y: number } }
   | { kind: 'drop'; over: string; atPointer?: boolean; body: Action[] } // when dropped on Zone [at pointer] { … } — released over a named zone
 
 /** Parse diagnostic (1-based line/column, message text). Missing `severity` = error. */
@@ -150,7 +150,7 @@ function printUnit(u: ScriptUnit): string {
     case 'interactor': {
       const enabledSlot = u.enabled ? [INDENT + `enabled ${u.enabled}`] : []
       const block = (head: string, slots: string[]) => (slots.length ? `${head} {\n${slots.join('\n')}\n}` : head)
-      if (u.axis === 'turn') return block(`turn ${u.varX} around ${u.pivot?.x ?? 0},${u.pivot?.y ?? 0}`, [...(u.grid !== undefined ? [INDENT + `snap ${u.grid}`] : []), ...enabledSlot])
+      if (u.axis === 'turn' || u.axis === 'turnDeg') return block(`${u.axis} ${u.varX} around ${u.pivot?.x ?? 0},${u.pivot?.y ?? 0}`, [...(u.grid !== undefined ? [INDENT + `snap ${u.grid}`] : []), ...enabledSlot])
       if (u.axis === 'trace') return block(`trace ${u.varX} along ${u.confine}`, [...(u.grid !== undefined ? [INDENT + `tolerance ${u.grid}`] : []), ...enabledSlot])
       if (u.axis === 'reveal') return block(`reveal ${u.varX}`, [...(u.grid !== undefined ? [INDENT + `brush ${u.grid}`] : []), ...enabledSlot])
       if (u.axis === 'link') return block(`link ${u.varX}, ${u.varY}, ${u.varT} to ${u.confine}`, [...enabledSlot])
@@ -912,9 +912,11 @@ class Parser {
         }
         return { kind: 'interactor', axis, varX, varY, confine, grid, ...(enabled ? { enabled } : {}) }
       }
-      case 'turn': {
+      case 'turn':
+      case 'turnDeg': {
         // `turn <angle> around <x>,<y> [{ snap N · enabled <expr> }]` — rotation at the pointer around a pivot.
-        // (At the OBJECT/unit level: `turn` is the keyword. Inside an action body, `turn` stays a variable.)
+        // `turn` writes RADIANS (pairs with the `rotation` channel); `turnDeg` writes DEGREES (pairs with `rotationDeg`).
+        // (At the OBJECT/unit level these are keywords; inside an action body they stay variables.)
         const v = this.outVar()
         if (!v) { this.err('variable name (angle) expected after "turn"', m); this.recoverBlockOrLine(); return null }
         if (this.word() !== 'around') { this.err('"turn <angle> around <x>,<y>" expected', m); this.recoverBlockOrLine(); return null }
@@ -940,7 +942,7 @@ class Parser {
             this.endStatement()
           }
         } else this.endStatement()
-        return { kind: 'interactor', axis: 'turn', varX: v, pivot: { x: px, y: py }, ...(grid !== undefined ? { grid } : {}), ...(enabled ? { enabled } : {}) }
+        return { kind: 'interactor', axis: w === 'turnDeg' ? 'turnDeg' : 'turn', varX: v, pivot: { x: px, y: py }, ...(grid !== undefined ? { grid } : {}), ...(enabled ? { enabled } : {}) }
       }
       case 'trace': {
         // `trace <progress> along <Path> [{ tolerance N · enabled <expr> }]` — follows a path with the finger.
@@ -1062,11 +1064,12 @@ class Parser {
           this.skipSpace()
           const pos = this.mark()
           const expr = this.lineExpr()
-          if (!isChannel(ch)) { this.err(`unknown channel "${ch}" (expected: ${EXPR_CHANNELS.join(', ')})`, bm); continue }
+          const deg = ch === 'rotationDeg' // authoring sugar: `rotationDeg = e` → `rotation = rad(e)`
+          if (!deg && !isChannel(ch)) { this.err(`unknown channel "${ch}" (expected: ${EXPR_CHANNELS.join(', ')}, rotationDeg)`, bm); continue }
           if (!expr) { this.err('expression expected after "="', bm); continue }
           this.exprSite(expr, pos)
           this.endStatement()
-          bindings.push({ channel: ch, expr })
+          bindings.push(deg ? { channel: 'rotation', expr: `rad(${expr})` } : { channel: ch as ExprChannel, expr })
         }
         return { kind: 'each', symbol, as: asVar, bindings }
       }
@@ -1120,8 +1123,9 @@ class Parser {
         this.skipSpace()
         const pos = this.mark()
         const expr = this.lineExpr()
-        if (!isChannel(w)) {
-          this.err(`unknown channel "${w}" (expected: ${EXPR_CHANNELS.join(', ')})`, m)
+        const deg = w === 'rotationDeg' // authoring sugar: `rotationDeg = e` → `rotation = rad(e)` (degrees → radians)
+        if (!deg && !isChannel(w)) {
+          this.err(`unknown channel "${w}" (expected: ${EXPR_CHANNELS.join(', ')}, rotationDeg)`, m)
           return null
         }
         if (!expr) {
@@ -1130,7 +1134,7 @@ class Parser {
         }
         this.exprSite(expr, pos)
         this.endStatement()
-        return { kind: 'binding', channel: w, expr }
+        return { kind: 'binding', channel: deg ? 'rotation' : (w as ExprChannel), expr: deg ? `rad(${expr})` : expr }
       }
     }
   }

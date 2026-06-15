@@ -14,7 +14,7 @@ background #0a0e1c
 scene {
   layer "main" {
     circle 160 120 48 fill #ffcc00
-    text "Hello, FlatInk" font "sans-serif" size 24 align center line 1.2 color #ffffff box 320 40 at 0,190
+    text "Hello, FlatInk" at 0,190 font "sans-serif" size 24 align center line 1.2 color #ffffff box 320 40
   }
 }
 ```
@@ -22,6 +22,8 @@ scene {
 - `size` is **required and must come first** (the canvas, in scene units).
 - `scene { … }` holds **layers**; layers hold **items** (`circle`, `text`, `path`, `image`, `group`…).
 - Coordinates are plain numbers; the origin is the top-left of the canvas.
+- On `text` (and `image`), `at x,y` comes **right after the content**, before `font`/`box`/`fill` — not at
+  the end. `text "…" box W H at x,y` fails; write `text "…" at x,y box W H`.
 
 Compile and look at it:
 
@@ -32,13 +34,13 @@ flatc hello.flatink --render -o hello.png  # → a PNG, to see what you drew (ne
 
 ## 2. Make it move
 
-Animation comes from **channel expressions** in a behavior block. Give the circle a name (`as "Sun"`),
-then drive a channel:
+Animation comes from **channel expressions** in a behavior block. A bare shape **can't be named**, so wrap
+it in a named **group** (the name lives on the group), then drive a channel:
 
 ```
 scene {
   layer "main" {
-    circle 160 120 48 fill #ffcc00 as "Sun"
+    group "Sun" at 160,120 pivot 0,0 { layer "art" { circle 0 0 48 fill #ffcc00 } }
   }
 }
 
@@ -60,8 +62,8 @@ var score = 0
 
 scene {
   layer "main" {
-    circle 160 120 48 fill #ffcc00 as "Sun"
-    text "Score: {}" bind "score" box 320 40 at 0,10 font "sans-serif" size 20 align center line 1.2 color #fff
+    group "Sun" at 160,120 pivot 0,0 { layer "art" { circle 0 0 48 fill #ffcc00 } }
+    text "Score: {}" at 0,10 bind "score" box 320 40 font "sans-serif" size 20 align center line 1.2 color #fff
   }
 }
 

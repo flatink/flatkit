@@ -66,10 +66,13 @@ Drive an item's pose every frame with an expression. Channels: `x`, `y`, `scaleX
 
 ```
 object "Needle" {
-  rotation = atan2(mouse.y - 160, mouse.x - 240)   # point at the cursor
+  rotation = atan2(mouse.y - 160, mouse.x - 240)   # point at the cursor (RADIANS)
   opacity  = lit ? 1 : 0.3
 }
 ```
+
+`rotation` is in **radians** (like `sin`/`cos`/`atan2`). To author in **degrees**, bind **`rotationDeg`**
+instead — sugar for `rotation = rad(<expr>)`: `rotationDeg = 45`, `rotationDeg = handAngle`.
 
 `self.x`/`self.y`/… is the item's own current pose; `mouse.x`/`mouse.y`, `time`, `frame`, variables and
 named objects (`Target.x`) are all available — see [Expressions](expressions-and-stdlib.md).
@@ -96,7 +99,8 @@ object "Piece" {
 Higher-level pointer behaviors (each writes into your variables; all accept `{ enabled <expr> }`):
 
 ```
-turn  <angle> around <x>,<y> [{ snap <deg> }]      # dial / clock hand → angle (degrees) toward the cursor
+turn    <angle> around <x>,<y> [{ snap <deg> }]    # dial / clock hand → angle in RADIANS → rotation = angle
+turnDeg <angle> around <x>,<y> [{ snap <deg> }]    # …in DEGREES → rotationDeg = angle  (rotationDeg = sugar for rotation = rad(…))
 trace <progress> along <Group> [{ tolerance <px> }]# follow a path → progress 0..1 (monotone)
 reveal <progress> [{ brush <px> }]                 # scratch/wipe the grabbed area → fraction 0..1 (cumulative across grabs)
 link  <endX>, <endY>, <target> to <Group>          # pull a thread → end follows the pointer; <target> = hit index 1..n on release (0 = none)

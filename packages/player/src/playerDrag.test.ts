@@ -212,7 +212,7 @@ describe('FlatPlayer -- interactor (drag / dropped on)', () => {
     pl.destroy()
   })
 
-  it('turn: the object writes the angle (degrees) from the pivot to the pointer, optional snap', () => {
+  it('turn: the object writes the angle (RADIANS) from the pivot to the pointer, optional snap (deg)', () => {
     const h: Handlers = {}
     const pc = { ...piece(), expressions: { rotation: 'ang' } as Record<string, string> }
     const layer: Layer = { id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: [pc] }
@@ -226,10 +226,31 @@ describe('FlatPlayer -- interactor (drag / dropped on)', () => {
     h.pointerdown({ clientX: 50, clientY: 50, pointerId: 1 })
     h.pointermove({ clientX: 90, clientY: 50, pointerId: 1 }) // pivot->right -> 0deg
     expect(pl.getVar('ang')).toBe(0)
+    h.pointermove({ clientX: 50, clientY: 90, pointerId: 1 }) // pivot->down -> 90deg = PI/2 rad
+    expect(pl.getVar('ang') as number).toBeCloseTo(Math.PI / 2)
+    h.pointermove({ clientX: 53, clientY: 12, pointerId: 1 }) // ~ -85deg -> snap 15 -> -90deg = -PI/2 rad
+    expect(pl.getVar('ang') as number).toBeCloseTo(-Math.PI / 2)
+    pl.destroy()
+  })
+
+  it('turnDeg: the degrees variant writes the angle in degrees (snap stays in degrees)', () => {
+    const h: Handlers = {}
+    const pc = { ...piece(), expressions: { rotationDeg: 'ang' } as Record<string, string> }
+    const layer: Layer = { id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: [pc] }
+    const doc: Doc = {
+      width: 100, height: 100, layers: [layer], symbols: [],
+      variables: { ang: 0 },
+      interactors: [{ targetId: 'Piece', axis: 'turnDeg', varX: 'ang', pivot: { x: 50, y: 50 }, grid: 15 }],
+      timeline: { fps: 24, durationFrames: 1, tracks: [] },
+    }
+    const pl = new FlatPlayer(fakeCanvas(h), doc, opts)
+    h.pointerdown({ clientX: 50, clientY: 50, pointerId: 1 })
+    h.pointermove({ clientX: 90, clientY: 50, pointerId: 1 }) // pivot->right -> 0deg
+    expect(pl.getVar('ang')).toBe(0)
     h.pointermove({ clientX: 50, clientY: 90, pointerId: 1 }) // pivot->down -> 90deg
-    expect(pl.getVar('ang')).toBe(90)
+    expect(pl.getVar('ang') as number).toBeCloseTo(90)
     h.pointermove({ clientX: 53, clientY: 12, pointerId: 1 }) // ~ -85deg -> snap 15 -> -90deg
-    expect(pl.getVar('ang')).toBe(-90)
+    expect(pl.getVar('ang') as number).toBeCloseTo(-90)
     pl.destroy()
   })
 

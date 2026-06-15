@@ -33,7 +33,8 @@ Constants: `PI`, `TAU` (2π), `E`.
 
 **Angles are RADIANS** (the `rotation` channel, `sin`/`cos`/`atan2`). Author in degrees with the helpers:
 `rad(45)` (degrees → radians), `turns(n)` (n full turns → radians, e.g. `rotation = turns(time)` spins once
-per second), `deg(r)` (the inverse, for readouts).
+per second), `deg(r)` (the inverse, for readouts). Or bind the **`rotationDeg`** channel (sugar for
+`rotation = rad(…)`) and use the **`turnDeg`** interactor — both work in degrees, for when that reads better.
 
 ## Reserved names
 
