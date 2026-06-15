@@ -1,5 +1,16 @@
 # @flatkit/compiler
 
+## 0.11.0
+
+### Patch Changes
+
+- Updated dependencies [a3abdf8]
+- Updated dependencies [40c09c1]
+- Updated dependencies [40c09c1]
+  - @flatkit/engine@0.11.0
+  - @flatkit/player@0.11.0
+  - @flatkit/types@0.11.0
+
 ## 0.10.0
 
 ### Patch Changes

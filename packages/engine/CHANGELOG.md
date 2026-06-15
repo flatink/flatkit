@@ -1,5 +1,19 @@
 # @flatkit/engine
 
+## 0.11.0
+
+### Patch Changes
+
+- a3abdf8: `use "feedback"` gains `pulse(since, dur)` — a linear `1→0` ramp over `dur` seconds since the instant
+  `since`, for readable timed feedback (a message/flash that fades over a duration you state, instead of a
+  too-fast multiplicative decay). Stateless: the author captures the instant in a handler
+  (`var shown = -999` + `when wrong { shown = time }`) and binds `opacity = pulse(shown, 4)`.
+- 40c09c1: Parameterized-symbol expansion no longer swallows a closing `}` that shares the instance's line. An
+  `instance "Name"(args) … } }` — the braces closing its layer/scene on the same line — now compiles;
+  before it failed with a misleading `"{" expected, "}" found`. The instance's trailing attributes now stop
+  at the first enclosing-block `}` (brace depth 0) or newline instead of blindly consuming to end-of-line.
+  - @flatkit/types@0.11.0
+
 ## 0.10.0
 
 ### Minor Changes
