@@ -1,5 +1,18 @@
 # @flatkit/compiler
 
+## 0.12.1
+
+### Patch Changes
+
+- [`8bf8505`](https://github.com/zwykstudio/flatkit/commit/8bf85052dcf153859b62a2fbc24b56c5f8b790ae) Thanks [@kaelhem](https://github.com/kaelhem)! - Clearer lint diagnostic for the [#1](https://github.com/zwykstudio/flatkit/issues/1) footgun — two statements on one line. FlatInk ends a statement at the
+  newline, so a second `channel = …` crammed onto the same line gets swallowed into the first expression.
+  `flatc --check` now reports "two statements on one line — put each on its own line" instead of the cryptic
+  "invalid expression: unexpected character =". (Comparisons `==`/`<=`/`>=`/`!=` are not mistaken for it.)
+- Updated dependencies []:
+  - @flatkit/types@0.12.1
+  - @flatkit/engine@0.12.1
+  - @flatkit/player@0.12.1
+
 ## 0.12.0
 
 ### Patch Changes
