@@ -32,6 +32,14 @@ function revealBrushFor(doc: Doc, name: string): number {
   const inter = id ? doc.interactors?.find((x) => x.targetId === id) : undefined
   return inter?.grid && inter.grid > 0 ? inter.grid : 24
 }
+/** The `turn`/`turnDeg` interactor on a named target: its WORLD pivot + unit (deg/rad), or null if none. */
+function turnTargetFor(doc: Doc, name: string): { pivot: { x: number; y: number }; deg: boolean } | null {
+  let id: string | null = null
+  for (const l of doc.layers) { const it = findItemByName(l.items, name); if (it) { id = it.id; break } }
+  const inter = id ? doc.interactors?.find((x) => x.targetId === id) : undefined
+  if (!inter || (inter.axis !== 'turn' && inter.axis !== 'turnDeg')) return null
+  return { pivot: inter.pivot ?? { x: 0, y: 0 }, deg: inter.axis === 'turnDeg' }
+}
 /** Boustrophedon sweep over `b` at ~`brush` spacing (cell centers), bounded to MAX_SWEEP points. */
 function sweepPoints(b: Box, brush: number): { x: number; y: number }[] {
   const w = b.maxX - b.minX, h = b.maxY - b.minY
@@ -100,7 +108,8 @@ function ensureDomGlobals(): () => void {
 const describeGesture = (g: Gesture): string =>
   g.type === 'drag' ? `drag ${g.source}->${g.target}` : g.type === 'tap' ? `tap ${g.target}`
     : g.type === 'connect' ? `connect ${g.source}->${g.target}` : g.type === 'scratch' ? `scratch ${g.target}`
-      : g.type === 'set' ? `set ${g.name}=${g.value}` : g.type === 'wait' ? `wait ${g.frames}` : g.type === 'expect' ? 'expect' : `${g.type} (${g.x},${g.y})`
+      : g.type === 'turn' ? `turn ${g.target} ${g.angle}` : g.type === 'set' ? `set ${g.name}=${g.value}`
+        : g.type === 'wait' ? `wait ${g.frames}` : g.type === 'expect' ? 'expect' : `${g.type} (${g.x},${g.y})`
 
 /** Plays `doc`, replays `gestures`, returns the collected `send`s plus the final state of the variables.
  *  `trace`: adds `steps` (sends + variable diff PER gesture) -- for inspection / the debug-player. */
@@ -142,6 +151,22 @@ export function playHeadless(doc: Doc, gestures: Gesture[], opts: { trace?: bool
       fire('down', pts[0], id)
       for (let i = 1; i < pts.length; i++) fire('move', pts[i], id)
       fire('up', pts[pts.length - 1], id)
+      return
+    }
+    if (g.type === 'turn') { // rotate a turn/turnDeg target by `angle` around its WORLD pivot, swept in <=maxStep sub-moves
+      const id = g.id ?? 1
+      const ti = turnTargetFor(doc, g.target)
+      if (!ti) throw new Error(`gesture: object "${g.target}" has no turn/turnDeg interactor`)
+      const start = grabPoint(g.target) // a point ON the object -> starts the grab (fires `when pressed`); the angle is written on the first MOVE
+      const piv = ti.pivot
+      const R = Math.max(24, Math.hypot(start.x - piv.x, start.y - piv.y)) // radius to place the rotating pointer (only the ANGLE matters, not R)
+      const at = (v: number) => { const rad = ti.deg ? (v * Math.PI) / 180 : v; return { x: piv.x + R * Math.cos(rad), y: piv.y + R * Math.sin(rad) } } // target value (deg/rad) -> pointer position
+      const maxStep = ti.deg ? 60 : Math.PI / 3 // <= per sub-move: keeps each delta small (under the atan2 wrap / typical author jump-guards) so multi-turn works
+      const N = Math.max(2, Math.ceil(Math.abs(g.angle) / maxStep))
+      const settle = g.settle ?? 1
+      fire('down', start, id)
+      for (let k = 1; k <= N; k++) { fire('move', at((g.angle * k) / N), id); if (settle > 0) pl.stepSim(settle) } // sweep; advance the sim so a delta-accumulating `every frame` integrates each sub-step
+      fire('up', at(g.angle), id)
       return
     }
     if (g.type === 'expect') {

@@ -33,6 +33,7 @@ export type Gesture =
   | { type: 'tap'; target: string; id?: number } // clicks at the center of the `target` object
   | { type: 'scratch'; target: string; id?: number } // sweeps a `reveal` target's bbox (covers it -> fraction ~1)
   | { type: 'connect'; source: string; target: string; id?: number } // pulls a `link` wire from `source` to `target` (resolves the target index)
+  | { type: 'turn'; target: string; angle: number; settle?: number; id?: number } // rotates a `turn`/`turnDeg` target by `angle` around its pivot (signed; DEGREES for turnDeg, RADIANS for turn), swept in sub-steps; `settle` = sim frames advanced between sub-steps (default 1) so a delta-accumulating `every frame` integrates the turn
   // Low-level (scene coords).
   | { type: 'down' | 'move' | 'up' | 'cancel'; x: number; y: number; id?: number }
   | { type: 'set'; name: string; value: number } // drives a variable from the "host"

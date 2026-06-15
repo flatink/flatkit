@@ -56,6 +56,18 @@ describe('headless -- playHeadless', () => {
     expect(ko.expectFailures).toHaveLength(2)
   })
 
+  it('turn: rotates a turnDeg target by the given angle (writes the bound var in degrees)', () => {
+    const doc: Doc = {
+      width: 100, height: 100, symbols: [], variables: { ang: 0 },
+      layers: [{ id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: [piece()] } as Layer],
+      interactors: [{ targetId: 'Piece', axis: 'turnDeg', varX: 'ang', pivot: { x: 50, y: 50 } }],
+      interactions: [],
+      timeline: { fps: 24, durationFrames: 1, tracks: [] },
+    }
+    expect((playHeadless(doc, [{ type: 'turn', target: 'Piece', angle: 90 }]).vars.ang as number)).toBeCloseTo(90, 4)
+    expect((playHeadless(doc, [{ type: 'turn', target: 'Piece', angle: -90 }]).vars.ang as number)).toBeCloseTo(-90, 4)
+  })
+
   it('keypad (parametric symbols + each->handlers): tapping keys accumulates the input', () => {
     const src = [
       'symbol "Key"(label) {',
