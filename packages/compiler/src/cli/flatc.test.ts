@@ -71,6 +71,27 @@ describe('flatc — CLI', () => {
     }
   })
 
+  it('--check: surfaces an unknown channel in an object block (dropped silently before the fix)', () => {
+    const base = 'size 100 100\nscene {\n  layer "L" {\n    group "G" { layer "c" { circle 0 0 5 fill #f00 } }\n  }\n}\n'
+    const bad = join(cli, '__check_bad.flatink')
+    const good = join(cli, '__check_good.flatink')
+    writeFileSync(bad, base + 'object "G" {\n  scaleZ = 1\n}\n')
+    writeFileSync(good, base + 'object "G" {\n  scale = 2\n}\n') // `scale` alias → scaleX + scaleY
+    const errs: string[] = []
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((s: string | Uint8Array) => { errs.push(String(s)); return true })
+    const outSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try {
+      expect(run(['node', 'flatc', bad, '--check'])).toBe(1) // unknown channel → non-zero
+      expect(errs.join('')).toContain('unknown channel "scaleZ"')
+      expect(run(['node', 'flatc', good, '--check'])).toBe(0) // `scale` is valid sugar
+    } finally {
+      spy.mockRestore()
+      outSpy.mockRestore()
+      rmSync(bad, { force: true })
+      rmSync(good, { force: true })
+    }
+  })
+
   it('--play <program> --script <gestures> → prints { sends, vars } (JSON, headless)', () => {
     const script = join(cli, '__gestures.json')
     writeFileSync(script, JSON.stringify([{ type: 'down', x: 10, y: 10 }, { type: 'up', x: 10, y: 10 }]))

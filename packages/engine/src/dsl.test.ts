@@ -53,6 +53,28 @@ describe('dsl — interactors (drag / drop)', () => {
     expect(r.diagnostics).toEqual([])
     expect(r.units).toEqual([{ kind: 'binding', channel: 'rotation', expr: 'rad(a)' }])
   })
+  it('scale = e is authoring sugar for scaleX = e + scaleY = e (uniform scale)', () => {
+    const r = parseUnits('scale = k * 2\n')
+    expect(r.diagnostics).toEqual([])
+    expect(r.units).toEqual([
+      { kind: 'binding', channel: 'scaleX', expr: 'k * 2' },
+      { kind: 'binding', channel: 'scaleY', expr: 'k * 2' },
+    ])
+  })
+  it('scale inside an each block expands to scaleX + scaleY bindings', () => {
+    const r = parseUnits('each "Brick" as i {\n  scale = sizes[i]\n}\n')
+    expect(r.diagnostics).toEqual([])
+    expect(r.units).toEqual([{ kind: 'each', symbol: 'Brick', as: 'i', bindings: [
+      { channel: 'scaleX', expr: 'sizes[i]' },
+      { channel: 'scaleY', expr: 'sizes[i]' },
+    ] }])
+  })
+  it('an unknown channel is reported (not silently dropped)', () => {
+    const r = parseUnits('scaleZ = 1\n')
+    expect(r.diagnostics).toHaveLength(1)
+    expect(r.diagnostics[0].message).toContain('unknown channel "scaleZ"')
+    expect(r.units).toEqual([])
+  })
   it('trace (follow a path): printing + round-trip', () => {
     expect(printUnits([{ kind: 'interactor', axis: 'trace', varX: 'prog', confine: 'Path' }]))
       .toBe('trace prog along Path\n')

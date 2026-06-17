@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { printFlat, parseFlat, parseFlatLib, pathToData, printProgram, parseProgram, printProgramFull, parseProgramFull, type Program } from './flatFormat'
+import { printFlat, parseFlat, parseFlatLib, pathToData, printProgram, parseProgram, printProgramFull, parseProgramFull, behaviorDiagnostics, type Program } from './flatFormat'
 import { parsePathData, circlePath, ellipsePath, rectPath } from './svgPath'
 import { folderPath } from './layers'
 import type { Folder, Group, Image, Instance, Region, SymbolDef, Text } from '@flatkit/types'
@@ -353,6 +353,54 @@ describe('flatFormat — .flatink program', () => {
     expect(txt.kind).toBe('text')
     expect(txt.expressions?.opacity).toBe('lit * lit') // attached to the text (before the patch: ignored)
     expect(printProgramFull(parseProgramFull(src))).toBe(src) // stable round-trip
+  })
+
+  it('object addresses a bare text leaf by its `as` id (≠ content)', () => {
+    // The text content is "Bravo" but its handle is `as "msgOK"`. `object "msgOK"` must gate it —
+    // before the fix, `object` resolved by name (= content) only, so the `as` id silently no-op'd.
+    const src = [
+      'size 400 300',
+      'scene {',
+      '  layer "c" {',
+      '    text "Bravo" as "msgOK" font "sans-serif" size 20 align left line 1.2 color #000000 box 40 24',
+      '  }',
+      '}',
+      'object "msgOK" {',
+      '  opacity = 0',
+      '}',
+      '',
+    ].join('\n')
+    const txt = parseProgramFull(src).layers[0].items[0] as { kind: string; id: string; expressions?: Record<string, string> }
+    expect(txt.id).toBe('msgOK')
+    expect(txt.expressions?.opacity).toBe('0') // gated via the `as` id, not the content
+  })
+
+  it('behaviorDiagnostics surfaces dropped parse errors in object blocks (unknown channel)', () => {
+    const src = [
+      'size 100 100',
+      'scene {',
+      '  layer "L" {',
+      '    group "G" { layer "c" { circle 0 0 5 fill #f00 } }',
+      '  }',
+      '}',
+      'object "G" {',
+      '  scaleZ = 1',
+      '}',
+      '',
+    ].join('\n')
+    // The Doc-based linter can't see this (the binding is dropped before reaching the model).
+    const g = parseProgramFull(src).layers[0].items[0] as { expressions?: Record<string, string> }
+    expect(g.expressions).toBeUndefined()
+    const diags = behaviorDiagnostics(src)
+    expect(diags).toHaveLength(1)
+    expect(diags[0].scope).toBe('object "G"')
+    expect(diags[0].diag.line).toBe(8) // absolute line of `scaleZ = 1`
+    expect(diags[0].diag.message).toContain('unknown channel "scaleZ"')
+  })
+
+  it('behaviorDiagnostics is silent on a clean program', () => {
+    const src = ['size 100 100', 'scene {', '  layer "L" {', '    group "G" { layer "c" { circle 0 0 5 fill #f00 } }', '  }', '}', 'object "G" {', '  scale = 2', '}', ''].join('\n')
+    expect(behaviorDiagnostics(src)).toEqual([])
   })
 
   // ── `text "…" as "<id>"`: stable id, driven by the explicit `idExplicit` flag (zero heuristic) ──

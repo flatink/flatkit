@@ -26,7 +26,7 @@ import { compileExpr, evalExpr, exprScope } from './expr'
 import { isGroup, isInstance, isText, isImage, isPoseable, folderPath } from './layers'
 import { itemBoundsByName } from './groups'
 import type { BBox } from './bbox'
-import { printUnits, parseUnits } from './dsl'
+import { printUnits, parseUnits, type Diagnostic } from './dsl'
 import { timelineToUnits, unitsToTimeline, objectToUnits, unitsToObject, functionsToUnits, unitsToFunctions } from './scriptDoc'
 
 let _id = 0
@@ -724,7 +724,10 @@ export function expandMatch(src: string): string {
 
 const itemsByName = (layers: Layer[]): Map<string, Item> => {
   const m = new Map<string, Item>()
-  const walk = (ls: Layer[]) => { for (const l of ls) for (const it of l.items) { const nm = itemName(it); if (nm && !m.has(nm)) m.set(nm, it); if (isGroup(it)) walk(it.layers) } }
+  // A text leaf's NAME is its content; its `as "<id>"` lives in a SEPARATE namespace (consumed by
+  // `text("<id>")`). Index that id too so `object "<id>" { … }` can address (gate/animate) a bare text
+  // leaf — otherwise the `object` block silently no-ops (it resolves targets by name, never by text id).
+  const walk = (ls: Layer[]) => { for (const l of ls) for (const it of l.items) { const nm = itemName(it); if (nm && !m.has(nm)) m.set(nm, it); if (isText(it) && it.idExplicit && !m.has(it.id)) m.set(it.id, it); if (isGroup(it)) walk(it.layers) } }
   walk(layers)
   return m
 }
@@ -773,22 +776,28 @@ export function exportFlatProject(doc: Doc): { flat: string; flatink: string; me
   }
 }
 
-/** Parses the FULL PROGRAM → partial doc (composition + timeline + interactions; refs by name). */
-export function parseProgramFull(src: string): Program {
+/** Unfolds ALL the authoring sugar (feedback/match/def·repeat·symbols/each) → the real DSL. Shared by
+ *  `parseProgramFull` and `behaviorDiagnostics` so both see the exact same expanded source. */
+function expandProgramSugar(src: string): string {
   src = expandFeedback(src) // `feedback …` sugar → channel bindings (+ `use "feedback"`)
   src = expandMatch(src) // `match … onto …` sugar → `object` blocks (before extracting the behavior)
   const { src: expanded, symbolGroups, defs } = expandSceneSugar(src) // def/repeat/parameterized symbols → groups (+ registry + defs)
-  src = expandEachHandlers(expanded, symbolGroups, defs) // `each "Tmpl" as i { … }` → `object` blocks per generated instance ($(def+index) resolved)
-  const composition = parseProgram(src) // re-unfolds (no-op: already expanded) then tokenize/parse
+  return expandEachHandlers(expanded, symbolGroups, defs) // `each "Tmpl" as i { … }` → `object` blocks per generated instance ($(def+index) resolved)
+}
+
+/** Splits an EXPANDED program into the scene-script text + the `object "name" { … }` blocks.
+ *  `bodyAt` = absolute offset of each block's body in `expanded` (drives behavior-diagnostic line mapping). */
+function extractBehavior(expanded: string): { sceneText: string; objects: { name: string; body: string; bodyAt: number }[] } {
   // Behavior = everything that follows the `scene { … }` block.
-  const si = src.search(/\bscene\b/)
-  const open = si >= 0 ? src.indexOf('{', si) : -1
-  const close = open >= 0 ? matchBrace(src, open) : -1
-  const tail = close >= 0 ? src.slice(close + 1) : ''
+  const si = expanded.search(/\bscene\b/)
+  const open = si >= 0 ? expanded.indexOf('{', si) : -1
+  const close = open >= 0 ? matchBrace(expanded, open) : -1
+  const tailAt = close >= 0 ? close + 1 : expanded.length
+  const tail = close >= 0 ? expanded.slice(close + 1) : ''
 
   // Extracts the `object "name" { … }` blocks; the rest = scene scripts.
   let sceneText = '', i = 0
-  const objects: { name: string; body: string }[] = []
+  const objects: { name: string; body: string; bodyAt: number }[] = []
   while (i < tail.length) {
     const m = /object\s+"((?:[^"\\]|\\.)*)"\s*\{/.exec(tail.slice(i))
     if (!m) { sceneText += tail.slice(i); break }
@@ -797,9 +806,32 @@ export function parseProgramFull(src: string): Program {
     const ob = start + m[0].length - 1
     const oc = matchBrace(tail, ob)
     if (oc < 0) { sceneText += tail.slice(start); break }
-    objects.push({ name: m[1].replace(/\\(.)/g, (_, c) => (c === 'n' ? '\n' : c)), body: tail.slice(ob + 1, oc) })
+    objects.push({ name: m[1].replace(/\\(.)/g, (_, c) => (c === 'n' ? '\n' : c)), body: tail.slice(ob + 1, oc), bodyAt: tailAt + ob + 1 })
     i = oc + 1
   }
+  return { sceneText, objects }
+}
+
+/** Parse-level diagnostics of the BEHAVIOR (`object` block bodies) — the unknown channels / malformed
+ *  statements that `parseProgramFull` DROPS silently (it keeps only `.units`, discarding `.diagnostics`).
+ *  The Doc-based linter can't recover them: a dropped binding never reaches the model. Without this,
+ *  `--check` would wave through e.g. `object "X" { scaleZ = 1 }`. Errors only, by `object "name"` scope,
+ *  with line numbers absolute in the (expanded) source. */
+export function behaviorDiagnostics(src: string): { scope: string; diag: Diagnostic }[] {
+  const expanded = expandProgramSugar(src)
+  const out: { scope: string; diag: Diagnostic }[] = []
+  for (const ob of extractBehavior(expanded).objects) {
+    const base = expanded.slice(0, ob.bodyAt).split('\n').length // 1-based line where the body begins
+    for (const d of parseUnits(ob.body).diagnostics) out.push({ scope: `object "${ob.name}"`, diag: { ...d, line: d.line + base - 1 } })
+  }
+  return out
+}
+
+/** Parses the FULL PROGRAM → partial doc (composition + timeline + interactions; refs by name). */
+export function parseProgramFull(src: string): Program {
+  src = expandProgramSugar(src)
+  const composition = parseProgram(src) // re-unfolds (no-op: already expanded) then tokenize/parse
+  const { sceneText, objects } = extractBehavior(src)
 
   const result: Program = { ...composition }
   const sceneUnits = parseUnits(sceneText).units

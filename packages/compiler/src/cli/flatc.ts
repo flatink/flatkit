@@ -12,7 +12,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, watch, mkdirSync, copyFileSync } from 'node:fs'
 import { resolve, dirname, basename, extname, join, relative, isAbsolute } from 'node:path'
 import { compileFlatpack, packToJSON, type MediaMap } from '../compile'
-import { parseProgramFull, parseFlatLib } from '@flatkit/engine/flatFormat'
+import { parseProgramFull, parseFlatLib, behaviorDiagnostics } from '@flatkit/engine/flatFormat'
 import { hasPackage } from '@flatkit/engine/stdlib'
 import { parseUnits } from '@flatkit/engine/dsl'
 import { sanitizeDoc } from '@flatkit/engine/validateDoc'
@@ -95,7 +95,7 @@ Media referenced by 'asset "id" "path" kind' are embedded (paths relative to the
 /** How media is baked: `inline` = base64 data-URI in the .flatpack; `external` = relative key + sidecar files. */
 type AssetMode = 'inline' | 'external'
 type MediaCopy = { src: string; key: string } // external mode: source file → relative key (forward slashes)
-type BuildResult = { doc: Doc; flatLibs: number; packages: number; media: number; mediaCopies: MediaCopy[] }
+type BuildResult = { doc: Doc; flatLibs: number; packages: number; media: number; mediaCopies: MediaCopy[]; behaviorDiags: ReturnType<typeof behaviorDiagnostics> }
 
 /**
  * Reads a `.flatink`, resolves libs/packages/media, compiles → standalone Doc. Throws on compile error.
@@ -149,7 +149,7 @@ function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], 
   if (pkgFunctions.length) doc = { ...doc, functions: [...(doc.functions ?? []), ...pkgFunctions] }
   const stdImports = (doc.imports ?? []).filter(hasPackage)
   doc = { ...doc, imports: stdImports.length ? stdImports : undefined }
-  return { doc, flatLibs: flatPaths.size, packages: localResolved.size, media: Object.keys(media).length, mediaCopies }
+  return { doc, flatLibs: flatPaths.size, packages: localResolved.size, media: Object.keys(media).length, mediaCopies, behaviorDiags: behaviorDiagnostics(programSrc) }
 }
 
 /** Compile once (write or --check). Returns the exit code. */
@@ -161,10 +161,14 @@ function compileOnce(programPath: string, explicitFlats: string[], out: string, 
   try { built = buildDocFromProgram(programPath, explicitFlats, assetMode, assetsDir) }
   catch (e) { process.stderr.write(`flatc: compile error: ${(e as Error).message}\n`); return 1 }
   const { doc } = built
-  const report = lintDocReport(doc)
+  // Behavior parse errors (unknown channels / malformed statements inside `object` blocks) that the
+  // Doc-based linter can't see — they were dropped before reaching the model. Always ERRORS.
+  const behaviorReport = built.behaviorDiags.map(({ scope, diag }) => `[${scope}] ${diag.line}:${diag.col}: error: ${diag.message}`).join('\n')
+  const report = [behaviorReport, lintDocReport(doc)].filter(Boolean).join('\n')
+  const hasErrors = docHasErrors(doc) || built.behaviorDiags.length > 0
   if (checkOnly) {
     if (report) process.stderr.write(report + '\n')
-    if (docHasErrors(doc)) return 1
+    if (hasErrors) return 1
     process.stdout.write('flatc: no errors ✓\n')
     return 0
   }

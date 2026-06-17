@@ -797,12 +797,12 @@ class Parser {
       this.skipWs()
       if (this.eof()) break
       const u = this.unit()
-      if (u) units.push(u)
+      if (u) units.push(...(Array.isArray(u) ? u : [u]))
     }
     return units
   }
 
-  private unit(): ScriptUnit | null {
+  private unit(): ScriptUnit | ScriptUnit[] | null {
     const m = this.mark()
     const w = this.word()
     switch (w) {
@@ -1065,11 +1065,13 @@ class Parser {
           const pos = this.mark()
           const expr = this.lineExpr()
           const deg = ch === 'rotationDeg' // authoring sugar: `rotationDeg = e` → `rotation = rad(e)`
-          if (!deg && !isChannel(ch)) { this.err(`unknown channel "${ch}" (expected: ${EXPR_CHANNELS.join(', ')}, rotationDeg)`, bm); continue }
+          const scale = ch === 'scale' // authoring sugar: `scale = e` → `scaleX = e` + `scaleY = e`
+          if (!deg && !scale && !isChannel(ch)) { this.err(`unknown channel "${ch}" (expected: ${EXPR_CHANNELS.join(', ')}, rotationDeg, scale)`, bm); continue }
           if (!expr) { this.err('expression expected after "="', bm); continue }
           this.exprSite(expr, pos)
           this.endStatement()
-          bindings.push(deg ? { channel: 'rotation', expr: `rad(${expr})` } : { channel: ch as ExprChannel, expr })
+          if (scale) bindings.push({ channel: 'scaleX', expr }, { channel: 'scaleY', expr })
+          else bindings.push(deg ? { channel: 'rotation', expr: `rad(${expr})` } : { channel: ch as ExprChannel, expr })
         }
         return { kind: 'each', symbol, as: asVar, bindings }
       }
@@ -1124,8 +1126,9 @@ class Parser {
         const pos = this.mark()
         const expr = this.lineExpr()
         const deg = w === 'rotationDeg' // authoring sugar: `rotationDeg = e` → `rotation = rad(e)` (degrees → radians)
-        if (!deg && !isChannel(w)) {
-          this.err(`unknown channel "${w}" (expected: ${EXPR_CHANNELS.join(', ')}, rotationDeg)`, m)
+        const scale = w === 'scale' // authoring sugar: `scale = e` → `scaleX = e` + `scaleY = e` (uniform scale)
+        if (!deg && !scale && !isChannel(w)) {
+          this.err(`unknown channel "${w}" (expected: ${EXPR_CHANNELS.join(', ')}, rotationDeg, scale)`, m)
           return null
         }
         if (!expr) {
@@ -1134,6 +1137,7 @@ class Parser {
         }
         this.exprSite(expr, pos)
         this.endStatement()
+        if (scale) return [{ kind: 'binding', channel: 'scaleX', expr }, { kind: 'binding', channel: 'scaleY', expr }]
         return { kind: 'binding', channel: deg ? 'rotation' : (w as ExprChannel), expr: deg ? `rad(${expr})` : expr }
       }
     }
