@@ -82,6 +82,10 @@
   jumps to the left edge whenever the expression is small). Re-inject the base position:
   `x = $(X) + bump`. Same for `y`/`rotation`/`scaleX`/… — the channel value is absolute, not added to `at`.
   Classic cause of "the animation appears in the wrong place."
+- **Channel `scaleX`/`scaleY`/`rotation` turn around the group's `pivot`** (like cel poses), so a panel
+  with `pivot <center>` driven by `object "P" { scaleX = s }` grows/spins **in place** — it no longer
+  shrinks toward the top-left corner. With no `pivot` (default `{0,0}`) it scales/rotates around the origin
+  as before. When a `pivot` is set, the `x`/`y` channels position **the pivot** (the object's anchor).
 - **Render order**: in an animated layer the static **matter draws BEHIND the posed containers**, and
   declaration order between a bare `path` and an animated `group` is NOT preserved. To put a static
   shape in front of an animation, give it its own **layer above** (or wrap it in a group).

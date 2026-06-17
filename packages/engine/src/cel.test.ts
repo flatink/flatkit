@@ -27,6 +27,35 @@ describe('cel — self interaction state in channel expressions (feedback)', () 
   })
 })
 
+describe('cel — channel expressions transform around the declared pivot', () => {
+  const apply = (m: { a: number; b: number; c: number; d: number; e: number; f: number }, p: { x: number; y: number }) =>
+    ({ x: m.a * p.x + m.c * p.y + m.e, y: m.b * p.x + m.d * p.y + m.f })
+  const P = { x: 100, y: 100 }
+  const obj = (ex: Record<string, string>, pivot?: { x: number; y: number }): Group => ({ ...group('P'), ...(pivot ? { pivot } : {}), expressions: ex as never })
+  const T = (g: Group) => (resolveLayerAt(layer([g]), 0)[0] as Group).transform
+
+  it('scaleX/scaleY keep the pivot fixed (not the origin)', () => {
+    const t = T(obj({ scaleX: '0.4', scaleY: '0.4' }, P))
+    expect(apply(t, P).x).toBeCloseTo(100, 5) // pivot stays put (was (40,40) before the fix)
+    expect(apply(t, P).y).toBeCloseTo(100, 5)
+  })
+  it('rotation turns around the pivot (rotates in place)', () => {
+    const t = T(obj({ rotation: '0.5' }, P))
+    expect(apply(t, P).x).toBeCloseTo(100, 5)
+    expect(apply(t, P).y).toBeCloseTo(100, 5)
+  })
+  it('no pivot (default {0,0}) → unchanged origin-based behavior (scales around the origin)', () => {
+    const t = T(obj({ scaleX: '0.4', scaleY: '0.4' })) // group transform = IDENTITY
+    expect(apply(t, { x: 0, y: 0 })).toEqual({ x: 0, y: 0 }) // origin fixed
+    expect(apply(t, P).x).toBeCloseTo(40, 5) // (100,100) → (40,40): scale around the origin, as before
+    expect(apply(t, P).y).toBeCloseTo(40, 5)
+  })
+  it('x/y channels drive the pivot position', () => {
+    const t = T(obj({ x: '200', y: '50' }, P))
+    expect(apply(t, P)).toEqual({ x: 200, y: 50 })
+  })
+})
+
 describe('cel — resolveLayerAt', () => {
   it('without cels → returns layer.items (static)', () => {
     const l = layer([region('r1'), group('g1')])

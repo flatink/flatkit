@@ -13,7 +13,7 @@
 //  "cel layer" invariant: `layer.items` = the ROSTER of containers (bodies stored ONCE); material lives
 //  in `cel.matter`. A layer without `cels` = static (items rendered at every frame, historical behavior).
 // ─────────────────────────────────────────────────────────────────────────────
-import { IDENTITY, apply, compose, decompose, recompose, spaceConversions, type Transform } from './transform'
+import { IDENTITY, apply, compose, decompose, spaceConversions, type Transform } from './transform'
 import { lerpTint, lerpPaint, lerpStroke, type Tint } from './paint'
 import { lerpFilters, type Filter } from './filters'
 import { lerpColor } from './color'
@@ -51,7 +51,7 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
       let out: Item = it
       if (hasChannels(it) && isPoseable(it) && it.expressions) {
         const base: ResolvedPose = { transform: it.transform, opacity: it.opacity ?? 1, tint: it.tint, filters: it.filters }
-        const pose = applyExprChannels(it.expressions, base, frame, opts, it.id)
+        const pose = applyExprChannels(it.expressions, base, frame, opts, it.id, it.pivot)
         out = { ...it, transform: pose.transform, opacity: pose.opacity, ...(pose.tint ? { tint: pose.tint } : {}), ...(pose.filters ? { filters: pose.filters } : {}) } as Item
       }
       if (isText(out) && out.bind) out = { ...out, content: resolveBoundText(out, frame, opts) }
@@ -89,7 +89,7 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
     const body = layer.items.find((b) => b.id === p.id)
     if (!body || !isPoseable(body)) continue
     let pose = opts.guide ? guidedPose(p, A, B, frame, body, opts.guide, opts.orient) : poseAt(p, A, B, frame, body)
-    if ('expressions' in body && body.expressions) pose = applyExprChannels(body.expressions, pose, frame, opts, body.id)
+    if ('expressions' in body && body.expressions) pose = applyExprChannels(body.expressions, pose, frame, opts, body.id, body.pivot)
     out.push({ ...body, transform: pose.transform, opacity: pose.opacity, ...(pose.tint ? { tint: pose.tint } : { tint: undefined }), ...(pose.filters ? { filters: pose.filters } : { filters: undefined }) } as Item)
   }
   return out
@@ -287,11 +287,17 @@ function applyExprChannels(
   frame: number,
   opts: ResolveOpts,
   id?: string,
+  pivot: Point = { x: 0, y: 0 },
 ): ResolvedPose {
   if (!EXPR_CHANNELS.some((ch) => ex[ch])) return pose
   const dec = decompose(pose.transform)
+  // Position channels track the PIVOT's parent-space position (kept fixed by scale/rotation), so
+  // `scaleX`/`scaleY`/`rotation` turn around the declared `pivot` — consistent with cel poses
+  // (`poseGeom`/`geomToMatrix`). With pivot = {0,0} (the default), `pv` = the raw translation → identical
+  // to the previous origin-based behavior (no change for content without a pivot).
+  const pv = apply(pose.transform, pivot)
   const ch: Record<ExprChannel, number> = {
-    x: dec.x, y: dec.y, scaleX: dec.scaleX, scaleY: dec.scaleY, rotation: dec.rotation, opacity: pose.opacity,
+    x: pv.x, y: pv.y, scaleX: dec.scaleX, scaleY: dec.scaleY, rotation: dec.rotation, opacity: pose.opacity,
   }
   const fps = opts.fps ?? 24
   const time = fps > 0 ? frame / fps : frame
@@ -317,7 +323,7 @@ function applyExprChannels(
     if (c !== 'opacity') touchedT = true
   }
   return {
-    transform: touchedT ? recompose({ x: ch.x, y: ch.y, scaleX: ch.scaleX, scaleY: ch.scaleY, rotation: ch.rotation }) : pose.transform,
+    transform: touchedT ? geomToMatrix({ px: ch.x, py: ch.y, rot: ch.rotation, sx: ch.scaleX, sy: ch.scaleY, explicitRot: false }, pivot) : pose.transform,
     opacity: clamp01(ch.opacity),
     tint: pose.tint,
     filters: pose.filters,
