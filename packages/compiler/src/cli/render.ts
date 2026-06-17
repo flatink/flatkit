@@ -23,6 +23,8 @@ interface SkiaCanvas {
   Canvas: new (w: number, h: number) => HTMLCanvasElement & { toBuffer(fmt: string): Promise<Uint8Array> }
   loadImage: (src: string) => Promise<unknown>
   Path2D: typeof Path2D
+  /** Browser global under Node: the mask/clip path builder does `new DOMMatrix([...])` (drawScene). */
+  DOMMatrix: typeof DOMMatrix
   /** Global font registry. `use(paths)` reads each file's intrinsic name-table family; the 2-arg
    *  `use(family, paths)` form FORCES that alias (fixes variable-font statics whose name table lies). */
   FontLibrary: {
@@ -76,7 +78,7 @@ export async function renderDocToPng(doc: Doc, opts: RenderOpts = {}): Promise<U
       'run `node node_modules/skia-canvas/lib/prebuild.mjs download`.',
     )
   }
-  const { Canvas, loadImage, Path2D, FontLibrary } = skia
+  const { Canvas, loadImage, Path2D, FontLibrary, DOMMatrix } = skia
   const scale = opts.scale && opts.scale > 0 ? opts.scale : 2
   const W = doc.width, H = doc.height
 
@@ -97,6 +99,7 @@ export async function renderDocToPng(doc: Doc, opts: RenderOpts = {}): Promise<U
   const saved: Record<string, unknown> = {}
   const set = (k: string, v: unknown) => { saved[k] = g[k]; g[k] = v }
   set('Path2D', Path2D)
+  set('DOMMatrix', DOMMatrix) // mask/clip layers build their clip path with `new DOMMatrix([...])` (no browser global under Node)
   set('window', { addEventListener() {}, removeEventListener() {}, devicePixelRatio: scale })
   set('addEventListener', () => {})
   set('removeEventListener', () => {})

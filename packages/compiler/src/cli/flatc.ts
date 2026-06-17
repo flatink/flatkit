@@ -241,7 +241,11 @@ async function renderDocToFile(doc: Doc, outPath: string, frame: number, vars: R
     const { renderDocToPng } = await import('./render')
     const png = await renderDocToPng(doc, { frame, vars: Object.keys(vars).length ? vars : undefined, scale, steps: steps || undefined })
     writeFileSync(outPath, png)
-  } catch (e) { process.stderr.write(`flatc: render failed: ${(e as Error).message}\n`); return 1 }
+  } catch (e) {
+    process.stderr.write(`flatc: render failed: ${(e as Error).message}\n`)
+    if (process.env.FLATC_DEBUG && (e as Error).stack) process.stderr.write(`${(e as Error).stack}\n`) // FLATC_DEBUG=1 → full stack for diagnosis
+    return 1
+  }
   process.stdout.write(`flatc: ${basename(outPath)} ✓  ${doc.width}×${doc.height} ×${scale}${frame ? ` · frame ${frame}` : ''}${steps ? ` · ${steps} step(s)` : ''}${Object.keys(vars).length ? ` · ${Object.entries(vars).map(([k, v]) => `${k}=${v}`).join(' ')}` : ''}\n`)
   return 0
 }

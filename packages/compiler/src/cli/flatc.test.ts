@@ -251,6 +251,30 @@ describe('flatc — CLI', () => {
     }
   })
 
+  it('--render of a MASK scene works under Node (DOMMatrix global injected, not "is not defined")', async () => {
+    let hasSkia = true
+    const skiaPkg: string = 'skia-canvas'
+    try { await import(skiaPkg) } catch { hasSkia = false }
+    if (!hasSkia) return // no skia binary → skip
+    // A mask layer with a NESTED child layer → the clip path builder does `new DOMMatrix([...])`,
+    // which threw "DOMMatrix is not defined" headless (browser global absent under Node) until the fix.
+    const prog = join(cli, '__mask.flatink')
+    const out = join(cli, '__mask.png')
+    writeFileSync(prog, 'size 100 100\nscene {\n  mask layer "M" {\n    circle 50 50 30 fill #ffffff\n    layer "content" {\n      rect 0 0 100 100 fill #ff0000\n    }\n  }\n}\n')
+    const errs: string[] = []
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((s: string | Uint8Array) => { errs.push(String(s)); return true })
+    try {
+      expect(await run(['node', 'flatc', prog, '--render', '-o', out, '--scale', '1'])).toBe(0)
+      expect(errs.join('')).not.toContain('DOMMatrix')
+      const buf = readFileSync(out)
+      expect([...buf.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]) // PNG signature
+    } finally {
+      spy.mockRestore()
+      rmSync(prog, { force: true })
+      rmSync(out, { force: true })
+    }
+  })
+
   it('--render --steps N → runs the sim before capture (still a valid PNG)', async () => {
     let hasSkia = true
     const skiaPkg: string = 'skia-canvas'
