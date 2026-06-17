@@ -1,5 +1,19 @@
 # @flatkit/compiler
 
+## 0.14.2
+
+### Patch Changes
+
+- [`4c1744f`](https://github.com/zwykstudio/flatkit/commit/4c1744f6644426f93124c2a9d27b4974889898e1) Thanks [@kaelhem](https://github.com/kaelhem)! - Fix: `flatc --render` no longer crashes with `DOMMatrix is not defined` on scenes that contain a `mask`
+  layer. The mask/clip path builder does `new DOMMatrix([...])` (a browser global absent under Node); the
+  headless render entry now injects skia-canvas's `DOMMatrix` export as a global alongside `Path2D`. `--check`
+  and flatpack compilation were unaffected — only the PNG render path. Also: `flatc --render` prints the full
+  stack on failure when `FLATC_DEBUG` is set, to ease diagnosing such headless-only errors.
+- Updated dependencies []:
+  - @flatkit/types@0.14.2
+  - @flatkit/engine@0.14.2
+  - @flatkit/player@0.14.2
+
 ## 0.14.1
 
 ### Patch Changes
