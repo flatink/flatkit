@@ -1,5 +1,18 @@
 # @flatkit/engine
 
+## 0.14.1
+
+### Patch Changes
+
+- [`bd0fdfb`](https://github.com/zwykstudio/flatkit/commit/bd0fdfb92aa159be0841c3fd1a591a084c3c59e5) Thanks [@kaelhem](https://github.com/kaelhem)! - Fix: `object` channel expressions (`scaleX`/`scaleY`/`rotation`) now transform around the group's declared
+  **`pivot`**, consistent with cel poses — instead of always around the local origin `(0,0)`. Before, a group
+  `at 0,0 pivot 376,246` driven by `object { scaleX = s }` shrank toward the top-left corner and `rotation`
+  swung it in an arc; now it scales/spins **in place** around the pivot. With no `pivot` (default `{0,0}`) the
+  behavior is byte-identical to before (origin-based). When a pivot is set, the `x`/`y` channels position the
+  pivot (the object's anchor). (Friction X.)
+- Updated dependencies []:
+  - @flatkit/types@0.14.1
+
 ## 0.14.0
 
 ### Minor Changes
