@@ -104,6 +104,11 @@ describe('exprScope — context order (sandbox)', () => {
   it('value absent → no value key', () => {
     expect('value' in exprScope({}, 0, 0)).toBe(false)
   })
+  it('clock defaults to time (static eval), explicit arg wins, ctx-carried clock survives', () => {
+    expect(exprScope({}, 3, 72).clock).toBe(3) // no clock → coincides with time
+    expect(exprScope({}, 3, 72, undefined, 9).clock).toBe(9) // explicit monotone clock
+    expect(exprScope({ clock: 9 } as ExprContext, 3, 72).clock).toBe(9) // clock riding inside `extra` (player path)
+  })
 })
 
 describe('expr — robustness & sandbox', () => {

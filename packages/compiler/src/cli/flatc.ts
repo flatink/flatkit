@@ -164,7 +164,8 @@ function compileOnce(programPath: string, explicitFlats: string[], out: string, 
   // Behavior parse errors (unknown channels / malformed statements inside `object` blocks) that the
   // Doc-based linter can't see — they were dropped before reaching the model. Always ERRORS.
   const behaviorReport = built.behaviorDiags.map(({ scope, diag }) => `[${scope}] ${diag.line}:${diag.col}: error: ${diag.message}`).join('\n')
-  const report = [behaviorReport, lintDocReport(doc)].filter(Boolean).join('\n')
+  // Dedupe exact-duplicate lines: a scene parse error could in principle be reported by both paths.
+  const report = [...new Set([behaviorReport, lintDocReport(doc)].flatMap((r) => r.split('\n')).filter(Boolean))].join('\n')
   const hasErrors = docHasErrors(doc) || built.behaviorDiags.length > 0
   if (checkOnly) {
     if (report) process.stderr.write(report + '\n')

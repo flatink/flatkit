@@ -72,6 +72,11 @@
   origin lands. `spin cw|ccw` / `turns N` also turn around the pivot.
 - **`expr rotation` is in RADIANS**, like `sin`/`cos`. Stay in degrees with the helpers: `rad(45)`,
   `turns(time)` (one turn per second), `deg(r)`. e.g. `expr rotation "turns(time * 0.5)"`.
+- **`time` WRAPS at `durationFrames`** (the timeline loops), so `sin(time * f)` with an arbitrary `f`
+  **jumps** every loop — and a `.flatink` with no `timeline` defaults to **60 frames (2.5 s @24fps)**, so
+  the jump is frequent. For free-running ambiance use **`clock`** (monotone, never wraps): `sin(clock * f)`.
+  Alternatively drive it by the loop phase `frame / <durationFrames>` (reboucles cleanly) or set a long
+  `timeline`. `--check` warns when a channel expression uses `time` under a short looping timeline.
 - **A channel binding REPLACES the base transform — it is NOT a delta.** `object "G" { x = bump }` sets
   G's local x to `bump`, **overwriting** the group's declared `at X,Y` (x snaps to `bump` ≈ 0 → the element
   jumps to the left edge whenever the expression is small). Re-inject the base position:

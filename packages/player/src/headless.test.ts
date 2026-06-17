@@ -102,6 +102,22 @@ describe('headless -- playHeadless', () => {
     expect(res.vars.t).toBe(10) // 10 sim steps = 10 runs of `every frame`
   })
 
+  it('`clock` is monotone (never wraps) while `time` resets at durationFrames', () => {
+    const doc: Doc = {
+      width: 100, height: 100, symbols: [], variables: { mono: 0, wrap: 0 },
+      layers: [{ id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: [piece()] } as Layer],
+      // default-ish short loop: 60 frames @24fps = 2.5 s
+      timeline: { fps: 24, durationFrames: 60, tracks: [], onEnterFrame: [
+        { do: 'setVar', name: 'mono', value: 'clock' } as Action,
+        { do: 'setVar', name: 'wrap', value: 'time' } as Action,
+      ] },
+    }
+    const res = playHeadless(doc, [{ type: 'wait', frames: 200 }]) // 200 sim steps = 80 frames > 60 → loop wrapped
+    expect(res.vars.mono as number).toBeCloseTo(80 / 24, 5) // clock kept accumulating (3.33 s)
+    expect(res.vars.wrap as number).toBeCloseTo(20 / 24, 5) // time wrapped back (0.83 s)
+    expect(res.vars.mono as number).toBeGreaterThan(res.vars.wrap as number)
+  })
+
   it('the `set` gesture drives a variable (unlocks an enabled drag)', () => {
     const pc = { ...piece(), expressions: { x: 'px', y: 'py' } as Record<string, string> }
     const doc: Doc = {

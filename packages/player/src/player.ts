@@ -171,6 +171,7 @@ export class FlatPlayer {
   private cssH = 0
   private view: View = { tx: 0, ty: 0, scale: 1 }
   private frame = 0
+  private mono = 0 // MONOTONE frame count (never wrapped by the loop) → `clock = mono/fps` for ambient motion
   private playing = false
   private raf = 0
   private last = 0
@@ -646,7 +647,7 @@ export class FlatPlayer {
    *  + scene objects by name (`Hero.x`, cf. sceneRefs). */
   private exprCtx(vars: Map<string, number | number[]> = this.vars): ExprContext {
     const interp = vars !== this.vars // interpolated render context -> we do not touch the memo (frame unchanged)
-    const ctx: ExprContext = { mouse: this.mouse, keys: this.keyProxy, random: () => Math.random() }
+    const ctx: ExprContext = { mouse: this.mouse, keys: this.keyProxy, random: () => Math.random(), clock: this.mono / this.fps }
     for (const [k, v] of vars) ctx[k] = v
     for (const vf of this.valueFuncs) { // fn name(p) = expr -> closure (the body sees globals + math + time + params)
       ctx[vf.name] = (...args: number[]) => {
@@ -998,6 +999,7 @@ export class FlatPlayer {
     const rootSim = this.doc.timeline?.onEnterFrame
     for (let i = 0; i < Math.max(0, Math.floor(steps)); i++) {
       let f = this.frame + SIM_STEP * this.fps
+      this.mono += SIM_STEP * this.fps // monotone clock: accumulate BEFORE the loop wrap
       if (f >= this.duration) f = this.loop ? f % this.duration : this.duration
       this.frame = f
       this.advanceParams(SIM_STEP * this.fps) // P3: advance per-instance state transitions in lockstep with the sim
@@ -1082,6 +1084,7 @@ export class FlatPlayer {
 
       // 1) PLAYHEAD: based on real time (smooth, independent of refresh rate) + looping.
       let f = this.frame + dt * this.fps
+      this.mono += dt * this.fps // monotone clock: accumulate BEFORE the loop wrap
       if (f >= this.duration) {
         if (this.loop) { f %= this.duration; this.startAudio(f) } // restarts the audio on loop
         else {

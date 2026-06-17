@@ -291,11 +291,19 @@ export function evalExpr(node: Node, ctx: ExprContext, fallback = 0): number {
 
 /**
  * Build the evaluation context (canonical order, sandbox): `extra` (variables/mouse/keys/random) then
- * MATH (reserved functions & names take priority) then `time`/`frame`/`value`. A single source shared by
- * the timeline and the player.
+ * MATH (reserved functions & names take priority) then `time`/`frame`/`clock`/`value`. A single source
+ * shared by the timeline and the player.
+ *
+ * `clock` = MONOTONE elapsed seconds, never wrapped by the timeline loop (unlike `time = frame/fps`,
+ * which resets to 0 every `durationFrames`). Use it for ambient motion in a looping/interactive scene so
+ * `sin(clock*f)` doesn't jump on each loop. Defaults to `time` (in a static eval there is no playback to
+ * accumulate, so the two coincide); only a live player threads the real monotone value.
  */
-export function exprScope(extra: ExprContext | undefined, time: number, frame: number, value?: number): ExprContext {
+export function exprScope(extra: ExprContext | undefined, time: number, frame: number, value?: number, clock?: number): ExprContext {
   const ctx: ExprContext = { ...extra, ...MATH_CTX, time, frame }
+  // `clock` rides INSIDE `extra` when the player provides it (engine resolvers don't take it as a param):
+  // explicit arg wins, then a clock carried in `extra`, else it coincides with `time` (static eval).
+  ctx.clock = clock ?? (typeof extra?.clock === 'number' ? extra.clock : time)
   if (value !== undefined) ctx.value = value
   return ctx
 }
@@ -388,7 +396,8 @@ export const MATH_CTX: ExprContext = {
 export const STD_CONSTANTS: string[] = Object.keys(MATH_CTX).filter((k) => typeof MATH_CTX[k] === 'number')
 /** Callable functions (sin, clamp, lerp… + random + world⇄local conversions provided by the player). */
 export const STD_FUNCTIONS: string[] = [...Object.keys(MATH_CTX).filter((k) => typeof MATH_CTX[k] === 'function'), 'random', 'toLocalX', 'toLocalY', 'toGlobalX', 'toGlobalY']
-/** Reserved scalars provided by the runtime. */
-export const STD_IDS: string[] = ['time', 'frame', 'value']
+/** Reserved scalars provided by the runtime. `clock` = monotone elapsed seconds (never wraps; for ambient
+ *  motion in a looping scene), as opposed to `time` which resets every `durationFrames`. */
+export const STD_IDS: string[] = ['time', 'frame', 'clock', 'value']
 /** Member-access objects (mouse.x, keys.ArrowRight, self.x in a channel binding). */
 export const STD_OBJECTS: string[] = ['mouse', 'keys', 'self']

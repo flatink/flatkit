@@ -398,6 +398,28 @@ describe('flatFormat — .flatink program', () => {
     expect(diags[0].diag.message).toContain('unknown channel "scaleZ"')
   })
 
+  it('behaviorDiagnostics surfaces a dropped parse error in a SCENE script (two statements on one line)', () => {
+    const src = [
+      'size 100 100',          // 1
+      'var a = 0',             // 2
+      'var b = 0',             // 3
+      'scene {',               // 4
+      '  layer "L" {',         // 5
+      '    circle 0 0 5 fill #f00', // 6
+      '  }',                   // 7
+      '}',                     // 8
+      'every frame {',         // 9
+      '  if a < 5 { a = 1  b = 2 }', // 10
+      '}',                     // 11
+      '',
+    ].join('\n')
+    const diags = behaviorDiagnostics(src)
+    expect(diags).toHaveLength(1)
+    expect(diags[0].scope).toBe('scene')
+    expect(diags[0].diag.line).toBe(10) // absolute line, mapped through the masked scene text
+    expect(diags[0].diag.message).toContain('one action per line')
+  })
+
   it('behaviorDiagnostics is silent on a clean program', () => {
     const src = ['size 100 100', 'scene {', '  layer "L" {', '    group "G" { layer "c" { circle 0 0 5 fill #f00 } }', '  }', '}', 'object "G" {', '  scale = 2', '}', ''].join('\n')
     expect(behaviorDiagnostics(src)).toEqual([])

@@ -13,7 +13,7 @@ import type { Doc, EditFrame, Group, Instance } from '@flatkit/types'
 import { printUnits, type Diagnostic } from '@flatkit/engine/dsl'
 import { joinScopeProgram, scopeRegions } from './scopeProgram'
 import { functionsToUnits, importsToUnits, objectToUnits, timelineToUnits, variablesToUnits } from '@flatkit/engine/scriptDoc'
-import { contextLayers, getScopeTimeline, isContainer, isGroup, isText, isImage } from '@flatkit/engine/layers'
+import { contextLayers, getScopeTimeline, isContainer, isGroup, isText, isImage, isPoseable } from '@flatkit/engine/layers'
 import { importedFunctions } from '@flatkit/engine/stdlib'
 import { objectNames } from '@flatkit/engine/sceneRefs'
 import { itemBBox, dropZoneBounds } from '@flatkit/engine/groups'
@@ -102,6 +102,24 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
     for (const name of names0) {
       const m = allText.match(new RegExp(`(?<![\\w-])${escapeRe(name)}(?![\\w-])`, 'g'))
       if ((m?.length ?? 0) <= 1) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `global variable "${name}" never used (declared, but neither read nor written)` } })
+    }
+  }
+  // (c) raw `time` in a channel expression + a SHORT looping timeline → ambient motion JUMPS on each loop
+  //     (`time = frame/fps` resets to 0 every `durationFrames`). The monotone `clock` never wraps.
+  const dur = doc.timeline?.durationFrames ?? 60
+  const fps = doc.timeline?.fps ?? 24
+  if (dur <= 120) { // ≤ 5 s @24fps: short enough that the reset is visible as a periodic jump
+    let usesTime = false
+    const scan = (layers: Layer[]) => {
+      for (const l of layers) for (const it of l.items) {
+        if (isPoseable(it) && it.expressions) for (const k in it.expressions) if (/\btime\b/.test(it.expressions[k as keyof typeof it.expressions] ?? '')) usesTime = true
+        if (isGroup(it)) scan(it.layers)
+      }
+    }
+    scan(doc.layers)
+    if (usesTime) {
+      const secs = Math.round((dur / fps) * 10) / 10
+      out.push(warn(`a channel expression uses \`time\`, but the timeline loops every ${secs}s (durationFrames ${dur}) — \`time\` resets each loop, so the motion jumps. Use the monotone \`clock\` (never wraps), drive it by \`frame/${dur}\`, or set a longer \`timeline\`.`))
     }
   }
   out.push(...docLayoutWarnings(doc))

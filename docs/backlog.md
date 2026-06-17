@@ -60,6 +60,9 @@
    with its build script allowed (`pnpm.onlyBuiltDependencies`). The `--render` error message
    now walks through npm/yarn, the pnpm build-script approval, and the manual prebuild
    fallback. README Install section documents it.
+12. **Text on a path (`text … along "<id>"`)** — curved banners/ribbons/arcs (EDU friction W). The
+    engine already has the core primitive (`samplePathAt` → point+tangent), so a Phase-1 MVP is
+    tractable. Full design in [`rfc-text-on-path.md`](./rfc-text-on-path.md). Not yet scheduled.
 
 ## Authoring ergonomics (the biggest token/time lever for LLM generation)
 

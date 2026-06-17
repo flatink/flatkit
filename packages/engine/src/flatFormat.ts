@@ -785,9 +785,14 @@ function expandProgramSugar(src: string): string {
   return expandEachHandlers(expanded, symbolGroups, defs) // `each "Tmpl" as i { … }` → `object` blocks per generated instance ($(def+index) resolved)
 }
 
-/** Splits an EXPANDED program into the scene-script text + the `object "name" { … }` blocks.
- *  `bodyAt` = absolute offset of each block's body in `expanded` (drives behavior-diagnostic line mapping). */
-function extractBehavior(expanded: string): { sceneText: string; objects: { name: string; body: string; bodyAt: number }[] } {
+/** Blanks every non-newline char of a span (position-preserving mask): keeps line/column offsets intact
+ *  so a slice that REMOVES a sub-region still maps 1:1 onto the source for diagnostics. */
+const blankSpan = (s: string) => s.replace(/[^\n]/g, ' ')
+
+/** Splits an EXPANDED program into the scene-script text + the `object "name" { … }` blocks. `sceneText`
+ *  is the tail with each `object` span MASKED (blanked, newlines kept) so it stays positionally aligned
+ *  with the source. `tailAt`/`bodyAt` = absolute offsets in `expanded` (drive diagnostic line mapping). */
+function extractBehavior(expanded: string): { sceneText: string; tailAt: number; objects: { name: string; body: string; bodyAt: number }[] } {
   // Behavior = everything that follows the `scene { … }` block.
   const si = expanded.search(/\bscene\b/)
   const open = si >= 0 ? expanded.indexOf('{', si) : -1
@@ -795,7 +800,7 @@ function extractBehavior(expanded: string): { sceneText: string; objects: { name
   const tailAt = close >= 0 ? close + 1 : expanded.length
   const tail = close >= 0 ? expanded.slice(close + 1) : ''
 
-  // Extracts the `object "name" { … }` blocks; the rest = scene scripts.
+  // Extracts the `object "name" { … }` blocks; the rest (object spans blanked out) = scene scripts.
   let sceneText = '', i = 0
   const objects: { name: string; body: string; bodyAt: number }[] = []
   while (i < tail.length) {
@@ -807,23 +812,29 @@ function extractBehavior(expanded: string): { sceneText: string; objects: { name
     const oc = matchBrace(tail, ob)
     if (oc < 0) { sceneText += tail.slice(start); break }
     objects.push({ name: m[1].replace(/\\(.)/g, (_, c) => (c === 'n' ? '\n' : c)), body: tail.slice(ob + 1, oc), bodyAt: tailAt + ob + 1 })
+    sceneText += blankSpan(tail.slice(start, oc + 1)) // mask the object span (keep newlines) → scene stays aligned
     i = oc + 1
   }
-  return { sceneText, objects }
+  return { sceneText, tailAt, objects }
 }
 
-/** Parse-level diagnostics of the BEHAVIOR (`object` block bodies) — the unknown channels / malformed
- *  statements that `parseProgramFull` DROPS silently (it keeps only `.units`, discarding `.diagnostics`).
- *  The Doc-based linter can't recover them: a dropped binding never reaches the model. Without this,
- *  `--check` would wave through e.g. `object "X" { scaleZ = 1 }`. Errors only, by `object "name"` scope,
- *  with line numbers absolute in the (expanded) source. */
+/** Parse-level diagnostics of the BEHAVIOR (`object` block bodies AND scene scripts) — the unknown
+ *  channels / malformed statements (e.g. two statements on one line) that `parseProgramFull` DROPS
+ *  silently (it keeps only `.units`, discarding `.diagnostics`). The Doc-based linter can't recover them:
+ *  a dropped binding/action never reaches the model. Without this, `--check` would wave through e.g.
+ *  `object "X" { scaleZ = 1 }` or `every frame { if c { a=1  b=2 } }`. Errors only, scoped by
+ *  `object "name"` / `scene`, with line numbers absolute in the (expanded) source. */
 export function behaviorDiagnostics(src: string): { scope: string; diag: Diagnostic }[] {
   const expanded = expandProgramSugar(src)
+  const lineAt = (off: number) => expanded.slice(0, off).split('\n').length // 1-based line at an absolute offset
   const out: { scope: string; diag: Diagnostic }[] = []
-  for (const ob of extractBehavior(expanded).objects) {
-    const base = expanded.slice(0, ob.bodyAt).split('\n').length // 1-based line where the body begins
+  const { sceneText, tailAt, objects } = extractBehavior(expanded)
+  for (const ob of objects) {
+    const base = lineAt(ob.bodyAt)
     for (const d of parseUnits(ob.body).diagnostics) out.push({ scope: `object "${ob.name}"`, diag: { ...d, line: d.line + base - 1 } })
   }
+  const sceneBase = lineAt(tailAt) // scene scripts begin right after the `}` of the `scene { … }` block
+  for (const d of parseUnits(sceneText).diagnostics) out.push({ scope: 'scene', diag: { ...d, line: d.line + sceneBase - 1 } })
   return out
 }
 

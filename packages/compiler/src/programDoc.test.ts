@@ -82,6 +82,16 @@ describe('programDoc — structural warnings', () => {
     expect(ws).toHaveLength(1)
     expect(ws[0].diag.message).toMatch(/"never"/)
   })
+
+  it('`time` in a channel expr + short looping timeline -> warning; `clock` or a long timeline -> nothing', () => {
+    const ambient = (expr: string): Group => ({ ...group('cloud', 'Cloud'), expressions: { x: expr } })
+    const mk = (expr: string, dur: number): Doc => ({ width: 100, height: 100, symbols: [], layers: [layer([ambient(expr)])], timeline: { fps: 24, durationFrames: dur, tracks: [] } })
+    const hit = (d: Doc) => docStructureWarnings(d).filter((w) => /resets each loop/.test(w.diag.message))
+    expect(hit(mk('50 + sin(time * 2) * 10', 60))).toHaveLength(1) // raw time + 2.5 s loop → warn
+    expect(hit(mk('50 + sin(clock * 2) * 10', 60))).toEqual([]) // monotone clock → no warn
+    expect(hit(mk('50 + sin(time * 2) * 10', 36000))).toEqual([]) // long timeline → never wraps in a session
+    expect(docHasErrors(mk('50 + sin(time * 2) * 10', 60))).toBe(false) // warning only, non-blocking
+  })
 })
 
 describe('programDoc — layout warnings', () => {

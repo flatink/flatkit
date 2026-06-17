@@ -44,8 +44,9 @@ per second), `deg(r)` (the inverse, for readouts). Or bind the **`rotationDeg`**
 
 | Name | Meaning |
 |---|---|
-| `time` | seconds elapsed |
-| `frame` | current frame (0-based) |
+| `time` | seconds elapsed — **resets to 0 every `durationFrames`** (the timeline loops). Fine for motion tuned to the loop; for free-running ambiance use `clock`. |
+| `clock` | seconds elapsed, **monotone** (never wraps). Use for ambient motion in a looping/interactive scene so `sin(clock * f)` doesn't jump on each loop. |
+| `frame` | current frame (0-based; also wraps at `durationFrames`) |
 | `value` | the channel's current value (in a channel binding) |
 | `mouse.x` `mouse.y` | pointer position (scene units) |
 | `keys.<Key>` | `1` while a key is held (e.g. `keys.ArrowRight`, `keys.Space`) |
