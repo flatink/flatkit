@@ -20,7 +20,7 @@ Inside `object "Name" { … }`:
 
 | Event | Fires when |
 |---|---|
-| `when clicked` | the item is clicked |
+| `when clicked` | the item is **tapped** — press + release with no drag (fires on release, within a few px) |
 | `when hovered` / `when unhovered` | the pointer enters / leaves |
 | `when pressed` / `when released` | pointer down / up on the item |
 | `when dragged` | the item is being dragged (grab in progress) |
@@ -130,19 +130,15 @@ object "List" {
 }
 ```
 
-**Tap vs drag on the same element.** `when clicked` fires on **press** (no movement threshold), so a drag
-that *starts* on a clickable element also fires its `clicked`. To separate a tap from a drag on the same
-zone, skip `when clicked` and decide on release by how far the pointer travelled:
+**Tap vs drag on the same element.** `when clicked` fires on **release**, and only if the pointer stayed
+put — a press that travels past a few px is a **drag**, not a click. So the *same* element can be both
+tappable and draggable: a tap fires `clicked`, a drag fires `dragged`/the interactor, with **no phantom
+click** when you drag. That's what makes "tap a card to pick it, drag the list to scroll" work on one zone:
 
 ```
-object "Row" {
-  when pressed {
-    ax = mouse.x
-    ay = mouse.y
-  }
-  when released {
-    tap = abs(mouse.x - ax) + abs(mouse.y - ay) < 6 ? 1 : 0
-  }
+object "Card" {
+  when clicked { picked = id }                 # fires on a TAP only
+  when dragged { off = base + (mouse.y - a) }  # a DRAG scrolls — `clicked` does not fire
 }
 ```
 

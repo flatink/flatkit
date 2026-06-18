@@ -127,6 +127,45 @@ describe('FlatPlayer -- grabbing (press / drag / release / longpress)', () => {
   })
 })
 
+describe('FlatPlayer -- tap vs drag (click is deferred to release within a tolerance)', () => {
+  it('a tap fires click on RELEASE (not on press)', () => {
+    const h: Handlers = {}
+    const inter: Interaction[] = [{ id: 'c', targetId: 'Piece', event: 'click', actions: [sv('clicked', '1')] }]
+    const pl = new FlatPlayer(fakeCanvas(h), makeDoc(inter), opts)
+    h.pointerdown({ clientX: 20, clientY: 20, pointerId: 1 })
+    expect(pl.getVar('clicked')).toBeUndefined() // NOT on press
+    h.pointerup({ clientX: 20, clientY: 20, pointerId: 1 })
+    expect(pl.getVar('clicked')).toBe(1) // on release
+    pl.destroy()
+  })
+
+  it('a press that becomes a drag does NOT fire click (tap-vs-drag on the same element)', () => {
+    const h: Handlers = {}
+    const inter: Interaction[] = [
+      { id: 'c', targetId: 'Piece', event: 'click', actions: [sv('clicked', '1')] },
+      { id: 'd', targetId: 'Piece', event: 'drag', actions: [sv('dragged', '1')] },
+    ]
+    const pl = new FlatPlayer(fakeCanvas(h), makeDoc(inter), opts)
+    h.pointerdown({ clientX: 20, clientY: 20, pointerId: 1 })
+    h.pointermove({ clientX: 90, clientY: 20, pointerId: 1 }) // moved past TAP_TOL → a drag
+    h.pointerup({ clientX: 90, clientY: 20, pointerId: 1 })
+    expect(pl.getVar('dragged')).toBe(1) // the drag fired
+    expect(pl.getVar('clicked')).toBeUndefined() // the click did NOT (no phantom tap)
+    pl.destroy()
+  })
+
+  it('a jitter under the tolerance still counts as a tap', () => {
+    const h: Handlers = {}
+    const inter: Interaction[] = [{ id: 'c', targetId: 'Piece', event: 'click', actions: [sv('clicked', '1')] }]
+    const pl = new FlatPlayer(fakeCanvas(h), makeDoc(inter), opts)
+    h.pointerdown({ clientX: 20, clientY: 20, pointerId: 1 })
+    h.pointermove({ clientX: 23, clientY: 22, pointerId: 1 }) // < TAP_TOL (6)
+    h.pointerup({ clientX: 23, clientY: 22, pointerId: 1 })
+    expect(pl.getVar('clicked')).toBe(1)
+    pl.destroy()
+  })
+})
+
 describe('FlatPlayer -- interactor (drag / dropped on)', () => {
   it('drag writes varX/varY with the grab offset, then dropped on Zone at release', () => {
     const h: Handlers = {}
@@ -180,6 +219,7 @@ describe('FlatPlayer -- interactor (drag / dropped on)', () => {
     }
     const pl = new FlatPlayer(fakeCanvas(h), doc, opts)
     h.pointerdown({ clientX: 60, clientY: 60, pointerId: 1 })
+    h.pointerup({ clientX: 60, clientY: 60, pointerId: 1 }) // tap (click fires on release, not on press)
     expect(pl.getVar('lx')).toBe(10) // world 60 -> local 60-50
     expect(pl.getVar('gx')).toBe(60) // local 10 -> world 10+50
     pl.destroy()

@@ -140,6 +140,7 @@ const HOVER_EVENTS: readonly ItemEvent[] = ['enter', 'leave']
 const GRAB_EVENTS: readonly ItemEvent[] = ['press', 'release', 'drag', 'longpress']
 const LONGPRESS_MS = 500 // hold without moving -> `held`
 const LONGPRESS_TOL = 6 // movement tolerance (world px) before canceling the hold
+const TAP_TOL = 6 // movement tolerance (world px) under which a press+release counts as a `click` (tap, not drag)
 
 /**
  * Fixed-step accumulator: how many simulation steps to run this tick, and the remainder to carry over.
@@ -225,7 +226,10 @@ export class FlatPlayer {
   private funcNames: Set<string> = new Set() // value-function names → keep priority over vars when refreshing
   // -- Grabbing (drag / press / long-press) --
   private grabbed: string | null = null // grabbed item (between pointerdown and pointerup)
-  private grabStart: Point = { x: 0, y: 0 } // world point of the grab (long-press tolerance)
+  private grabStart: Point = { x: 0, y: 0 } // world point of the press (long-press + tap tolerance)
+  // `click` is DEFERRED to pointerup: a tap fires it only if the pointer stayed within TAP_TOL of the press
+  // (a press that becomes a drag is NOT a click). Lets a draggable surface and a tappable child coexist.
+  private pendingClick: string | null = null // click target captured on press, fired on release if it stayed a tap
   private dragActive: { it: Interactor; offX: number; offY: number; parentInv: Transform; tracePath?: Path | null; traceMaxT?: number; revealCells?: Set<number>; revealGrid?: RevealGrid } | null = null // "drag" interactor in progress (parentInv cached at grab time)
   // `reveal` coverage PERSISTED per target across grabs → true monotonicity (a child scratching with
   // several short strokes keeps accumulating instead of resetting to the current stroke each grab).
@@ -449,6 +453,7 @@ export class FlatPlayer {
     this.mouse.x = p.x
     this.mouse.y = p.y
     this.bustNamed() // the mouse moved -> objects bound to mouse.* must be refreshed
+    if (this.pendingClick && Math.hypot(p.x - this.grabStart.x, p.y - this.grabStart.y) > TAP_TOL) this.pendingClick = null // moved past the tap tolerance → a drag, not a click
     // Grab in progress: the grabbed item receives `drag` (even if the pointer leaves it).
     if (this.grabbed) {
       this.record('move', p, e.pointerId) // record moves ONLY during a drag (reduced volume)
@@ -484,10 +489,11 @@ export class FlatPlayer {
     const chains = hitChains(this.doc, this.frame, this.exprCtx(), p)
     const clickId = this.pickTarget(chains, CLICK_EVENTS)
     const grabId = this.pickTarget(chains, GRAB_EVENTS) ?? this.pickInteractor(chains) // grabbable = handler OR interactor
-    if (clickId) this.fireEvent(clickId, 'click')
+    this.grabStart = p // press point (tap/long-press movement tolerance) — set for the click case too, not only grabs
+    this.pendingClick = clickId // DEFERRED: fired on release iff the pointer stayed a tap (cleared by a drag move)
+    if (clickId && !grabId) this.canvas.setPointerCapture?.(e.pointerId) // a click-only target still needs the release
     if (grabId) {
       this.grabbed = grabId
-      this.grabStart = p
       const inter = this.interactorFor(grabId)
       if (inter && this.interactorEnabled(inter)) { // capture the grab offset (the clicked point stays under the cursor) + the parent transform
         const ctx = this.exprCtx()
@@ -506,22 +512,28 @@ export class FlatPlayer {
     if (clickId || grabId) this.render() // reflects the changes (variables/frame)
   }
   private readonly onPointerUp = (e: PointerEvent) => {
-    if (!this.grabbed) return
-    const id = this.grabbed
+    if (!this.grabbed && this.pendingClick === null) return
+    const grabbedId = this.grabbed
+    const click = this.pendingClick
+    this.pendingClick = null
     const p = this.worldPoint(e)
-    this.trackPointerPos(p) // mouse.* must reflect the release point for `when released` (tap-vs-drag in userland)
+    this.trackPointerPos(p) // mouse.* must reflect the release point for `when released`/`when clicked`
     this.record('up', p, e.pointerId)
     this.canvas.releasePointerCapture?.(e.pointerId)
-    // Write the gesture outputs BEFORE emitting `release`, so a `when released` handler can read them
-    // (link target index / end position) — consistent with `drag`, which writes its vars before `dragged`.
-    if (this.dragActive?.it.axis === 'link') this.resolveLink(this.dragActive.it, p) // tests the reached target -> writes the index (0 = none)
-    this.fireEvent(id, 'release')
-    if (this.dragActive) this.fireDrops(id, p) // `when dropped on Zone`
-    this.clearGrab()
+    if (grabbedId) {
+      // Write the gesture outputs BEFORE emitting `release`, so a `when released` handler can read them
+      // (link target index / end position) — consistent with `drag`, which writes its vars before `dragged`.
+      if (this.dragActive?.it.axis === 'link') this.resolveLink(this.dragActive.it, p) // tests the reached target -> writes the index (0 = none)
+      this.fireEvent(grabbedId, 'release')
+      if (this.dragActive) this.fireDrops(grabbedId, p) // `when dropped on Zone`
+      this.clearGrab()
+    }
+    if (click) this.fireEvent(click, 'click') // the press stayed a tap (pointer within TAP_TOL) → click now, not on press
     this.render()
   }
   // Interrupted gesture (canceled touch, OS gesture): we release WITHOUT a drop (the pointer did not "let go" on a target).
   private readonly onPointerCancel = (e: PointerEvent) => {
+    this.pendingClick = null // an interrupted gesture is never a click
     if (!this.grabbed) return
     const id = this.grabbed
     this.record('cancel', this.worldPoint(e), e.pointerId)
