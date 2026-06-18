@@ -1,5 +1,14 @@
 # @flatkit/compiler
 
+## 0.15.1
+
+### Patch Changes
+
+- Updated dependencies [[`deb96f0`](https://github.com/zwykstudio/flatkit/commit/deb96f01d596fa8a082366021adcb415e85a706c)]:
+  - @flatkit/player@0.15.1
+  - @flatkit/types@0.15.1
+  - @flatkit/engine@0.15.1
+
 ## 0.15.0
 
 ### Minor Changes

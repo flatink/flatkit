@@ -1,5 +1,22 @@
 # @flatkit/player
 
+## 0.15.1
+
+### Patch Changes
+
+- [`deb96f0`](https://github.com/zwykstudio/flatkit/commit/deb96f01d596fa8a082366021adcb415e85a706c) Thanks [@kaelhem](https://github.com/kaelhem)! - fix(player): sync `mouse.x/y` on pointer-down/up so press/click/release handlers read the real pointer
+
+  `mouse.*` was refreshed only on `pointermove`, so on the **first touch** (no hover precedes a touch) a
+  `when pressed` / `when clicked` / `when released` handler saw a **stale** `mouse` (0,0) — breaking
+  grab-anchor capture and relative finger-drag. `onPointerDown`/`onPointerUp` now sync `mouse.x/y` to the
+  event point before firing handlers, which enables **relative drag / finger-scroll** (`anchor = mouse.x` on
+  press, `mouse.x - anchor` on drag) and a release-based **tap-vs-drag** check. Desktop was unaffected (the
+  preceding hover masked it).
+
+- Updated dependencies []:
+  - @flatkit/types@0.15.1
+  - @flatkit/engine@0.15.1
+
 ## 0.15.0
 
 ### Minor Changes
