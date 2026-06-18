@@ -109,6 +109,43 @@ link  <endX>, <endY>, <target> to <Group>          # pull a thread → end follo
 Each output also accepts an **array element** (`drag hx[i], hy[i]`, `reveal seen[2]`) — the natural form
 under `each` (see below).
 
+## Pointer gestures (drag delta, finger-scroll, tap vs drag)
+
+`mouse.x`/`mouse.y` hold the pointer position inside **any** handler — including `when pressed` /
+`when clicked` / `when released` (the press/release point, on touch too), so you can capture a **grab
+anchor**. A grab **keeps tracking the pointer after it leaves the object** (pointer capture), so a drag is
+never lost at the object's edge.
+
+**Relative drag / finger-scroll** — accumulate the delta from the press anchor (one action per line):
+
+```
+object "List" {
+  when pressed {
+    a = mouse.y
+    base = off
+  }
+  when dragged {
+    off = base + (mouse.y - a)   # `off` scrolls by the finger delta
+  }
+}
+```
+
+**Tap vs drag on the same element.** `when clicked` fires on **press** (no movement threshold), so a drag
+that *starts* on a clickable element also fires its `clicked`. To separate a tap from a drag on the same
+zone, skip `when clicked` and decide on release by how far the pointer travelled:
+
+```
+object "Row" {
+  when pressed {
+    ax = mouse.x
+    ay = mouse.y
+  }
+  when released {
+    tap = abs(mouse.x - ax) + abs(mouse.y - ay) < 6 ? 1 : 0
+  }
+}
+```
+
 ## Feedback
 
 An object can read **its own interaction state** in channel expressions: `self.hovered`, `self.grabbed`,

@@ -56,6 +56,21 @@ filter adjust <brightness> <contrast> <saturate> <hue>
 Filters on **static** decor are cached (nearly free); on **animated** elements they recomposite every
 frame — keep those small (see the [gotchas](dsl-gotchas.md) for the perf details).
 
+## Clipping & masks
+
+Cut a container's content to a viewport — scroll panes, reveal windows, framed cards:
+
+```
+group "Viewport" at 20,20 clip 0 0 120 80 { layer "c" { … } }   # rectangular clip, in the group's LOCAL coords
+mask layer "Window" { circle 60 60 50 fill #fff  layer "c" { … } }  # arbitrary clip shape (the mask's matter clips its child layers)
+```
+
+- **`clip <x> <y> <w> <h>`** on a `group`/`instance` cuts everything outside the rectangle. **Render-only**:
+  hit-testing and the auto-size bbox ignore it (the clipped-away area stays clickable / counts toward
+  framing) — it's a visual cut, not a hit/layout change.
+- For an **arbitrary** clip shape, use a **`mask` layer**: its material (the shapes drawn directly in it)
+  clips its **child layers**. See the [gotchas](dsl-gotchas.md) for the clip/mask details.
+
 ## Text
 
 ```

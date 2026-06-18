@@ -73,7 +73,7 @@ describe('FlatPlayer -- grabbing (press / drag / release / longpress)', () => {
     pl.destroy()
   })
 
-  it('drag keeps following even when the pointer leaves the object', () => {
+  it('drag keeps following even when the pointer leaves the object (off-hitbox, pointer capture)', () => {
     const h: Handlers = {}
     const inter: Interaction[] = [
       { id: 'p', targetId: 'Piece', event: 'press', actions: [sv('grabbed', '1')] },
@@ -81,8 +81,22 @@ describe('FlatPlayer -- grabbing (press / drag / release / longpress)', () => {
     ]
     const pl = new FlatPlayer(fakeCanvas(h), makeDoc(inter), opts)
     h.pointerdown({ clientX: 50, clientY: 50, pointerId: 1 })
-    h.pointermove({ clientX: 95, clientY: 95, pointerId: 1 }) // still in the object
-    expect(pl.getVar('px')).toBe(95)
+    h.pointermove({ clientX: 200, clientY: 200, pointerId: 1 }) // FAR outside the 100x100 piece — grab persists
+    expect(pl.getVar('px')).toBe(200)
+    pl.destroy()
+  })
+
+  it('`when pressed` reads the real press point via mouse.* — even on the FIRST touch (no hover)', () => {
+    const h: Handlers = {}
+    const inter: Interaction[] = [
+      { id: 'p', targetId: 'Piece', event: 'press', actions: [sv('anchor', 'mouse.x')] },
+      { id: 'd', targetId: 'Piece', event: 'drag', actions: [sv('rel', 'mouse.x - anchor')] },
+    ]
+    const pl = new FlatPlayer(fakeCanvas(h), makeDoc(inter), opts)
+    h.pointerdown({ clientX: 30, clientY: 30, pointerId: 1 }) // first event is a press (touch: no prior hover move)
+    expect(pl.getVar('anchor')).toBe(30) // was 0 before the fix (mouse stale on pointer-down)
+    h.pointermove({ clientX: 80, clientY: 30, pointerId: 1 })
+    expect(pl.getVar('rel')).toBe(50) // relative finger-delta works (80 - 30) → enables finger-scroll
     pl.destroy()
   })
 

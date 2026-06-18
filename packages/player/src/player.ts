@@ -472,9 +472,14 @@ export class FlatPlayer {
     }
     this.render() // follows the mouse (and reflects enter/leave)
   }
+  /** Sync `mouse.x/y` to a pointer position WITHOUT the move-delta accumulation, so a `when pressed` /
+   *  `when released` handler reads the ACTUAL press/release point. On touch there is no hover `move` to set
+   *  it first, so without this `mouse.*` is stale (0,0 on the first touch) inside press/click/release. */
+  private trackPointerPos(p: Point): void { this.mouse.x = p.x; this.mouse.y = p.y; this.bustNamed() }
   private readonly onPointerDown = (e: PointerEvent) => {
     if (!this.doc.interactions?.length && !this.doc.interactors?.length) return
     const p = this.worldPoint(e)
+    this.trackPointerPos(p) // mouse.* must reflect the press point for `when pressed`/`when clicked` (touch: no prior hover)
     this.record('down', p, e.pointerId)
     const chains = hitChains(this.doc, this.frame, this.exprCtx(), p)
     const clickId = this.pickTarget(chains, CLICK_EVENTS)
@@ -504,6 +509,7 @@ export class FlatPlayer {
     if (!this.grabbed) return
     const id = this.grabbed
     const p = this.worldPoint(e)
+    this.trackPointerPos(p) // mouse.* must reflect the release point for `when released` (tap-vs-drag in userland)
     this.record('up', p, e.pointerId)
     this.canvas.releasePointerCapture?.(e.pointerId)
     // Write the gesture outputs BEFORE emitting `release`, so a `when released` handler can read them
