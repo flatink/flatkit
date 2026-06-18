@@ -1,5 +1,20 @@
 # @flatkit/player
 
+## 0.14.3
+
+### Patch Changes
+
+- [`1bb1ca3`](https://github.com/zwykstudio/flatkit/commit/1bb1ca3b6d5c82c19a1a9d6b172d799895170f06) Thanks [@kaelhem](https://github.com/kaelhem)! - Perf: a container/leaf whose resolved `opacity` is `<= 0.01` is now skipped at render — its whole subtree
+  is pruned (no draw, no child expression eval), mirroring the hit-test predicate (which already lets
+  `opacity <= 0.01` click through). Previously only an opacity of EXACTLY `0` was skipped, so the common
+  gating idiom `opacity = phase == X ? 1 : 0` cost nothing when off-phase reached exactly 0, but a value
+  SMOOTHED toward ~0 (e.g. 0.005) still drew and evaluated the entire hidden subtree every frame. Scenes that
+  stack several phases gated this way (a card with many off-phase layers) get a large speedup with no authoring
+  change, and draw/hit stay aligned (an alpha≈0 item was already non-interactive; now it's also free to render).
+- Updated dependencies []:
+  - @flatkit/types@0.14.3
+  - @flatkit/engine@0.14.3
+
 ## 0.14.2
 
 ### Patch Changes
