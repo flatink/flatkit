@@ -17,6 +17,7 @@ import { contextLayers, getScopeTimeline, isContainer, isGroup, isText, isImage,
 import { importedFunctions } from '@flatkit/engine/stdlib'
 import { objectNames } from '@flatkit/engine/sceneRefs'
 import { itemBBox, dropZoneBounds } from '@flatkit/engine/groups'
+import { makePathSampler } from '@flatkit/engine/path'
 import { bboxIntersects } from '@flatkit/engine/bbox'
 import { lint, localVariables, type LintContext } from './lint'
 import { parseUnits } from '@flatkit/engine/dsl'
@@ -74,7 +75,7 @@ function itemNameById(doc: Doc, id: string): string | null {
   const walk = (layers: { items: import('@flatkit/types').Item[] }[]) => {
     for (const l of layers) for (const it of l.items) {
       if (found) return
-      if ('name' in it && it.id === id) { found = it.name; return }
+      if ('name' in it && it.id === id) { found = it.name ?? null; return }
       if (isGroup(it)) walk(it.layers)
     }
   }
@@ -150,7 +151,7 @@ export function docLayoutWarnings(doc: Doc): { scope: string; diag: Diagnostic }
   const dynamicPos = (it: Item) => 'expressions' in it && it.expressions && (it.expressions.x != null || it.expressions.y != null)
   for (const layer of doc.layers) {
     for (const it of layer.items) {
-      if (!(isText(it) || isImage(it)) || dynamicPos(it)) continue
+      if (!(isText(it) || isImage(it)) || dynamicPos(it) || (isText(it) && it.textPath)) continue // path-laid text → §(f), not a box
       const b = itemBBox(doc, it)
       if (!b) continue
       const visible = b.maxX > 0 && b.minX < W && b.maxY > 0 && b.minY < H // overlaps the canvas (not parked off-screen)
@@ -165,13 +166,28 @@ export function docLayoutWarnings(doc: Doc): { scope: string; diag: Diagnostic }
   //     (We do NOT compare against `box.w`: without wrap, a text overflows its box harmlessly as long as it
   //      fits in the canvas — it is the canvas edge that clips.) Top-level only (x = world).
   for (const it of doc.layers.flatMap((l) => l.items)) {
-    if (!isText(it) || it.wrap || dynamicPos(it)) continue
+    if (!isText(it) || it.wrap || it.textPath || dynamicPos(it)) continue
     const estW = estTextWidth(it)
     const left = it.align === 'left' ? 0 : it.align === 'right' ? it.box.w - estW : it.box.w / 2 - estW / 2
     const wl = it.transform.e + left, wr = wl + estW // left/right edge of the content in world coords
     if (wr > W + TOL || wl < -TOL) {
       out.push(warn(`text "${it.content.slice(0, 24)}${it.content.length > 24 ? '…' : ''}" overflows the canvas (estimated ~${r0(estW)} px, edge ${r0(wl)}->${r0(wr)} outside 0->${W}) — add "wrap"`))
     }
+  }
+
+  // (f) Text laid ALONG a path whose estimated run is longer than the path -> trailing glyphs dropped at
+  //     render (mirrors the canvas-overflow warning, but for the curve). Position-independent -> recurse.
+  const pathTexts: Text[] = []
+  const walkPathTexts = (layers: Layer[]) => { for (const l of layers) for (const it of l.items) { if (isText(it) && it.textPath) pathTexts.push(it); else if (isGroup(it)) walkPathTexts(it.layers) } }
+  walkPathTexts(doc.layers)
+  for (const it of pathTexts) {
+    const L = makePathSampler(it.textPath!.path).length
+    if (L <= 0) continue
+    const advance = (it.weight && it.weight >= 700 ? 0.56 : 0.52) * it.size // same metric as estTextWidth
+    const glyphs = [...it.content].length
+    const eff = Math.max(advance + (it.textPath!.spacing ?? 0), 1) // mirror the renderer's per-glyph floor
+    const estW = glyphs * eff
+    if (estW > L + TOL) out.push(warn(`text "${it.content.slice(0, 24)}${it.content.length > 24 ? '…' : ''}" overflows its path (~${r0(estW)}px > ${r0(L)}px) — trailing glyphs are dropped`))
   }
 
   // (e) Drop zones (`hitbox`) that overlap -> ambiguous drop.

@@ -23,6 +23,7 @@ circle  <cx> <cy> <r>
 ellipse <cx> <cy> <rx> <ry>
 rect    <x> <y> <w> <h>            # · <r> for uniform rounded corners · <rx> <ry> for distinct
 path    "M0 0 L10 0 L10 10 Z"      # raw SVG path data
+circle  100 100 40 as "Ring"       # name a shape (right after the geometry) → addressable, e.g. text `along "Ring"`
 ```
 
 ### Fill, stroke, opacity
@@ -72,6 +73,31 @@ text "OUTLINE" font "sans-serif" size 64 color #ffd23f stroke #e23b3b 6 join rou
 - **Stable id**: `text "…" as "myId"` lets behavior reference it via `text("myId")` (e.g. in a `send`
   payload). Without `as`, the id is auto-generated and not referenceable.
 
+### Text on a path
+
+Lay glyphs **along a curve** instead of a straight baseline — banners, badges, ribbons, dials:
+
+```
+text "SURF CLUB" along "Banner" align center             # follow a NAMED shape's outline
+text "loop" along path "M0 80 C120 0 360 0 480 80"       # …or inline SVG path data
+```
+
+- **`along "<id>"`** follows a **named shape** (`circle`/`rect`/`ellipse`/`path … as "<id>"`). A *closed*
+  named shape (circle/ellipse) anchors the run **upright, centered over the top** by default. **`along path
+  "<d>"`** takes inline path data instead — baked **literally**, so you own its start/direction.
+- **`align`** reuses the text alignment: `left` starts the run at the anchor, `center` centers on it,
+  `right` ends on it. **`start <0..1>`** moves the anchor along the curve (fraction of its length). On an
+  **open** path the anchor defaults to the start (0), so to center a label *on the path* use `align center
+  start 0.5` — with `start 0`, `center`/`right` push the run off the near end and those glyphs are dropped.
+  (Closed paths wrap, so `start 0` already centers over the top.)
+- **`side over|under`** — which side of the curve the run sits on: `over` = outside (default), `under` = inside.
+- **`spacing <px>`** — extra tracking per glyph (may be negative; the effective advance is floored at 1px).
+- **Animate** by quoting the value (it becomes an expression, same scope as `bind`: `time`, `frame`,
+  `clock`, vars): `start "time * 0.1"` scrolls the run along the path (**marquee** — wraps on a closed
+  shape); `spacing "sin(time) * 4"` eases the tracking.
+- `along` replaces `at`/`box`/`wrap` (a path-laid run is not box-wrapped). A run longer than the path drops
+  its trailing glyphs, and `flatc` warns (`… overflows its path (~Npx > Lpx)`).
+
 ## Images
 
 ```
@@ -92,9 +118,10 @@ align <point> of "Name" [offset dx,dy]               # pin this item's origin on
 
 > **Placement & naming gotchas.** On `text`/`image`, put `at …` / `matrix(…)` / `as "…"` **right after the
 > content** (the string, or `image "id" w h`), *before* style attributes (`font`/`box`/`fill`/…). So
-> `text "…" box W H at x,y` fails — write `text "…" at x,y box W H`. And **bare shapes
-> (`circle`/`rect`/`ellipse`/`path`) can't be named** with `as` at all: to reference one from behavior,
-> wrap it in a `group "Name"` (the name lives on the group).
+> `text "…" box W H at x,y` fails — write `text "…" at x,y box W H`. **Shapes** name themselves with `as
+> "<id>"` **right after the geometry** (`circle cx cy r as "Ring" fill …`); a named shape is addressable by
+> **text-on-path** (`along "<id>"`). To drive a shape from *behavior* (clicks, `send`, drop zones), still
+> wrap it in a `group "Name"` — the region name addresses geometry, the group name an interactive object.
 
 `align` points: `center`, `top`, `bottom`, `left`, `right`, `topleft`, `topright`, `bottomleft`,
 `bottomright`. It uses the target's **static** bbox (no expression channels) — placement only, no flow

@@ -16,7 +16,7 @@ import { regionBBox, type BBox } from '@flatkit/engine/bbox'
 import { regionPaint, type Paint, type Tint } from '@flatkit/engine/paint'
 import { cssFilterString, type Filter } from '@flatkit/engine/filters'
 import { containerLayers, getSymbol, isContainer, isGroup, isInstance, isText, isImage, isRegion, layerStructure } from '@flatkit/engine/layers'
-import { pathToBezier, transformPath, type Path } from '@flatkit/engine/path'
+import { pathToBezier, transformPath, makePathSampler, pathBBox, type Path } from '@flatkit/engine/path'
 import { resolveInstanceFrame, type BaseOf } from '@flatkit/engine/timeline'
 import { stateFrame, initialStateValue } from '@flatkit/engine/states'
 import { resolveInstanceParams, frozenInstanceFrame } from '@flatkit/engine/params'
@@ -197,7 +197,7 @@ function layersStatic(doc: Doc, layers: Layer[], seen: Set<string>): boolean {
 export function isRenderStatic(doc: Doc, it: Item, seen: Set<string> = new Set()): boolean {
   const memo = staticMemo.get(it)
   if (memo !== undefined) return memo // structural result (stable as long as the doc does not change)
-  if ((isText(it) && it.bind) || hasExpr(it)) { staticMemo.set(it, false); return false }
+  if ((isText(it) && (it.bind || it.textPath?.startExpr || it.textPath?.spacingExpr)) || hasExpr(it)) { staticMemo.set(it, false); return false }
   let result = true
   if (isInstance(it)) {
     if (seen.has(it.symbolId)) return true // cycle: DO NOT memoize (depends on `seen`)
@@ -631,7 +631,11 @@ function renderOneItem(
       }
     } else if (isText(it)) {
       const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
-      expandRect(acc, compose(matOf(ctx.getTransform()), it.transform), 0, 0, it.box.w, it.box.h)
+      // Text-on-path glyphs live at the baked path's coords (not within `box`); size the tint/filter
+      // isolation buffer to the path extent, inflated by the font size for glyph ascent/descent.
+      const pb = it.textPath ? pathBBox(it.textPath.path) : null
+      if (pb) expandRect(acc, matOf(ctx.getTransform()), pb.minX - it.size, pb.minY - it.size, pb.maxX + it.size, pb.maxY + it.size)
+      else expandRect(acc, compose(matOf(ctx.getTransform()), it.transform), 0, 0, it.box.w, it.box.h)
       paintLeaf(ctx, it.tint, it.filters, opacity, acc, scaleOf(ctx), (c) => paintText(c, it))
     } else if (isImage(it)) {
       const src = rctx.image?.(it.assetId) ?? null
@@ -684,6 +688,7 @@ export const textFont = (t: Text): string => `${t.italic ? 'italic ' : ''}${t.we
 
 /** Paints a "live" text at full opacity (local origin = top-left corner, lines aligned within `box`). */
 function paintText(ctx: CanvasRenderingContext2D, t: Text) {
+  if (t.textPath) { paintTextOnPath(ctx, t); return } // RFC text-on-path: glyphs follow a baked curve
   ctx.save()
   applyTransform(ctx, t.transform)
   ctx.fillStyle = t.color
@@ -708,6 +713,63 @@ function paintText(ctx: CanvasRenderingContext2D, t: Text) {
     const y = i * lh
     if (s) ctx.strokeText(lines[i], x, y)
     ctx.fillText(lines[i], x, y)
+  }
+  ctx.restore()
+}
+
+/** Lays the glyphs of `t` along `t.textPath.path` (RFC text-on-path). Per glyph: translate to the arc
+ *  sample point, rotate to the tangent, draw centered. `align`+`start` set the run's anchor; `spacing`
+ *  tracks the glyphs (effective advance floored at 1px); `side` puts the run outside (`over`, baseline on
+ *  the curve) or inside (`under`, top on the curve), upright. Glyphs past an OPEN path's ends are dropped,
+ *  a CLOSED path wraps. A degenerate (zero-length) path falls back to straight text at the origin. */
+function paintTextOnPath(ctx: CanvasRenderingContext2D, t: Text) {
+  const tp = t.textPath!
+  const sampler = makePathSampler(tp.path)
+  const L = sampler.length
+  ctx.save()
+  ctx.fillStyle = t.color
+  ctx.font = textFont(t)
+  ctx.textAlign = 'center'
+  ctx.textBaseline = tp.side === 'under' ? 'top' : 'alphabetic' // under = inside the curve, over = outside
+  const stroke = t.stroke
+  if (stroke) {
+    ctx.lineWidth = stroke.width
+    ctx.lineCap = stroke.cap ?? 'round'
+    ctx.lineJoin = stroke.join ?? 'round'
+    if (stroke.miterLimit != null) ctx.miterLimit = stroke.miterLimit
+    ctx.setLineDash(stroke.dash ?? [])
+    ctx.strokeStyle = paintStyle(ctx, stroke.paint, pathBBox(tp.path), t.color)
+  }
+  if (L <= 0) {
+    // Degenerate path (zero length) → keep the content visible as straight text at the origin.
+    if (stroke) ctx.strokeText(t.content, 0, 0)
+    ctx.fillText(t.content, 0, 0)
+    ctx.restore()
+    return
+  }
+  const glyphs = [...t.content] // code-point aware (no mid-surrogate split)
+  const adv = glyphs.map((g) => ctx.measureText(g).width)
+  const sp = tp.spacing ?? 0
+  const eff = adv.map((a) => Math.max(a + sp, 1)) // tracking; effective advance floored at 1px (no reversal/overlap)
+  const n = glyphs.length
+  // Visual run width: advance of every glyph but the last (eff) + the last glyph's own width (no trailing track).
+  const runW = n ? eff.reduce((a, b) => a + b, 0) - (eff[n - 1] - adv[n - 1]) : 0
+  const anchor = (tp.start ?? 0) * L
+  // align: left = run starts at the anchor; center = centered on it; right = run ends on it.
+  let cursor = t.align === 'center' ? anchor - runW / 2 : t.align === 'right' ? anchor - runW : anchor
+  const closed = sampler.closed
+  for (let i = 0; i < n; i++) {
+    const mid = cursor + adv[i] / 2
+    cursor += eff[i]
+    const s = closed ? ((mid % L) + L) % L : mid
+    if (!closed && (mid < 0 || mid > L)) continue // overflow past an open path → drop (--check warns, §6)
+    const { point, tangent } = sampler.at(s)
+    ctx.save()
+    ctx.translate(point.x, point.y)
+    ctx.rotate(Math.atan2(tangent.y, tangent.x))
+    if (stroke) ctx.strokeText(glyphs[i], 0, 0)
+    ctx.fillText(glyphs[i], 0, 0)
+    ctx.restore()
   }
   ctx.restore()
 }

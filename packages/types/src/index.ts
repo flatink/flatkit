@@ -252,6 +252,7 @@ export type ResolveOpts = { fps?: number; ctx?: ExprContext; guide?: Path; orien
 
 export type Region = {
   id: string
+  name?: string // optional stable name set via `<shape> as "<id>"` — addressable (e.g. `text … along "<id>"`); absent = anonymous
   color: string // representative color (solid fallback / compat)
   path: Path // Bezier path (migrated material = closed subpaths without handles)
   paint?: Paint // optional rich paint (gradient); absent = solid `color`
@@ -371,6 +372,21 @@ export type SymbolDef = {
 }
 
 /**
+ * Text laid out ALONG a path (RFC: text-on-path). Present on a `Text` ⇒ glyphs follow `path`; the item's
+ * `transform`/`box`/`wrap` are ignored for layout. `ref` is authoring-only (the named shape the curve came
+ * from) and round-trips as `along "<ref>"`; `path` is the resolved/baked outline the runtime samples.
+ */
+export type TextPath = {
+  ref?: string // named-shape id (`along "<id>"`); resolved to `path` at compile time, kept for round-trip. Absent ⇒ inline `along path "<d>"` (baked literally, no top-anchoring)
+  path: Path // the curve glyphs follow (baked from `ref`, or inline) — a closed NAMED source is top-anchored, tangent +x
+  start?: number // 0..1 arc-length offset where the run is anchored (default 0); `align` decides start/center/end
+  side?: 'over' | 'under' // which side of the path the run sits on: `over` = outside (default), `under` = inside
+  spacing?: number // extra px of advance per glyph (tracking) — may be negative (the effective advance is floored at 1px)
+  startExpr?: string // `start "<expr>"`: animates `start` per frame (marquee along the path); overrides `start`
+  spacingExpr?: string // `spacing "<expr>"`: animates `spacing` per frame (eased letter-spacing); overrides `spacing`
+}
+
+/**
  * "live" (editable) text: a leaf item animatable like a container (transform/opacity/tint, pivot). LOCAL
  * origin = top-left corner; text flows toward (box.w, box.h). `box` = measured extent (updated by the
  * editor via measureText) → pure bbox/hit without a canvas.
@@ -393,6 +409,8 @@ export type Text = {
   wrap?: boolean // automatic line wrapping within `box.w` (absent = no wrap; honors explicit \n)
   bind?: string // numeric expression evaluated each frame → injected into `content` at the `{}` slot (read-only dynamic text; without `{}`, shows the value alone)
   decimals?: number // fixed decimals for the `bind` value (absent = integer if round, otherwise rounded to 3)
+  textPath?: TextPath // present ⇒ lay glyphs along `textPath.path` (RFC text-on-path); `transform`/`box`/`wrap` ignored
+
   /** `id` explicitly set by the author via `text "…" as "<id>"` (≠ auto-generated id). Drives the
    *  printing of `as` in the flatFormat DSL. */
   idExplicit?: boolean

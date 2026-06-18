@@ -34,8 +34,10 @@ flatc hello.flatink --render -o hello.png  # → a PNG, to see what you drew (ne
 
 ## 2. Make it move
 
-Animation comes from **channel expressions** in a behavior block. A bare shape **can't be named**, so wrap
-it in a named **group** (the name lives on the group), then drive a channel:
+Animation comes from **channel expressions** in a behavior block, which target a **named object**
+(`group`/`instance`/`text`). A bare shape can't carry channels — its `as "<id>"` name only makes it
+addressable for **text-on-path** — so wrap it in a named **group** (the name lives on the group), then
+drive a channel:
 
 ```
 scene {

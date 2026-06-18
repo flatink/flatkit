@@ -120,4 +120,18 @@ describe('programDoc — layout warnings', () => {
     const ok: Text = mkText('short', 40, 300, true)
     expect(docLayoutWarnings(doc([ok]))).toEqual([])
   })
+
+  // Text laid along a path: overflow is measured against the PATH length, not the canvas/box.
+  const line = (len: number) => ({ subpaths: [{ closed: false, segments: [{ anchor: { x: 0, y: 0 } }, { anchor: { x: len, y: 0 } }] }] })
+  const onPath = (content: string, lineLen: number): Text => ({ ...mkText(content, 0, 0), textPath: { path: line(lineLen) } })
+
+  it('text-on-path longer than its path -> "overflows its path" warning; fitting -> none', () => {
+    expect(docLayoutWarnings(doc([onPath('OVERFLOWING LABEL', 20)])).some((w) => /overflows its path/.test(w.diag.message))).toBe(true)
+    expect(docLayoutWarnings(doc([onPath('Hi', 300)])).filter((w) => /overflows its path/.test(w.diag.message))).toEqual([])
+  })
+
+  it('text-on-path never triggers the CANVAS-overflow / clipped warnings (box is irrelevant)', () => {
+    const ws = docLayoutWarnings(doc([onPath('OVERFLOWING LABEL', 20)]))
+    expect(ws.filter((w) => /overflows the canvas|clipped at the canvas edge/.test(w.diag.message))).toEqual([])
+  })
 })

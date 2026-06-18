@@ -685,7 +685,7 @@ describe('flatFormat — parameterized symbols (VISUAL template, expanded at par
       '    }',
       '  }', '}'].join('\n')
     const prog = parseProgramFull(src)
-    const tiles = prog.layers[0].items.filter((it) => 'name' in it && /^T\d$/.test(it.name)) as Group[]
+    const tiles = prog.layers[0].items.filter((it) => 'name' in it && typeof it.name === 'string' && /^T\d$/.test(it.name)) as Group[]
     expect(tiles.map((t) => t.name)).toEqual(['T0', 'T1', 'T2'])
     expect(tiles.map((t) => txt(t))).toEqual(['1', '2', '3']) // $(i+1)
     expect(tiles.map((t) => t.transform.e)).toEqual([50, 120, 190]) // $(50 + i*70)
@@ -1172,5 +1172,117 @@ describe('flatFormat — `cel … hold {}` carries the previous cel\'s poses (co
     const carried = sym.layers[0].cels![1].poses.find((p) => p.id === wId)!
     expect(carried.spin).toBeUndefined()
     expect(carried.turns).toBeUndefined()
+  })
+})
+
+describe('flatFormat — text on a path (`along`)', () => {
+  const scene = (body: string) => ['size 480 200', 'scene {', '  layer "c" {', body, '  }', '}', ''].join('\n')
+
+  // Round-trip is checked print-first (the printer canonicalizes path data / whitespace).
+  const roundTrips = (src: string) => {
+    const printed = printProgramFull(parseProgramFull(src))
+    expect(printProgramFull(parseProgramFull(printed))).toBe(printed)
+    return printed
+  }
+
+  it('a shape can be named with `as` and round-trips', () => {
+    const reg = parseProgramFull(scene('    circle 100 100 40 as "Banner" fill #3366ff')).layers[0].items[0] as Region
+    expect(reg.name).toBe('Banner')
+    expect(roundTrips(scene('    circle 100 100 40 as "Banner" fill #3366ff'))).toContain(' as "Banner"')
+  })
+
+  it('`text … along "<id>" start <f>` parses, bakes the outline + round-trips', () => {
+    const src = scene([
+      '    circle 240 100 80 as "Ring" fill #222222',
+      '    text "SURF CLUB" along "Ring" start 0.25 font "sans-serif" size 24 align center line 1.2 color #ffffff',
+    ].join('\n'))
+    const txt = parseProgramFull(src).layers[0].items[1] as Text
+    expect(txt.kind).toBe('text')
+    expect(txt.textPath?.ref).toBe('Ring')
+    expect(txt.textPath?.start).toBe(0.25)
+    expect(txt.textPath?.path.subpaths[0]?.closed).toBe(true) // closed circle baked + top-anchored
+    const printed = roundTrips(src)
+    expect(printed).toContain('along "Ring" start 0.25')
+    expect(printed).not.toContain(' box ') // box/wrap omitted for a path-laid run
+  })
+
+  it('default `start` (0) is not printed', () => {
+    const printed = roundTrips(scene([
+      '    path "M0 80 C 120 0 360 0 480 80" as "Wave" nofill stroke #000000 2',
+      '    text "hi" along "Wave" font "sans-serif" size 24 align left line 1.2 color #ffffff',
+    ].join('\n')))
+    expect(printed).toContain('along "Wave"')
+    expect(printed).not.toContain('start 0')
+  })
+
+  it('`along` referencing an unknown shape → error', () => {
+    const src = scene('    text "x" along "Nope" font "sans-serif" size 24 align left line 1.2 color #ffffff')
+    expect(() => parseProgramFull(src)).toThrow(/along: shape not found: Nope/)
+  })
+
+  // ── Phase 2: inline `along path`, side, spacing ──
+  it('inline `along path "<d>"` parses (no ref) + round-trips', () => {
+    const src = scene('    text "hi" along path "M0 0L300 0" font "sans-serif" size 24 align left line 1.2 color #ffffff')
+    const txt = parseProgramFull(src).layers[0].items[0] as Text
+    expect(txt.textPath?.ref).toBeUndefined()
+    expect(txt.textPath?.path.subpaths[0]?.segments[0]?.anchor).toMatchObject({ x: 0, y: 0 })
+    expect(roundTrips(src)).toContain('along path "')
+  })
+
+  it('inline closed path is baked LITERALLY (not top-anchored)', () => {
+    const src = scene('    text "x" along path "M0 0L100 0L100 100Z" font "sans-serif" size 12 align left line 1.2 color #fff')
+    const tpath = (parseProgramFull(src).layers[0].items[0] as Text).textPath!.path
+    expect(tpath.subpaths[0]?.closed).toBe(true)
+    expect(tpath.subpaths[0]?.segments[0]?.anchor).toMatchObject({ x: 0, y: 0 }) // M start kept, NOT re-anchored to the top
+  })
+
+  it('`side under` + `spacing` round-trip; `side over`/`spacing 0` are implicit', () => {
+    const src = scene([
+      '    circle 240 100 80 as "Ring" fill #222222',
+      '    text "DIAL" along "Ring" side under spacing 3 font "sans-serif" size 20 align center line 1.2 color #ffffff',
+    ].join('\n'))
+    const txt = parseProgramFull(src).layers[0].items[1] as Text
+    expect(txt.textPath?.side).toBe('under')
+    expect(txt.textPath?.spacing).toBe(3)
+    expect(roundTrips(src)).toContain('side under spacing 3')
+
+    const src2 = scene('    text "x" along path "M0 0L99 0" side over spacing 0 font "sans-serif" size 12 align left line 1.2 color #fff')
+    const t2 = parseProgramFull(src2).layers[0].items[0] as Text
+    expect(t2.textPath?.side).toBeUndefined() // `over` = default → not stored
+    expect(t2.textPath?.spacing).toBeUndefined() // `0` = default → not stored
+    expect(roundTrips(src2)).not.toContain('side')
+  })
+
+  it('negative `spacing` (tightening) round-trips', () => {
+    const src = scene('    text "TIGHT" along path "M0 0L300 0" spacing -2 font "sans-serif" size 20 align left line 1.2 color #fff')
+    expect((parseProgramFull(src).layers[0].items[0] as Text).textPath?.spacing).toBe(-2)
+    expect(roundTrips(src)).toContain('spacing -2')
+  })
+
+  it('`side` with a bad value → error', () => {
+    const src = scene('    text "x" along path "M0 0L99 0" side sideways font "sans-serif" size 12 align left line 1.2 color #fff')
+    expect(() => parseProgramFull(src)).toThrow(/"side" expects over\|under/)
+  })
+
+  // ── Phase 3: animated channels (`start "<expr>"` marquee, `spacing "<expr>"` eased tracking) ──
+  it('quoted `start`/`spacing` are stored as expressions (not literals) + round-trip', () => {
+    const src = scene([
+      '    circle 240 100 80 as "Ring" fill #222222',
+      '    text "LOOP" along "Ring" start "time * 0.1" spacing "sin(time) * 4" font "sans-serif" size 20 align center line 1.2 color #ffffff',
+    ].join('\n'))
+    const txt = parseProgramFull(src).layers[0].items[1] as Text
+    expect(txt.textPath?.startExpr).toBe('time * 0.1')
+    expect(txt.textPath?.spacingExpr).toBe('sin(time) * 4')
+    expect(txt.textPath?.start).toBeUndefined() // expression form → no literal start
+    expect(txt.textPath?.spacing).toBeUndefined()
+    const printed = roundTrips(src)
+    expect(printed).toContain('start "time * 0.1"')
+    expect(printed).toContain('spacing "sin(time) * 4"')
+  })
+
+  it('literal and expression forms of `start` are distinguishable (number vs quoted)', () => {
+    const lit = parseProgramFull(scene('    text "x" along path "M0 0L99 0" start 0.4 font "s" size 12 align left line 1.2 color #fff')).layers[0].items[0] as Text
+    expect(lit.textPath?.start).toBe(0.4)
+    expect(lit.textPath?.startExpr).toBeUndefined()
   })
 })

@@ -1,8 +1,9 @@
 # Expressions & stdlib
 
 Expressions appear in channel bindings (`rotation = …`), conditions (`if …`, `enabled …`), `send`
-payloads, `bind` text, and `$()` interpolation. They are **pure and numeric** — no statements, no loops,
-no side effects (so they can't hang and only touch the values the runtime provides).
+payloads, `bind` text, text-on-path `start`/`spacing` (`text … along "…" start "time*0.1"`), and `$()`
+interpolation. They are **pure and numeric** — no statements, no loops, no side effects (so they can't
+hang and only touch the values the runtime provides).
 
 ## Operators
 

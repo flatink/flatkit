@@ -379,6 +379,40 @@ describe('cel — self in a channel binding', () => {
   })
 })
 
+describe('cel — text-on-path animated channels (phase 3)', () => {
+  const linePath = { subpaths: [{ closed: false, segments: [{ anchor: { x: 0, y: 0 } }, { anchor: { x: 100, y: 0 } }] }] }
+  const mk = (tp: object) => ({ id: 't', kind: 'text', name: 'T', transform: IDENTITY, content: 'AB', font: 'sans-serif', size: 16, align: 'left', lineHeight: 1.2, color: '#000', box: { w: 0, h: 0 }, textPath: { path: linePath, ...tp } } as unknown as Layer['items'][number])
+  const startOf = (item: unknown) => (item as { textPath: { start: number } }).textPath.start
+  const spacingOf = (item: unknown) => (item as { textPath: { spacing: number } }).textPath.spacing
+
+  it('`startExpr` (marquee) resolves to a numeric start that changes per frame', () => {
+    const l = layer([mk({ startExpr: 'frame / 100' })])
+    expect(startOf(resolveLayerAt(l, 0, { ctx: {} })[0])).toBeCloseTo(0)
+    expect(startOf(resolveLayerAt(l, 50, { ctx: {} })[0])).toBeCloseTo(0.5)
+  })
+
+  it('`spacingExpr` (eased tracking) resolves to a numeric spacing per frame', () => {
+    const l = layer([mk({ spacingExpr: 'frame * 2' })])
+    expect(spacingOf(resolveLayerAt(l, 3, { ctx: {} })[0])).toBeCloseTo(6)
+  })
+
+  it('invalid expression → falls back to the static value (no throw)', () => {
+    const l = layer([mk({ startExpr: '(((', start: 0.3 })])
+    expect(startOf(resolveLayerAt(l, 9, { ctx: {} })[0])).toBeCloseTo(0.3)
+  })
+
+  it('a path-text WITHOUT an animated channel is returned as-is (fast path, same reference)', () => {
+    const items = [mk({ start: 0.2 })]
+    expect(resolveLayerAt(layer(items), 5, { ctx: {} })[0]).toBe(items[0])
+  })
+
+  it('resolves animated channels in an ANIMATED (cel) layer too, not only a static one', () => {
+    const t = mk({ startExpr: 'frame / 100' })
+    const cels = [{ frame: 0, poses: [{ id: 't', transform: IDENTITY }] }] as unknown as Cel[]
+    expect(startOf(resolveLayerAt(layer([t], cels), 50, { ctx: {} })[0])).toBeCloseTo(0.5)
+  })
+})
+
 describe('cel — pose patch semantics + rotate/scale sugar (degrees, around pivot)', () => {
   const gAt = (id: string, e: number, f: number, pivot?: { x: number; y: number }): Group =>
     ({ id, kind: 'group', name: id, transform: translation(e, f), layers: [], ...(pivot ? { pivot } : {}) })

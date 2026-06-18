@@ -208,3 +208,134 @@ describe('drawScene -- filtered composite cache (static scenery perf)', () => {
     expect(draw).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('drawScene -- text on a path (`along`)', () => {
+  const realPath2D = (globalThis as { Path2D?: unknown }).Path2D
+  beforeEach(() => { (globalThis as { Path2D?: unknown }).Path2D = class { addPath() {} rect() {} moveTo() {} lineTo() {} bezierCurveTo() {} quadraticCurveTo() {} closePath() {} arc() {} ellipse() {} } })
+  afterEach(() => { (globalThis as { Path2D?: unknown }).Path2D = realPath2D })
+
+  // Recording 2D ctx: a save/restore transform STACK (translate accumulates), so each fillText records the
+  // path point a glyph landed on. measureText: width = chars × 10 (so each glyph advances 10px).
+  const mkCtx = () => {
+    const glyphs: { ch: string; x: number; y: number }[] = []
+    let tx = 0, ty = 0
+    const stack: [number, number][] = []
+    const ctx = {
+      glyphs, globalAlpha: 1, fillStyle: '', strokeStyle: '', font: '', textAlign: '', textBaseline: '', lineWidth: 0, lineCap: '', lineJoin: '', miterLimit: 0,
+      save() { stack.push([tx, ty]) }, restore() { const s = stack.pop(); if (s) { tx = s[0]; ty = s[1] } },
+      setLineDash() {}, beginPath() {}, translate(x: number, y: number) { tx += x; ty += y }, rotate() {}, transform() {},
+      getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+      measureText: (s: string) => ({ width: s.length * 10 }),
+      fillText: (ch: string) => glyphs.push({ ch, x: Math.round(tx), y: Math.round(ty) }),
+      strokeText: () => {}, fill() {}, stroke() {},
+    }
+    return ctx as unknown as CanvasRenderingContext2D & { glyphs: { ch: string; x: number; y: number }[] }
+  }
+  const layout = (text: string) => {
+    const src = `size 320 80\nscene {\n  layer "c" {\n    path "M0 0L300 0" as "Wire" nofill stroke #000000 2\n    ${text}\n  }\n}`
+    const doc = parseProgramFull(src)
+    const ctx = mkCtx()
+    renderItems(ctx, doc, resolveLayerAt(doc.layers[0], 0, {}), 0, null, new Set(), { fps: 60 })
+    return ctx.glyphs
+  }
+
+  it('align left: one glyph per char, placed left→right along the path (glyph centers at 5,15,25…)', () => {
+    const g = layout('text "ABC" along "Wire" font "sans-serif" size 20 align left line 1.2 color #ffffff')
+    expect(g.map((x) => x.ch)).toEqual(['A', 'B', 'C'])
+    expect(g.map((x) => x.x)).toEqual([5, 15, 25]) // cumulative advance (10px) → glyph-center arc position
+    expect(g.every((x) => x.y === 0)).toBe(true) // horizontal path → baseline on y=0
+  })
+
+  it('align center + start 0.5: run centered on the midpoint (150px)', () => {
+    const g = layout('text "ABC" along "Wire" start 0.5 font "sans-serif" size 20 align center line 1.2 color #ffffff')
+    expect(g.map((x) => x.x)).toEqual([140, 150, 160]) // centered around 0.5 × 300
+  })
+
+  it('glyphs past the end of an OPEN path are dropped (no pile-up)', () => {
+    const src = `size 40 40\nscene {\n  layer "c" {\n    path "M0 0L8 0" as "Tiny" nofill stroke #000000 1\n    text "AB" along "Tiny" font "sans-serif" size 20 align left line 1.2 color #fff\n  }\n}`
+    const doc = parseProgramFull(src)
+    const ctx = mkCtx()
+    renderItems(ctx, doc, resolveLayerAt(doc.layers[0], 0, {}), 0, null, new Set(), { fps: 60 })
+    expect(ctx.glyphs.map((x) => x.ch)).toEqual(['A']) // B's center (15px) overflows the 8px path → dropped
+  })
+})
+
+describe('drawScene -- text on a path: side & spacing (phase 2)', () => {
+  const realPath2D = (globalThis as { Path2D?: unknown }).Path2D
+  beforeEach(() => { (globalThis as { Path2D?: unknown }).Path2D = class { addPath() {} rect() {} moveTo() {} lineTo() {} bezierCurveTo() {} quadraticCurveTo() {} closePath() {} arc() {} ellipse() {} } })
+  afterEach(() => { (globalThis as { Path2D?: unknown }).Path2D = realPath2D })
+
+  type G = { ch: string; x: number; baseline: string }
+  // Recording ctx: transform stack + the textBaseline in effect at each fillText. width = chars × 10.
+  const mkCtx = () => {
+    const glyphs: G[] = []
+    let tx = 0, ty = 0, baseline = 'alphabetic'
+    const stack: [number, number][] = []
+    const ctx = {
+      glyphs, globalAlpha: 1, fillStyle: '', strokeStyle: '', font: '', textAlign: '', lineWidth: 0, lineCap: '', lineJoin: '', miterLimit: 0,
+      get textBaseline() { return baseline }, set textBaseline(v: string) { baseline = v },
+      save() { stack.push([tx, ty]) }, restore() { const s = stack.pop(); if (s) { tx = s[0]; ty = s[1] } },
+      setLineDash() {}, beginPath() {}, translate(x: number, y: number) { tx += x; ty += y }, rotate() {}, transform() {},
+      getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+      measureText: (s: string) => ({ width: s.length * 10 }),
+      fillText: (ch: string) => glyphs.push({ ch, x: Math.round(tx), baseline }),
+      strokeText() {}, fill() {}, stroke() {},
+    }
+    return ctx as unknown as CanvasRenderingContext2D & { glyphs: G[] }
+  }
+  const layout = (textClause: string) => {
+    const src = `size 320 80\nscene {\n  layer "c" {\n    ${textClause}\n  }\n}`
+    const doc = parseProgramFull(src)
+    const ctx = mkCtx()
+    renderItems(ctx, doc, resolveLayerAt(doc.layers[0], 0, {}), 0, null, new Set(), { fps: 60 })
+    return ctx.glyphs
+  }
+  const xs = (clause: string) => layout(clause).map((g) => g.x)
+
+  it('positive `spacing` widens the per-glyph advance', () => {
+    // adv 10 + spacing 4 = 14 → glyph centers at 5, 19, 33.
+    expect(xs('text "ABC" along path "M0 0L300 0" spacing 4 font "x" size 20 align left line 1.2 color #fff')).toEqual([5, 19, 33])
+  })
+
+  it('negative `spacing` tightens it', () => {
+    // adv 10 - spacing 4 = 6 → centers at 5, 11, 17.
+    expect(xs('text "ABC" along path "M0 0L300 0" spacing -4 font "x" size 20 align left line 1.2 color #fff')).toEqual([5, 11, 17])
+  })
+
+  it('very negative `spacing` is floored to a 1px effective advance (no overlap/reversal)', () => {
+    // max(10 - 100, 1) = 1 → centers at 5, 6, 7 (monotonic, never backward).
+    expect(xs('text "ABC" along path "M0 0L300 0" spacing -100 font "x" size 20 align left line 1.2 color #fff')).toEqual([5, 6, 7])
+  })
+
+  it('`side over` (default) = alphabetic baseline (outside); `side under` = top baseline (inside)', () => {
+    expect(layout('text "AB" along path "M0 0L300 0" font "x" size 20 align left line 1.2 color #fff')[0].baseline).toBe('alphabetic')
+    expect(layout('text "AB" along path "M0 0L300 0" side under font "x" size 20 align left line 1.2 color #fff')[0].baseline).toBe('top')
+  })
+
+  it('inline `along path` renders one glyph per char along the inline curve', () => {
+    expect(layout('text "AB" along path "M0 0L300 0" font "x" size 20 align left line 1.2 color #fff').map((g) => g.ch)).toEqual(['A', 'B'])
+    expect(xs('text "AB" along path "M0 0L300 0" font "x" size 20 align left line 1.2 color #fff')).toEqual([5, 15])
+  })
+
+  // ── Phase 3: animated marquee (`start "<expr>"`) ──
+  const xsAt = (clause: string, frame: number) => {
+    const src = `size 320 80\nscene {\n  layer "c" {\n    ${clause}\n  }\n}`
+    const doc = parseProgramFull(src)
+    const ctx = mkCtx()
+    renderItems(ctx, doc, resolveLayerAt(doc.layers[0], frame, {}), frame, null, new Set(), { fps: 60 })
+    return ctx.glyphs.map((g) => g.x)
+  }
+
+  it('`start "<expr>"` scrolls the run along the path (glyph positions shift with the frame)', () => {
+    const clause = 'text "AB" along path "M0 0L300 0" start "frame / 600" font "x" size 20 align left line 1.2 color #fff'
+    expect(xsAt(clause, 0)).toEqual([5, 15]) // start 0 → centers 5,15
+    expect(xsAt(clause, 60)).toEqual([35, 45]) // start = 60/600 = 0.1 → anchor +30 → centers 35,45
+  })
+
+  it('animated path-text is NOT render-static; a plain path-text IS', () => {
+    const anim = parseProgramFull('size 100 50\nscene {\n  layer "c" { text "x" along path "M0 0L99 0" start "frame/100" font "s" size 10 align left line 1.2 color #fff }\n}')
+    expect(isRenderStatic(anim as never, anim.layers[0].items[0])).toBe(false)
+    const still = parseProgramFull('size 100 50\nscene {\n  layer "c" { text "x" along path "M0 0L99 0" font "s" size 10 align left line 1.2 color #fff }\n}')
+    expect(isRenderStatic(still as never, still.layers[0].items[0])).toBe(true)
+  })
+})

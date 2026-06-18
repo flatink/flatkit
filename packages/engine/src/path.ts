@@ -228,6 +228,73 @@ export function projectToPath(path: Path, p: Point, tol = 0.1): number {
   return bestLen / total
 }
 
+// ── Arc-length sampler + text-on-path baking ─────────────────────────────────
+
+/**
+ * Build a reusable arc-length sampler over the FIRST non-empty subpath: flatten once, then answer many
+ * `at(s)` queries where `s` = arc length in PX (clamped to [0, length]). Returns point + unit tangent.
+ * Unlike `samplePathAt` (re-flattens per call, takes a 0..1 `t`), this amortizes the flatten — built for
+ * laying many glyphs along one curve (text-on-path). `length` = total arc length (0 ⇒ degenerate).
+ */
+export function makePathSampler(path: Path, tol = 0.25): { length: number; closed: boolean; at(s: number): { point: Point; tangent: Point } } {
+  const sub = path.subpaths.find((s) => s.segments.length > 0)
+  const closed = sub?.closed ?? false // from the SAME subpath the polyline traverses (not subpaths[0])
+  // Drop consecutive coincident points so no segment is zero-length → every tangent is well-defined.
+  const raw = guidePolyline(path, tol)
+  const pts: Point[] = []
+  for (const p of raw) { const last = pts[pts.length - 1]; if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 1e-9) pts.push(p) }
+  const n = pts.length
+  if (n < 2) {
+    const p = n === 1 ? { ...pts[0] } : { x: 0, y: 0 }
+    return { length: 0, closed, at: () => ({ point: { ...p }, tangent: { x: 1, y: 0 } }) }
+  }
+  const cum = new Array<number>(n)
+  cum[0] = 0
+  for (let i = 1; i < n; i++) cum[i] = cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y)
+  const length = cum[n - 1]
+  const at = (s: number) => {
+    if (length === 0) return { point: { ...pts[0] }, tangent: { x: 1, y: 0 } }
+    const target = s < 0 ? 0 : s > length ? length : s
+    // Binary search the segment [i, i+1] with cum[i] <= target <= cum[i+1].
+    let lo = 0, hi = n - 2
+    while (lo < hi) { const m = (lo + hi) >> 1; if (cum[m + 1] < target) lo = m + 1; else hi = m }
+    const a = pts[lo], b = pts[lo + 1]
+    const segLen = cum[lo + 1] - cum[lo]
+    const u = segLen > 0 ? (target - cum[lo]) / segLen : 0
+    const dx = b.x - a.x, dy = b.y - a.y
+    const len = Math.hypot(dx, dy) || 1 // (coincident points already dropped → len > 0)
+    return { point: { x: a.x + dx * u, y: a.y + dy * u }, tangent: { x: dx / len, y: dy / len } }
+  }
+  return { length, closed, at }
+}
+
+/**
+ * Bake a source path for TEXT-ON-PATH (RFC §6). For a CLOSED source, re-emit it as a closed polyline
+ * re-anchored at the TOPMOST point (min-y, leftmost on tie) and oriented so the forward tangent there
+ * points +x — so a label arches UPRIGHT, left→right over the top by default. OPEN sources are returned
+ * unchanged (the author owns orientation). The result is sampled by arc length, never printed.
+ */
+export function normalizeClosedForText(path: Path, tol = 0.25): Path {
+  const sub = path.subpaths.find((s) => s.segments.length > 0)
+  if (!sub || !sub.closed) return path
+  let pts = flattenSubpath(sub, tol)
+  // Drop a duplicated closing point so each vertex is unique around the loop.
+  if (pts.length > 2 && Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < 1e-6) pts = pts.slice(0, -1)
+  const n = pts.length
+  if (n < 3) return path
+  let top = 0
+  for (let i = 1; i < n; i++) {
+    if (pts[i].y < pts[top].y - 1e-9 || (Math.abs(pts[i].y - pts[top].y) < 1e-9 && pts[i].x < pts[top].x)) top = i
+  }
+  // Direction: forward tangent at `top` should point +x. Look a few steps ahead (robust at a smooth apex).
+  let dxF = 0
+  for (let k = 1; k <= Math.min(3, n - 1); k++) dxF += pts[(top + k) % n].x - pts[top].x
+  const dir = dxF < 0 ? -1 : 1
+  const out: Point[] = new Array(n)
+  for (let k = 0; k < n; k++) out[k] = { ...pts[(((top + dir * k) % n) + n) % n] }
+  return { subpaths: [{ closed: true, segments: out.map((p) => ({ anchor: p })) }] }
+}
+
 // ── Hybrid render: path → Bezier cubics ──────────────────────────────────────
 
 /**

@@ -21,7 +21,7 @@ import { samplePathAt, projectToPath, lerpPath, type Path } from './path'
 import { applyEasing, rotDelta, EXPR_CHANNELS, type ExprChannel } from './timeline'
 import { compileCached, evalExpr, exprScope } from './expr'
 import { isPoseable, isText } from './layers'
-import type { Point, Region, Item, Layer, Pose, Cel, ResolveOpts } from '@flatkit/types'
+import type { Point, Region, Item, Layer, Pose, Cel, ResolveOpts, TextPath } from '@flatkit/types'
 export type { Pose, Cel, ResolveOpts } from '@flatkit/types'
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
@@ -46,7 +46,7 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
     // STATIC layer: items as-is — but we still apply a container's channel expressions (a static object
     // can be animated/driven by an expression, e.g. opacity:'lit').
     const hasChannels = (it: Item) => 'expressions' in it && it.expressions && Object.keys(it.expressions).length > 0
-    if (!layer.items.some((it) => hasChannels(it) || (isText(it) && it.bind))) return layer.items
+    if (!layer.items.some((it) => hasChannels(it) || isDynamicText(it))) return layer.items
     return layer.items.map((it) => {
       let out: Item = it
       if (hasChannels(it) && isPoseable(it) && it.expressions) {
@@ -54,8 +54,7 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
         const pose = applyExprChannels(it.expressions, base, frame, opts, it.id, it.pivot)
         out = { ...it, transform: pose.transform, opacity: pose.opacity, ...(pose.tint ? { tint: pose.tint } : {}), ...(pose.filters ? { filters: pose.filters } : {}) } as Item
       }
-      if (isText(out) && out.bind) out = { ...out, content: resolveBoundText(out, frame, opts) }
-      return out
+      return resolveDynamicText(out, frame, opts)
     })
   }
   const cs = cels.length > 1 ? [...cels].sort((a, b) => a.frame - b.frame) : cels
@@ -91,7 +90,8 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
     if (!body || !isPoseable(body)) continue
     let pose = opts.guide ? guidedPose(p, A, B, frame, body, opts.guide, opts.orient) : poseAt(p, A, B, frame, body)
     if ('expressions' in body && body.expressions) pose = applyExprChannels(body.expressions, pose, frame, opts, body.id, body.pivot)
-    out.push({ ...body, transform: pose.transform, opacity: pose.opacity, ...(pose.tint ? { tint: pose.tint } : { tint: undefined }), ...(pose.filters ? { filters: pose.filters } : { filters: undefined }) } as Item)
+    const item = { ...body, transform: pose.transform, opacity: pose.opacity, ...(pose.tint ? { tint: pose.tint } : { tint: undefined }), ...(pose.filters ? { filters: pose.filters } : { filters: undefined }) } as Item
+    out.push(resolveDynamicText(item, frame, opts))
   }
   return out
 }
@@ -268,6 +268,38 @@ function resolveBoundText(t: { content: string; bind?: string; decimals?: number
   const v = evalExpr(compiled.node, exprScope(opts.ctx, time, frame), 0)
   const s = fmtNum(v, t.decimals)
   return t.content.includes('{}') ? t.content.replaceAll('{}', s) : s
+}
+
+/** True if a text leaf needs per-frame re-resolution: `bind` content, or an animated path channel
+ *  (`start "<expr>"` / `spacing "<expr>"`). */
+const isDynamicText = (it: Item): boolean => isText(it) && (!!it.bind || !!it.textPath && (!!it.textPath.startExpr || !!it.textPath.spacingExpr))
+
+/** Resolve a text leaf's per-frame dynamic content in one place: `bind` → `content`, and animated textPath
+ *  channels → numeric `start`/`spacing`. No-op for non-text or static text. Applied in BOTH branches of
+ *  `resolveLayerAt` so dynamic text behaves the same in a static and an animated (cel) layer. */
+function resolveDynamicText(it: Item, frame: number, opts: ResolveOpts): Item {
+  if (!isText(it)) return it
+  let out = it
+  if (out.bind) out = { ...out, content: resolveBoundText(out, frame, opts) }
+  if (out.textPath && (out.textPath.startExpr || out.textPath.spacingExpr)) out = { ...out, textPath: resolveTextPathChannels(out.textPath, frame, opts) }
+  return out
+}
+
+/** Per-frame resolution of a textPath's animated channels (marquee `start`, eased `spacing`): evaluates the
+ *  expressions → a textPath with numeric `start`/`spacing` for this frame (the renderer stays purely numeric). */
+function resolveTextPathChannels(tp: TextPath, frame: number, opts: ResolveOpts): TextPath {
+  const fps = opts.fps ?? 24
+  const time = fps > 0 ? frame / fps : frame
+  const ev = (expr: string, fallback: number): number => {
+    const c = compileCached(expr)
+    if (!c.ok) return fallback // invalid expression → keep the static value (the UI reports the error)
+    const v = evalExpr(c.node, exprScope(opts.ctx, time, frame), fallback)
+    return Number.isFinite(v) ? v : fallback
+  }
+  let out = tp
+  if (tp.startExpr) out = { ...out, start: ev(tp.startExpr, tp.start ?? 0) }
+  if (tp.spacingExpr) out = { ...out, spacing: ev(tp.spacingExpr, tp.spacing ?? 0) }
+  return out
 }
 
 // ── Container expressions (take priority over tween/HOLD) ────────────────────

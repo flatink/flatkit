@@ -14,6 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Asset, Doc, Folder, Group, Image, Instance, Item, Layer, ParamDef, Region, StateAnchor, StateMachine, SymbolDef, Text } from '@flatkit/types'
 import type { Path } from './path'
+import { normalizeClosedForText } from './path'
 import type { Paint, Stop, Tint } from './paint'
 import type { Filter } from './filters'
 import type { Transform } from './transform'
@@ -120,6 +121,7 @@ type Ctx = { symName: (id: string) => string; inlineExpr: boolean; folderPath?: 
 
 function printRegion(r: Region, d: string): string {
   let s = `path "${d}"`
+  if (r.name) s += ` as ${q(r.name)}` // stable name (addressable, e.g. `text … along "<id>"`)
   if (r.noFill) s += ' nofill'
   else if (r.fillParam) s += ` fill ${r.fillParam}` // fill bound to a symbol color param
   else s += ` fill ${printPaint(r.paint ?? { type: 'solid', color: r.color })}`
@@ -143,7 +145,21 @@ const TEXT_ID = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/
 function printText(t: Text, withExpr: boolean): string {
   // `as` printed only if the author set the id explicitly (flag set at parse) — no guessing about the form.
   const asId = t.idExplicit ? ` as ${q(t.id)}` : ''
-  let s = `text ${q(t.content)}${asId}${printTransform(t.transform)} font ${q(t.font)} size ${n(t.size)} align ${t.align} line ${n(t.lineHeight)} color ${t.color}`
+  // `along "<ref>"` / `along path "<d>"` replaces the `at`/transform clause (text-on-path). start/side/spacing
+  // printed only when non-default (`start 0`, `side over`, `spacing 0` are implicit).
+  const tp = t.textPath
+  let place: string
+  if (tp?.ref) place = ` along ${q(tp.ref)}`
+  else if (tp) place = ` along path ${q(pathToData(tp.path))}`
+  else place = printTransform(t.transform)
+  if (tp) {
+    if (tp.startExpr) place += ` start ${q(tp.startExpr)}` // animated (marquee); else literal offset
+    else if (tp.start) place += ` start ${n(tp.start)}`
+    if (tp.side === 'under') place += ' side under'
+    if (tp.spacingExpr) place += ` spacing ${q(tp.spacingExpr)}` // animated (eased tracking); else literal px
+    else if (tp.spacing) place += ` spacing ${n(tp.spacing)}`
+  }
+  let s = `text ${q(t.content)}${asId}${place} font ${q(t.font)} size ${n(t.size)} align ${t.align} line ${n(t.lineHeight)} color ${t.color}`
   if (t.stroke) {
     s += ` stroke ${printPaint(t.stroke.paint)} ${n(t.stroke.width)}`
     if (t.stroke.cap) s += ` cap ${t.stroke.cap}`
@@ -153,8 +169,8 @@ function printText(t: Text, withExpr: boolean): string {
   }
   if (t.weight && t.weight >= 700) s += ' bold'
   if (t.italic) s += ' italic'
-  s += ` box ${n(t.box.w)} ${n(t.box.h)}`
-  if (t.wrap) s += ' wrap'
+  // `box`/`wrap` are ignored for a path-laid run → not printed (keeps the round-trip clean).
+  if (!tp) { s += ` box ${n(t.box.w)} ${n(t.box.h)}`; if (t.wrap) s += ' wrap' }
   if (t.bind) s += ` bind ${q(t.bind)}`
   if (t.decimals != null) s += ` decimals ${n(t.decimals)}`
   return s + printPoseAttrs(t, withExpr)
@@ -187,6 +203,9 @@ function printItem(it: Item, depth: number, ctx: Ctx): string | null {
 }
 
 // ── Animation: easing · pose · substance · keyframe (cel) · timeline. ─────────
+// NB: a Region's `as "<id>"` name is a SEPARATE namespace (resolved by text-on-path's own walk, cf.
+// resolveTextPaths) — deliberately NOT surfaced here, so named shapes don't shadow same-named behavior
+// objects (groups/text) in itemsByName / object-block / `@name` pose resolution.
 const itemName = (it: Item): string => (isGroup(it) || isInstance(it) || isText(it) || isImage(it) ? it.name : '')
 const printEasing = (e: Easing): string => (typeof e === 'string' ? e : `cubic(${e.cubic.map(n).join(',')})`)
 
@@ -321,6 +340,7 @@ export function parseProgram(src: string): Program {
   const parser = new FlatParser(tokenize(expandSceneRepeats(src)))
   const prog = parser.program()
   resolveAligns(prog, parser.pendingAligns) // `align …` anchors: bbox computable once the scene is built
+  resolveTextPaths(prog, parser.pendingTextPaths) // `along "<id>"`: bake the shape outline into textPath
   return prog
 }
 
@@ -610,6 +630,27 @@ function resolveAligns(prog: Program, aligns: PendingAlign[]): void {
   }
   const missing = [...new Set(aligns.filter((_, i) => !done.has(i)).map((a) => a.target))]
   if (missing.length) throw new Error(`align: item(s) not found: ${missing.join(', ')}`)
+}
+
+/** Resolves `text … along "<ref>"`: bakes the named shape's outline into `text.textPath.path` (closed
+ *  sources are top-anchored, cf. normalizeClosedForText). Throws if a `ref` names no shape. */
+function resolveTextPaths(prog: Program, pending: PendingTextPath[]): void {
+  if (!pending.length) return
+  const shapes = new Map<string, Path>() // shape name → outline (regions only — text follows a drawn shape)
+  const walk = (ls: Layer[]) => {
+    for (const l of ls) for (const it of l.items) {
+      if (isGroup(it)) walk(it.layers)
+      else if (!isText(it) && !isImage(it) && !isInstance(it)) { const r = it as Region; if (r.name && !shapes.has(r.name)) shapes.set(r.name, r.path) }
+    }
+  }
+  walk(prog.layers)
+  const missing: string[] = []
+  for (const p of pending) {
+    const src = shapes.get(p.ref)
+    if (!src) { missing.push(p.ref); continue }
+    p.text.textPath = { ref: p.ref, path: normalizeClosedForText(src), ...(p.start ? { start: p.start } : {}), ...(p.side ? { side: p.side } : {}), ...(p.spacing ? { spacing: p.spacing } : {}), ...(p.startExpr ? { startExpr: p.startExpr } : {}), ...(p.spacingExpr ? { spacingExpr: p.spacingExpr } : {}) }
+  }
+  if (missing.length) throw new Error(`along: shape not found: ${[...new Set(missing)].join(', ')}`)
 }
 
 // ── `match`: declarative matching sugar (unfolded into `object` blocks) ───────
@@ -917,6 +958,8 @@ type ParsedAttrs = { opacity?: number; pivot?: { x: number; y: number }; tint?: 
 /** An `align <point> of "target" [offset]` pending: `tf` is the SHARED ref with the item, mutated
  *  in place by resolveAligns once the scene is parsed (the bbox of `target` is then computable). */
 type PendingAlign = { tf: Transform; point: string; target: string; dx: number; dy: number; name?: string }
+// `text … along "<ref>"`: the shape outline is resolved + baked into `text.textPath` once the scene is parsed.
+type PendingTextPath = { text: Text; ref: string; start?: number; side?: 'over' | 'under'; spacing?: number; startExpr?: string; spacingExpr?: string }
 const ANCHOR_POINTS: ReadonlySet<string> = new Set(['center', 'top', 'bottom', 'left', 'right', 'topleft', 'topright', 'bottomleft', 'bottomright'])
 
 /**
@@ -947,6 +990,8 @@ class FlatParser {
   private ch = 600
   private readonly aligns: PendingAlign[] = []
   get pendingAligns(): PendingAlign[] { return this.aligns }
+  private readonly textPaths: PendingTextPath[] = []
+  get pendingTextPaths(): PendingTextPath[] { return this.textPaths }
   constructor(private readonly t: Tok[]) {}
   private peek() { return this.t[this.p] }
   private next() { return this.t[this.p++] }
@@ -1219,6 +1264,13 @@ class FlatParser {
   }
   private region(): Region {
     const path = this.shapePath()
+    // optional `as "<id>"`: a STABLE name making the shape addressable (e.g. `text … along "<id>"`).
+    let name: string | undefined
+    if (this.is('as')) {
+      this.next()
+      name = this.str()
+      if (!TEXT_ID.test(name)) throw new Error(`"as" invalid id: "${name}" (letters, digits, "_", "-"; starts with a letter or "_"; 64 max)`)
+    }
     let paint: Paint | undefined
     let noFill = false
     let stroke: Region['stroke']
@@ -1258,6 +1310,7 @@ class FlatParser {
       else break
     }
     const r: Region = { id: uid('r'), color, path }
+    if (name) r.name = name
     if (paint && paint.type !== 'solid') r.paint = paint
     if (fillParam) r.fillParam = fillParam
     if (strokeParam) r.strokeParam = strokeParam
@@ -1319,8 +1372,18 @@ class FlatParser {
     let weight: number | undefined, italic = false, box = { w: 0, h: 0 }
     let wrap = false, bind: string | undefined, decimals: number | undefined
     let stroke: Text['stroke']
+    let alongRef: string | undefined, alongInline: string | undefined, startFrac: number | undefined // text-on-path (RFC)
+    let side: 'over' | 'under' | undefined, spacing: number | undefined
+    let startExpr: string | undefined, spacingExpr: string | undefined // animated channels (Phase 3): `start "<expr>"` etc.
     for (;;) {
-      if (this.is('font')) { this.next(); font = this.str() }
+      // `along "<id>"` follows a NAMED shape's outline (baked post-parse); `along path "<d>"` follows inline
+      // SVG data (baked literally, here). `side`/`spacing` tune the run; a quoted `start`/`spacing` is an
+      // animated expression (marquee / eased tracking), a bare number is a literal.
+      if (this.is('along')) { this.next(); if (this.is('path')) { this.next(); alongInline = this.str() } else alongRef = this.str() }
+      else if (this.is('start')) { this.next(); if (this.peek()?.k === 'str') startExpr = this.str(); else startFrac = this.num() }
+      else if (this.is('side')) { this.next(); const v = this.next().v; if (v !== 'over' && v !== 'under') throw new Error(`text: "side" expects over|under, got "${v}"`); side = v }
+      else if (this.is('spacing')) { this.next(); if (this.peek()?.k === 'str') spacingExpr = this.str(); else spacing = this.num() }
+      else if (this.is('font')) { this.next(); font = this.str() }
       else if (this.is('size')) { this.next(); size = this.num() }
       else if (this.is('align')) { this.next(); align = this.str() as Text['align'] }
       else if (this.is('line')) { this.next(); lineHeight = this.num() }
@@ -1347,7 +1410,13 @@ class FlatParser {
       else break
     }
     const a = this.poseAttrs()
-    return { id: id ?? uid('t'), kind: 'text', name: content || 'Text', ...(id !== undefined ? { idExplicit: true } : {}), transform, content, font, size, align, lineHeight, color, ...(stroke ? { stroke } : {}), ...(weight ? { weight } : {}), ...(italic ? { italic } : {}), box, ...(wrap ? { wrap: true } : {}), ...(bind ? { bind } : {}), ...(decimals != null ? { decimals } : {}), ...leafAttrs(a), ...exprAttr(a) }
+    const t: Text = { id: id ?? uid('t'), kind: 'text', name: content || 'Text', ...(id !== undefined ? { idExplicit: true } : {}), transform, content, font, size, align, lineHeight, color, ...(stroke ? { stroke } : {}), ...(weight ? { weight } : {}), ...(italic ? { italic } : {}), box, ...(wrap ? { wrap: true } : {}), ...(bind ? { bind } : {}), ...(decimals != null ? { decimals } : {}), ...leafAttrs(a), ...exprAttr(a) }
+    // text-on-path: inline `along path "<d>"` is baked here (literal — author owns orientation); a named
+    // `along "<id>"` defers to resolveTextPaths (forward refs allowed). `side over`/`spacing 0` = defaults → dropped.
+    const tpAttrs = { ...(startFrac != null ? { start: startFrac } : {}), ...(side === 'under' ? { side } : {}), ...(spacing ? { spacing } : {}), ...(startExpr ? { startExpr } : {}), ...(spacingExpr ? { spacingExpr } : {}) }
+    if (alongInline !== undefined) t.textPath = { path: parsePathData(alongInline), ...tpAttrs }
+    else if (alongRef !== undefined) this.textPaths.push({ text: t, ref: alongRef, ...tpAttrs })
+    return t
   }
   private image(): Image {
     this.eat('image')

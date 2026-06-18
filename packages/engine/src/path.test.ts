@@ -12,8 +12,11 @@ import {
   projectToPath,
   resampleSubpath,
   lerpPath,
+  makePathSampler,
+  normalizeClosedForText,
   type Path,
 } from './path'
+import { circlePath, parsePathData } from './svgPath'
 
 const square = [
   { x: 0, y: 0 },
@@ -203,5 +206,68 @@ describe('resampleSubpath / lerpPath (morph)', () => {
     const b = mkSquare(100, 0, 10) // center (105,5)
     const m = pathBBox(lerpPath(a, b, 0.5))!
     expect((m.minX + m.maxX) / 2).toBeCloseTo(55, 0) // middle of 5 and 105
+  })
+})
+
+describe('makePathSampler (text-on-path arc-length sampler)', () => {
+  it('horizontal line: length, endpoints, midpoint, tangent', () => {
+    const s = makePathSampler(parsePathData('M0 0L100 0'))
+    expect(s.length).toBeCloseTo(100, 5)
+    expect(s.at(0).point).toMatchObject({ x: expect.closeTo(0, 5), y: expect.closeTo(0, 5) })
+    expect(s.at(100).point.x).toBeCloseTo(100, 5)
+    expect(s.at(50).point.x).toBeCloseTo(50, 5)
+    expect(s.at(30).tangent).toMatchObject({ x: expect.closeTo(1, 5), y: expect.closeTo(0, 5) })
+  })
+
+  it('clamps arc length to [0, length]', () => {
+    const s = makePathSampler(parsePathData('M0 0L100 0'))
+    expect(s.at(-20).point.x).toBeCloseTo(0, 5)
+    expect(s.at(999).point.x).toBeCloseTo(100, 5)
+  })
+
+  it('L-shaped polyline: samples the second segment + turns the tangent', () => {
+    const s = makePathSampler(parsePathData('M0 0L100 0L100 100')) // 90° corner, length 200
+    expect(s.length).toBeCloseTo(200, 5)
+    const half = s.at(150) // 50px up the vertical leg
+    expect(half.point).toMatchObject({ x: expect.closeTo(100, 5), y: expect.closeTo(50, 5) })
+    expect(half.tangent).toMatchObject({ x: expect.closeTo(0, 5), y: expect.closeTo(1, 5) })
+  })
+
+  it('degenerate (empty) path → zero length, safe fallback', () => {
+    const s = makePathSampler({ subpaths: [] })
+    expect(s.length).toBe(0)
+    expect(s.at(10)).toEqual({ point: { x: 0, y: 0 }, tangent: { x: 1, y: 0 } })
+  })
+
+  it('reports `closed` from the traversed subpath (not subpaths[0])', () => {
+    expect(makePathSampler(circlePath(100, 100, 50)).closed).toBe(true)
+    expect(makePathSampler(parsePathData('M0 0L100 0')).closed).toBe(false)
+    // A leading EMPTY subpath must not flip the reading: closed comes from the first non-empty subpath.
+    const withEmpty: Path = { subpaths: [{ closed: false, segments: [] }, ...circlePath(100, 100, 50).subpaths] }
+    expect(makePathSampler(withEmpty).closed).toBe(true)
+  })
+
+  it('coincident polyline points never yield a zero (NaN-prone) tangent', () => {
+    // Duplicate the start point — the dedup keeps every tangent well-defined.
+    const dup: Path = { subpaths: [{ closed: false, segments: [{ anchor: { x: 0, y: 0 } }, { anchor: { x: 0, y: 0 } }, { anchor: { x: 100, y: 0 } }] }] }
+    const tan = makePathSampler(dup).at(0).tangent
+    expect(Math.hypot(tan.x, tan.y)).toBeCloseTo(1, 5) // unit tangent, not {0,0}
+  })
+})
+
+describe('normalizeClosedForText (top-anchored, tangent +x for closed sources)', () => {
+  it('circle: re-anchors at the topmost point, forward tangent points +x', () => {
+    const out = normalizeClosedForText(circlePath(100, 100, 50))
+    expect(out.subpaths[0].closed).toBe(true)
+    const first = out.subpaths[0].segments[0].anchor
+    expect(first.y).toBeCloseTo(50, 0) // topmost (min-y) point of the circle
+    expect(first.x).toBeCloseTo(100, 0) // centered above the circle
+    // Going forward from the top, the curve reads left→right (upright label over the top).
+    expect(makePathSampler(out).at(0).tangent.x).toBeGreaterThan(0)
+  })
+
+  it('open path is returned unchanged (author owns orientation)', () => {
+    const open = parsePathData('M0 80 C 120 0 360 0 480 80')
+    expect(normalizeClosedForText(open)).toBe(open) // same reference, no reparam
   })
 })
