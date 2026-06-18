@@ -1,5 +1,14 @@
 # @flatkit/compiler
 
+## 0.14.4
+
+### Patch Changes
+
+- Updated dependencies [[`0aca995`](https://github.com/zwykstudio/flatkit/commit/0aca99524deb94299915d6ac9cee2d0650fc2890), [`0aca995`](https://github.com/zwykstudio/flatkit/commit/0aca99524deb94299915d6ac9cee2d0650fc2890)]:
+  - @flatkit/engine@0.14.4
+  - @flatkit/player@0.14.4
+  - @flatkit/types@0.14.4
+
 ## 0.14.3
 
 ### Patch Changes
