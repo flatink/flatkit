@@ -569,7 +569,12 @@ export function renderItems(
     if (hidden?.has(it.id)) continue
     if (it.hidden) continue // hidden in the outliner
     const opacity = it.opacity ?? 1
-    if (opacity <= 0) continue
+    // Near-invisible subtree → skip its draw AND eval (for a group, this prunes its whole subtree, since
+    // children are only resolved/drawn by the recursion inside renderOneItem). Mirrors the hit predicate
+    // (`hittable`: opacity > 0.01) so draw and hit stay aligned — an alpha≈0 item is already click-through,
+    // now it's free to render too. Makes the corpus gating idiom `opacity = phase==X ? 1 : 0` (even when
+    // SMOOTHED toward ~0, not exactly 0) cost nothing for off-phase content.
+    if (opacity <= 0.01) continue
     // Blend mode (add/screen = additive light, multiply = shadow). Saved/restored around the item.
     const blend = 'blend' in it ? it.blend : undefined
     const op = blend === 'add' ? 'lighter' : blend === 'screen' ? 'screen' : blend === 'multiply' ? 'multiply' : null

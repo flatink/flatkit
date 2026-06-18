@@ -89,6 +89,11 @@
 - **Render order**: in an animated layer the static **matter draws BEHIND the posed containers**, and
   declaration order between a bare `path` and an animated `group` is NOT preserved. To put a static
   shape in front of an animation, give it its own **layer above** (or wrap it in a group).
+- **Gating a subtree by opacity is FREE**: a group whose resolved `opacity` is `<= 0.01` (e.g. the
+  off-phase branch of `opacity = phase == X ? 1 : 0`, even when smoothed toward ~0) is **pruned** — its
+  whole subtree is skipped for both draw AND expression eval, exactly like the hit-test already treats it
+  as click-through. So `opacity = phase==X ? 1 : 0` on the phase groups is the idiomatic, performant way to
+  show/hide whole acts; you don't need `visible`/`hidden` (which aren't animatable anyway).
 - **Preview without clipping**: `flatc --preview` defaults to `--bbox all` (union over every frame, so
   drifting/rotating/growing motion fits). `--bbox frame0` is the old frame-0 measure; `--pad N` adds a
   margin.

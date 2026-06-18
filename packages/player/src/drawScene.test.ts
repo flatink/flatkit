@@ -120,6 +120,40 @@ describe('drawScene -- text stroke (outline) rendering', () => {
   })
 })
 
+describe('drawScene -- near-invisible subtree is pruned (opacity <= 0.01, aligned with hit)', () => {
+  const realPath2D = (globalThis as { Path2D?: unknown }).Path2D
+  beforeEach(() => { (globalThis as { Path2D?: unknown }).Path2D = class { addPath() {} rect() {} moveTo() {} lineTo() {} bezierCurveTo() {} quadraticCurveTo() {} closePath() {} arc() {} ellipse() {} } })
+  afterEach(() => { (globalThis as { Path2D?: unknown }).Path2D = realPath2D })
+
+  // Counts fills (each region/text paint). A group whose resolved opacity is the off-phase value drives it.
+  const paintsAt = (opacityExpr: string): number => {
+    let paints = 0
+    const ctx = new Proxy({}, {
+      get(_t, k: string) {
+        if (k === 'canvas') return { width: 100, height: 100 }
+        if (k === 'measureText') return () => ({ width: 10 })
+        if (k === 'getTransform') return () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })
+        if (k === 'createLinearGradient' || k === 'createRadialGradient' || k === 'createPattern') return () => ({ addColorStop() {} })
+        if (k === 'fill' || k === 'fillRect' || k === 'fillText') return () => { paints++ }
+        return () => {}
+      },
+      set: () => true,
+    }) as unknown as CanvasRenderingContext2D
+    const doc = parseProgramFull(`size 100 100\nscene {\n  layer "L" {\n    group "G" at 0,0 {\n      layer "c" { circle 50 50 30 fill #ff0000 }\n    }\n  }\n}\nobject "G" {\n  opacity = ${opacityExpr}\n}`)
+    renderItems(ctx, doc, resolveLayerAt(doc.layers[0], 0, {}), 0, null, new Set(), { fps: 60 })
+    return paints
+  }
+
+  it('a group at opacity > 0.01 paints its child; at <= 0.01 it is pruned (subtree skipped)', () => {
+    expect(paintsAt('1')).toBe(1)
+    expect(paintsAt('0.5')).toBe(1)
+    expect(paintsAt('0.02')).toBe(1)
+    expect(paintsAt('0.01')).toBe(0) // boundary: mirrors hit's `> 0.01`
+    expect(paintsAt('0.005')).toBe(0) // SMOOTHED-near-0 gating (the corpus case) → free
+    expect(paintsAt('0')).toBe(0)
+  })
+})
+
 describe('drawScene -- filtered composite cache (static scenery perf)', () => {
   // Fake 2D context: records the essentials, getTransform returns a fixed matrix.
   const mkCtx = () => ({
