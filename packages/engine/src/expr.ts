@@ -227,21 +227,28 @@ export function compileCached(src: string): Compiled {
 // ── Evaluation ───────────────────────────────────────────────────────────────
 const num = (b: boolean) => (b ? 1 : 0)
 
+/** Resolve a bare name to its value. MATH (sin/PI/…) takes priority over variables (a `sin` variable never
+ *  shadows the function), then the runtime context. OWN properties only on both — never reach inherited
+ *  members (constructor, valueOf, __proto__…). MATH_CTX is consulted by reference (no per-eval copy). */
+const resolveName = (ctx: ExprContext, name: string): unknown =>
+  Object.hasOwn(MATH_CTX, name) ? MATH_CTX[name] : Object.hasOwn(ctx, name) ? ctx[name] : undefined
+
 function evalNode(node: Node, ctx: ExprContext): number {
   switch (node.t) {
     case 'num':
       return node.v
     case 'id': {
-      // Own properties only: never reach inherited members (constructor, valueOf, __proto__…).
-      const v = Object.hasOwn(ctx, node.name) ? ctx[node.name] : undefined
+      const v = resolveName(ctx, node.name)
       return typeof v === 'number' ? v : Number.NaN
     }
     case 'member': {
-      const o = Object.hasOwn(ctx, node.obj) ? ctx[node.obj] : undefined
-      return o && typeof o === 'object' && !Array.isArray(o) && Object.hasOwn(o, node.prop) && typeof o[node.prop] === 'number' ? o[node.prop] : Number.NaN
+      const o = resolveName(ctx, node.obj)
+      if (!o || typeof o !== 'object' || Array.isArray(o) || !Object.hasOwn(o, node.prop)) return Number.NaN
+      const v = (o as Record<string, unknown>)[node.prop]
+      return typeof v === 'number' ? v : Number.NaN
     }
     case 'index': {
-      const a = Object.hasOwn(ctx, node.name) ? ctx[node.name] : undefined
+      const a = resolveName(ctx, node.name)
       if (!Array.isArray(a)) return Number.NaN
       const v = a[Math.round(evalNode(node.idx, ctx))]
       return typeof v === 'number' ? v : Number.NaN
@@ -253,8 +260,7 @@ function evalNode(node: Node, ctx: ExprContext): number {
     case 'cond':
       return evalNode(node.c, ctx) === 0 ? evalNode(node.b, ctx) : evalNode(node.a, ctx)
     case 'call': {
-      // Own properties only: never call an inherited function (constructor, hasOwnProperty…).
-      const fn = Object.hasOwn(ctx, node.name) ? ctx[node.name] : undefined
+      const fn = resolveName(ctx, node.name) // MATH first, then ctx; own-props only (no inherited functions)
       if (typeof fn !== 'function') return Number.NaN
       return fn(...node.args.map((a) => evalNode(a, ctx)))
     }
@@ -311,7 +317,10 @@ export function evalExpr(node: Node, ctx: ExprContext, fallback = 0): number {
  * accumulate, so the two coincide); only a live player threads the real monotone value.
  */
 export function exprScope(extra: ExprContext | undefined, time: number, frame: number, value?: number, clock?: number): ExprContext {
-  const ctx: ExprContext = { ...extra, ...MATH_CTX, time, frame }
+  // MATH_CTX is NOT spread in here (it has 30+ entries — copying them on every eval, hundreds of times per
+  // frame, dominated the eval cost). `evalNode` instead falls back to MATH_CTX by reference, so math names
+  // still take priority over variables (resolveName checks MATH_CTX first) at zero per-eval allocation.
+  const ctx: ExprContext = { ...extra, time, frame }
   // `clock` rides INSIDE `extra` when the player provides it (engine resolvers don't take it as a param):
   // explicit arg wins, then a clock carried in `extra`, else it coincides with `time` (static eval).
   ctx.clock = clock ?? (typeof extra?.clock === 'number' ? extra.clock : time)

@@ -95,11 +95,14 @@ describe('expr — compile errors', () => {
 describe('exprScope — context order (sandbox)', () => {
   it('math & reserved names take priority over extra; value/time/frame set', () => {
     const ctx = exprScope({ sin: 999, time: 999, x: 5 } as ExprContext, 2, 10, 42)
-    expect(typeof ctx.sin).toBe('function') // the math function wins over a "sin" variable
     expect(ctx.time).toBe(2)
     expect(ctx.frame).toBe(10)
     expect(ctx.value).toBe(42)
     expect(ctx.x).toBe(5) // variable kept
+    // `sin` resolves to the MATH function, not the same-named variable — verified through EVALUATION
+    // (exprScope no longer copies MATH_CTX into the context; evalNode falls back to it, math-first).
+    expect(run('sin(0)', { sin: 999 } as ExprContext)).toBe(0) // Math.sin(0), not 999
+    expect(run('sin(0)', ctx)).toBe(0) // same through a real exprScope ctx (its `sin` var is shadowed by math)
   })
   it('value absent → no value key', () => {
     expect('value' in exprScope({}, 0, 0)).toBe(false)

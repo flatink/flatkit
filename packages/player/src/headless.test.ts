@@ -130,6 +130,23 @@ describe('headless -- playHeadless', () => {
     expect(res.vars).toMatchObject({ a: 5, b: 10, c: 15, gx: 37 })
   })
 
+  it('ctx cache write-through stays correct through a loop + setIndex + array read-back', () => {
+    // `grid[i] = …` (setIndex, array mutated in place) inside a `repeat` (loop var via setVar), then the
+    // array is READ BACK the same frame. A stale write-through would desync the loop var or the array.
+    const doc = parseProgramFull([
+      'size 100 100', 'var grid = [0, 0, 0]', 'var sum = 0', 'var last = 0',
+      'scene { layer "L" { circle 50 50 5 fill #ff0000 } }',
+      'every frame {',
+      '  repeat i from 0 to 2 {', '    grid[i] = i * 10', '    last = i', '  }',
+      '  sum = grid[0] + grid[1] + grid[2]',
+      '}',
+    ].join('\n')) as unknown as Doc
+    const res = playHeadless(doc, [{ type: 'wait', frames: 3 }])
+    expect(res.vars.grid).toEqual([0, 10, 20]) // setIndex visible
+    expect(res.vars.sum).toBe(30) // array read back in the same frame sees the writes
+    expect(res.vars.last).toBe(2) // loop var (setVar write-through) tracked
+  })
+
   it('the `set` gesture drives a variable (unlocks an enabled drag)', () => {
     const pc = { ...piece(), expressions: { x: 'px', y: 'py' } as Record<string, string> }
     const doc: Doc = {

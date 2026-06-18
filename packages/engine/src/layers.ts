@@ -107,6 +107,25 @@ export function maskMap(layers: Layer[]): Map<string, Layer> {
   return m
 }
 
+/** The three layer-structure lookups (hidden ids / mask parents / guide parents) computed in ONE pass —
+ *  a single `byId` map and a single loop instead of three. The render and hit traversals need all three
+ *  every frame, so this avoids rebuilding the same map (and re-walking the same layers) twice. */
+export function layerStructure(layers: Layer[]): { hidden: Set<string>; masks: Map<string, Layer>; guides: Map<string, Layer> } {
+  const byId = new Map(layers.map((l) => [l.id, l]))
+  const hidden = new Set<string>()
+  const masks = new Map<string, Layer>()
+  const guides = new Map<string, Layer>()
+  for (const l of layers) {
+    const p = l.parent ? byId.get(l.parent) : undefined
+    if (p && p.isMask && !p.maskOff) masks.set(l.id, p)
+    if (p && p.isGuide) guides.set(l.id, p)
+    for (let cur: Layer | undefined = l; cur; cur = cur.parent ? byId.get(cur.parent) : undefined) {
+      if (!cur.visible) { hidden.add(l.id); break }
+    }
+  }
+  return { hidden, masks, guides }
+}
+
 /** Ids of layers hidden by themselves OR by a collapsed/hidden ancestor folder (visibility). */
 export function hiddenLayerIds(layers: Layer[]): Set<string> {
   const byId = new Map(layers.map((l) => [l.id, l]))

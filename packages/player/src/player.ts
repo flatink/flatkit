@@ -130,6 +130,7 @@ export function lerpVars(prev: Map<string, number | number[]>, cur: Map<string, 
 
 const SIM_HZ = 60
 const SIM_STEP = 1 / SIM_HZ // seconds per simulation step
+const RESERVED = new Set(['time', 'frame', 'clock', 'value']) // runtime-provided names; never shadowed by a variable
 const SIM_MAX_STEPS = 30 // "spiral of death" safeguard after a long pause (backgrounded tab)
 
 const CLICK_EVENTS: readonly ItemEvent[] = ['click']
@@ -310,7 +311,7 @@ export class FlatPlayer {
    *  The indexed form is the natural output under `each` (e.g. `drag hx[i], hy[i]` -> `hx[0]`... after unfolding). */
   private writeOut(target: string, value: number): void {
     const lb = target.indexOf('[')
-    if (lb < 0) { this.vars.set(target, value); return }
+    if (lb < 0) { this.setVarLive(target, value); return }
     const a = this.vars.get(target.slice(0, lb))
     if (!Array.isArray(a)) return
     const i = Math.round(this.evalNumber(target.slice(lb + 1, target.lastIndexOf(']'))))
@@ -537,8 +538,8 @@ export class FlatPlayer {
     pause: () => this.pause(),
     seek: (f) => this.seek(f),
     labelFrame: (name) => this.doc.timeline?.labels?.find((l) => l.name === name)?.frame,
-    setVar: (name, v) => { this.vars.set(name, v) },
-    setIndex: (name, i, v) => { const a = this.vars.get(name); if (Array.isArray(a) && i >= 0 && i < a.length) a[i] = v },
+    setVar: (name, v) => { this.setVarLive(name, v) },
+    setIndex: (name, i, v) => { const a = this.vars.get(name); if (Array.isArray(a) && i >= 0 && i < a.length) a[i] = v }, // in-place: ctx shares the array ref
     setParam: (target, param, value) => this.setParam(target, param, value),
     callProc: (name, args) => this.callProc(name, args),
     evalNumber: (src) => this.evalNumber(src),
@@ -641,16 +642,27 @@ export class FlatPlayer {
     this.ctxCache = null // function set changed → drop the cached context
   }
 
+  /** Writes a variable AND keeps the per-frame ctx cache in sync (write-through), so `exprCtx` never has to
+   *  re-copy every variable on each eval. Reserved names (time/frame/clock/value) and function names are
+   *  never overwritten in the ctx. */
+  private setVarLive(name: string, value: number | number[]): void {
+    this.vars.set(name, value)
+    if (this.ctxCache && !this.funcNames.has(name) && !RESERVED.has(name)) this.ctxCache[name] = value
+  }
+
   /** Calls a procedure `fn name(p) { ... }`: binds the params (save/restore), bounds the recursion. */
   private callProc(name: string, args: number[]): void {
     const f = this.procs.get(name)
     if (!f || this.funcDepth > 64) return
     const saved = f.params.map((p) => [p, this.vars.get(p)] as const)
-    f.params.forEach((p, i) => this.vars.set(p, args[i] ?? 0))
+    f.params.forEach((p, i) => this.setVarLive(p, args[i] ?? 0))
     this.funcDepth++
     runActions(f.body, this.host)
     this.funcDepth--
-    for (const [p, v] of saved) { if (v === undefined) this.vars.delete(p); else this.vars.set(p, v) }
+    for (const [p, v] of saved) {
+      if (v === undefined) { this.vars.delete(p); if (this.ctxCache) delete this.ctxCache[p] }
+      else this.setVarLive(p, v)
+    }
   }
 
   /** Runtime context for expressions: variables (flattened), mouse, keys, random, value functions,
@@ -661,12 +673,14 @@ export class FlatPlayer {
     // variables (intra-frame `setVar`s). The costly parts (named-channel copy, func closures) are reused.
     // `funcNames` keep priority over a same-named var (matches the build order funcs-after-vars).
     const cacheable = !interp && !this.selfChannels && !this.selfParent
-    if (cacheable && this.ctxCache && this.ctxFrame === this.frame && this.namedFrame === this.frame) {
-      for (const [k, v] of this.vars) if (!this.funcNames.has(k)) this.ctxCache[k] = v
-      return this.ctxCache
-    }
-    const ctx: ExprContext = { mouse: this.mouse, keys: this.keyProxy, random: () => Math.random(), clock: this.mono / this.fps }
-    for (const [k, v] of vars) ctx[k] = v
+    // Cache HIT: the variables are kept in sync by `setVarLive` (write-through on every setVar), so we hand
+    // back the cached ctx as-is — no per-call refresh loop (that was O(vars) on EVERY eval, hundreds/frame).
+    if (cacheable && this.ctxCache && this.ctxFrame === this.frame && this.namedFrame === this.frame) return this.ctxCache
+    // `time`/`frame`/`clock` baked in (per-frame constants) so `evalNumber` can evaluate against this ctx
+    // DIRECTLY — no `exprScope` copy per statement (object construction dominated the sim profile). They are
+    // reserved (never shadowed by a same-named variable), so the var loops skip them.
+    const ctx: ExprContext = { mouse: this.mouse, keys: this.keyProxy, random: () => Math.random(), clock: this.mono / this.fps, time: this.frame / this.fps, frame: this.frame }
+    for (const [k, v] of vars) if (!RESERVED.has(k)) ctx[k] = v
     for (const vf of this.valueFuncs) { // fn name(p) = expr -> closure (the body sees globals + math + time + params)
       ctx[vf.name] = (...args: number[]) => {
         if (this.funcDepth > 64 || !vf.comp.ok) return Number.NaN
@@ -706,7 +720,9 @@ export class FlatPlayer {
   private evalNumber(src: string): number {
     const c = compileCached(src)
     if (!c.ok) return 0
-    return evalExpr(c.node, exprScope(this.exprCtx(), this.frame / this.fps, this.frame), 0)
+    // Evaluate against the per-frame ctx DIRECTLY (it already carries time/frame/clock; math resolves via
+    // evalNode's MATH_CTX fallback) — no `exprScope` copy per call. This is the hot `every frame` path.
+    return evalExpr(c.node, this.exprCtx(), 0)
   }
 
   /**

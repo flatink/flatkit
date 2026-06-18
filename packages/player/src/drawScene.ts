@@ -15,7 +15,7 @@ import type { Doc, Group, Instance, Item, Layer, Region, SymbolDef, Text } from 
 import { regionBBox, type BBox } from '@flatkit/engine/bbox'
 import { regionPaint, type Paint, type Tint } from '@flatkit/engine/paint'
 import { cssFilterString, type Filter } from '@flatkit/engine/filters'
-import { containerLayers, getSymbol, hiddenLayerIds, isContainer, isGroup, isInstance, isText, isImage, isRegion, maskMap, guideMap } from '@flatkit/engine/layers'
+import { containerLayers, getSymbol, isContainer, isGroup, isInstance, isText, isImage, isRegion, layerStructure } from '@flatkit/engine/layers'
 import { pathToBezier, transformPath, type Path } from '@flatkit/engine/path'
 import { resolveInstanceFrame, type BaseOf } from '@flatkit/engine/timeline'
 import { stateFrame, initialStateValue } from '@flatkit/engine/states'
@@ -647,12 +647,13 @@ function renderOneItem(
         const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
         if (lb) expandRect(acc, matOf(ctx.getTransform()), lb.minX, lb.minY, lb.maxX, lb.maxY)
         paintLeaf(ctx, undefined, reg.filters, opacity, acc, scaleOf(ctx), (c) => paintRegion(c, reg, rctx.colorParams))
+      } else if (opacity < 1) {
+        // Semi-transparent: scope globalAlpha with save/restore (paintRegion sets its own fill/stroke style).
+        ctx.save(); ctx.globalAlpha *= opacity; paintRegion(ctx, reg, rctx.colorParams); ctx.restore()
       } else {
-        // HOT path (the majority of regions): no allocation (no closure).
-        ctx.save()
-        if (opacity < 1) ctx.globalAlpha *= opacity
+        // HOT path (opaque regions, the majority): no save/restore — paintRegion overwrites fill/stroke
+        // style and draws with an explicit Path2D, leaving no state to restore.
         paintRegion(ctx, reg, rctx.colorParams)
-        ctx.restore()
       }
     }
   }
@@ -765,9 +766,7 @@ export function renderLayers(
   depth = 0,
 ) {
   if (depth > MAX_NEST) return // untrusted doc: pathological nesting -> we stop
-  const hid = hiddenLayerIds(layers) // layer hidden, or under a hidden folder/mask
-  const masks = maskMap(layers) // child layer of a mask -> its mask
-  const guides = guideMap(layers) // child layer of a guide layer -> its guide
+  const { hidden: hid, masks, guides } = layerStructure(layers) // hidden ids + mask/guide parents in ONE pass
   const clipCache = new Map<string, Path2D>() // one mask clips several children -> reuse
   const maskCache = new Map<string, { items: Item[]; glyph: boolean }>() // resolved matter + clip type
   const guideCache = new Map<string, Path | null>() // one guide drives several children -> reuse

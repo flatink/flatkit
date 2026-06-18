@@ -8,7 +8,7 @@
 //  and embeddable.
 // -----------------------------------------------------------------------------
 import type { Doc, Group, Instance, Item, Layer, Path, Point, Region, SymbolDef } from '@flatkit/types'
-import { containerLayers, getSymbol, hiddenLayerIds, isContainer, isGroup, isInstance, isText, isImage, maskMap, guideMap } from '@flatkit/engine/layers'
+import { containerLayers, getSymbol, isContainer, isGroup, isInstance, isText, isImage, layerStructure } from '@flatkit/engine/layers'
 import { apply, invert, compose, IDENTITY, type Transform } from '@flatkit/engine/transform'
 import { resolveInstanceFrame, type Timeline } from '@flatkit/engine/timeline'
 import { frozenInstanceFrame } from '@flatkit/engine/params'
@@ -136,9 +136,7 @@ function hitInScope(
 ): string[] | null {
   if (depth > MAX_NEST) return null // pathological nesting -> stop
   const fps = timeline?.fps ?? 24
-  const hid = hiddenLayerIds(layers)
-  const masks = maskMap(layers)
-  const guides = guideMap(layers)
+  const { hidden: hid, masks, guides } = layerStructure(layers) // one pass for all three
   for (let li = layers.length - 1; li >= 0; li--) {
     const layer = layers[li]
     if (hid.has(layer.id) || layer.isMask) continue
@@ -198,9 +196,7 @@ function collectInScope(
 ): void {
   if (depth > MAX_NEST) return // pathological nesting -> stop
   const fps = timeline?.fps ?? 24
-  const hid = hiddenLayerIds(layers)
-  const masks = maskMap(layers)
-  const guides = guideMap(layers)
+  const { hidden: hid, masks, guides } = layerStructure(layers) // one pass for all three
   for (let li = layers.length - 1; li >= 0; li--) {
     const layer = layers[li]
     if (hid.has(layer.id) || layer.isMask) continue
@@ -256,9 +252,7 @@ export function hitContextAt(
   freeze = true, // EDITOR: sub-scopes frozen (consistent with freezeNested rendering)
 ): { item: Item; layerId: string } | null {
   const fps = timeline?.fps ?? 24
-  const hid = hiddenLayerIds(layers)
-  const masks = maskMap(layers)
-  const guides = guideMap(layers)
+  const { hidden: hid, masks, guides } = layerStructure(layers) // one pass for all three
   for (let li = layers.length - 1; li >= 0; li--) {
     const layer = layers[li]
     if (hid.has(layer.id) || layer.locked || layer.isMask) continue

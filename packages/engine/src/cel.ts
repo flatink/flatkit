@@ -85,8 +85,9 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
   const out: Item[] = matter && matter.length ? [...matter] : []
 
   // Containers present at A (poses), tweened toward B if applicable (or guided by a guide layer).
+  const byId = A.poses.length > 1 ? new Map(layer.items.map((it) => [it.id, it])) : null // O(1) lookup per pose (vs O(items) find)
   for (const p of A.poses) {
-    const body = layer.items.find((b) => b.id === p.id)
+    const body = byId ? byId.get(p.id) : layer.items.find((b) => b.id === p.id)
     if (!body || !isPoseable(body)) continue
     let pose = opts.guide ? guidedPose(p, A, B, frame, body, opts.guide, opts.orient) : poseAt(p, A, B, frame, body)
     if ('expressions' in body && body.expressions) pose = applyExprChannels(body.expressions, pose, frame, opts, body.id, body.pivot)
@@ -307,13 +308,18 @@ function applyExprChannels(
   self.grabbed = st?.grabbed ?? 0
   self.pressed = st?.pressed ?? 0
   const withSelf = { ...opts.ctx, self, ...spaceConversions(opts.parent ?? IDENTITY) }
+  // Build the eval context ONCE per item, then only swap `value` (the channel's current value) per channel —
+  // instead of an `exprScope` copy per channel. The ctx is item-local, so mutating `value` between the
+  // synchronous evals is safe; `self` is a live ref to `ch`, so later channels see earlier ones.
+  const evalCtx = exprScope(withSelf, time, frame)
   let touchedT = false
   for (const c of EXPR_CHANNELS) {
     const src = ex[c]
     if (!src) continue
     const compiled = compileCached(src)
     if (!compiled.ok) continue // invalid expression → ignored (the UI reports the error)
-    ch[c] = evalExpr(compiled.node, exprScope(withSelf, time, frame, ch[c]), ch[c])
+    evalCtx.value = ch[c]
+    ch[c] = evalExpr(compiled.node, evalCtx, ch[c])
     if (c !== 'opacity') touchedT = true
   }
   return {
