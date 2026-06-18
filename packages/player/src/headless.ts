@@ -109,7 +109,7 @@ const describeGesture = (g: Gesture): string =>
   g.type === 'drag' ? `drag ${g.source}->${g.target}` : g.type === 'tap' ? `tap ${g.target}`
     : g.type === 'connect' ? `connect ${g.source}->${g.target}` : g.type === 'scratch' ? `scratch ${g.target}`
       : g.type === 'turn' ? `turn ${g.target} ${g.angle}` : g.type === 'set' ? `set ${g.name}=${g.value}`
-        : g.type === 'wait' ? `wait ${g.frames}` : g.type === 'expect' ? 'expect' : `${g.type} (${g.x},${g.y})`
+        : g.type === 'wait' ? `wait ${g.frames}` : g.type === 'wheel' ? `wheel ${g.dy}` : g.type === 'expect' ? 'expect' : `${g.type} (${g.x},${g.y})`
 
 /** Plays `doc`, replays `gestures`, returns the collected `send`s plus the final state of the variables.
  *  `trace`: adds `steps` (sends + variable diff PER gesture) -- for inspection / the debug-player. */
@@ -140,6 +140,7 @@ export function playHeadless(doc: Doc, gestures: Gesture[], opts: { trace?: bool
   const applyGesture = (g: Gesture): void => {
     if (g.type === 'set') { pl.setVar(g.name, g.value); return }
     if (g.type === 'wait') { pl.stepSim(g.frames); return }
+    if (g.type === 'wheel') { const h = handlers['wheel']; if (h) (h as unknown as (e: { deltaY: number; deltaMode: number; preventDefault: () => void }) => void)({ deltaY: g.dy, deltaMode: 0, preventDefault: () => {} }); pl.stepSim(g.frames ?? 1); return }
     if (g.type === 'drag') { const id = g.id ?? 1, t = dropPoint(g.target); fire('down', grabPoint(g.source), id); fire('move', t, id); fire('up', t, id); return }
     if (g.type === 'tap') { const id = g.id ?? 1, c = grabPoint(g.target); fire('down', c, id); fire('up', c, id); return }
     if (g.type === 'connect') { const id = g.id ?? 1, t = grabPoint(g.target); fire('down', grabPoint(g.source), id); fire('move', t, id); fire('up', t, id); return } // pull a link wire source -> target

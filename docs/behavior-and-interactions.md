@@ -74,8 +74,9 @@ object "Needle" {
 `rotation` is in **radians** (like `sin`/`cos`/`atan2`). To author in **degrees**, bind **`rotationDeg`**
 instead — sugar for `rotation = rad(<expr>)`: `rotationDeg = 45`, `rotationDeg = handAngle`.
 
-`self.x`/`self.y`/… is the item's own current pose; `mouse.x`/`mouse.y`, `time`, `frame`, variables and
-named objects (`Target.x`) are all available — see [Expressions](expressions-and-stdlib.md).
+`self.x`/`self.y`/… is the item's own current pose; `mouse.x`/`mouse.y` (and `mouse.wheel`, the per-frame
+scroll delta), `time`, `frame`, variables and named objects (`Target.x`) are all available — see
+[Expressions](expressions-and-stdlib.md).
 
 ## Drag & drop
 
@@ -129,6 +130,18 @@ object "List" {
   }
 }
 ```
+
+**Mouse-wheel scroll** (desktop) — `mouse.wheel` is the wheel delta accumulated **this frame** (0 when the
+wheel is still), read in an `every frame` accumulator — the same idiom as the finger drag:
+
+```
+every frame {
+  off = clamp(off + mouse.wheel, 0, max)   # one notch ≈ tens of px; scale/clamp to taste
+}
+```
+
+The player consumes the wheel (keeps the page from scrolling over the canvas) **only when the scene reads
+`mouse.wheel`** — a scene that ignores it lets the page scroll normally.
 
 **Tap vs drag on the same element.** `when clicked` fires on **release**, and only if the pointer stayed
 put — a press that travels past a few px is a **drag**, not a click. So the *same* element can be both

@@ -38,6 +38,7 @@ export type Gesture =
   | { type: 'down' | 'move' | 'up' | 'cancel'; x: number; y: number; id?: number }
   | { type: 'set'; name: string; value: number } // drives a variable from the "host"
   | { type: 'wait'; frames: number } // lets the simulation run N fixed steps (60 Hz): `every frame` + playhead advance
+  | { type: 'wheel'; dy: number; frames?: number } // scrolls the wheel by `dy` px, then advances `frames` sim steps (default 1) so `every frame` integrates `mouse.wheel`
   // Assertion (CI self-check): compares the `send`s emitted SINCE the last `expect` (sequence of names)
   // and the current state of the variables; any mismatch is reported in PlayResult.expectFailures (-> exit != 0 in CLI).
   | { type: 'expect'; sends?: string[]; vars?: Record<string, number | number[]> }
@@ -131,6 +132,9 @@ export function lerpVars(prev: Map<string, number | number[]>, cur: Map<string, 
 const SIM_HZ = 60
 const SIM_STEP = 1 / SIM_HZ // seconds per simulation step
 const RESERVED = new Set(['time', 'frame', 'clock', 'value']) // runtime-provided names; never shadowed by a variable
+/** The scene references `mouse.wheel` in some expression → the player should listen to the wheel and
+ *  `preventDefault` it (consume the scroll). Else the listener stays inert and the page scrolls normally. */
+const docUsesWheel = (doc: Doc): boolean => /mouse\s*\.\s*wheel/.test(JSON.stringify(doc))
 const SIM_MAX_STEPS = 30 // "spiral of death" safeguard after a long pause (backgrounded tab)
 
 const CLICK_EVENTS: readonly ItemEvent[] = ['click']
@@ -203,7 +207,8 @@ export class FlatPlayer {
   private procs = new Map<string, { params: string[]; body: Action[] }>() // fn name(p) { ... }
   private valueFuncs: { name: string; params: string[]; comp: Compiled }[] = [] // fn name(p) = expr (compiled)
   private funcDepth = 0 // anti-recursion guard (procedures + value functions)
-  private readonly mouse = { x: 0, y: 0, dx: 0, dy: 0 } // dx/dy = movement SINCE the last tick (reset to 0 after onEnterFrame) -> "is the mouse moving this frame?"
+  private readonly mouse = { x: 0, y: 0, dx: 0, dy: 0, wheel: 0 } // dx/dy = movement SINCE the last tick; wheel = accumulated wheel delta SINCE the last tick (both reset after onEnterFrame) -> "what happened this frame?"
+  private usesWheel = false // does the scene read `mouse.wheel`? → capture the wheel + preventDefault (else let the page scroll over the canvas)
   private readonly heldKeys = new Set<string>()
   private readonly keyProxy = new Proxy(
     {},
@@ -481,6 +486,16 @@ export class FlatPlayer {
    *  `when released` handler reads the ACTUAL press/release point. On touch there is no hover `move` to set
    *  it first, so without this `mouse.*` is stale (0,0 on the first touch) inside press/click/release. */
   private trackPointerPos(p: Point): void { this.mouse.x = p.x; this.mouse.y = p.y; this.bustNamed() }
+  // Wheel/trackpad scroll → `mouse.wheel` (accumulated delta since the last tick, consumed + reset like dx/dy).
+  // An `every frame` script reads it: `Off = clamp(Off + mouse.wheel * k, 0, max)`. `preventDefault` only when
+  // the scene actually reads it, so a scene that ignores the wheel still lets the page scroll over the canvas.
+  private readonly onWheel = (e: WheelEvent) => {
+    const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? (this.canvas.height || 600) : 1 // lines / pages → px
+    this.mouse.wheel += e.deltaY * k
+    if (this.usesWheel) e.preventDefault()
+    this.bustNamed()
+    this.render()
+  }
   private readonly onPointerDown = (e: PointerEvent) => {
     if (!this.doc.interactions?.length && !this.doc.interactors?.length) return
     const p = this.worldPoint(e)
@@ -575,6 +590,7 @@ export class FlatPlayer {
     if (!ctx) throw new Error('FlatPlayer: 2D context unavailable')
     this.ctx = ctx
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
+    this.usesWheel = docUsesWheel(this.doc)
     this.loop = opts.loop ?? true
     this.pad = opts.padding ?? 0
     this.audioOn = opts.audio ?? true
@@ -597,6 +613,7 @@ export class FlatPlayer {
       this.canvas.addEventListener('pointerup', this.onPointerUp)
       this.canvas.addEventListener('pointercancel', this.onPointerCancel)
       this.canvas.addEventListener('pointerleave', this.onPointerLeave)
+      this.canvas.addEventListener('wheel', this.onWheel, { passive: false }) // non-passive: may preventDefault when the scene reads mouse.wheel
     }
     if (opts.autoplay) this.play()
   }
@@ -875,6 +892,7 @@ export class FlatPlayer {
   /** Replaces the played document (resets the framing + the variables, keeps the frame). */
   load(doc: Doc): void {
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
+    this.usesWheel = docUsesWheel(this.doc)
     this.vars = cloneVars(doc.variables)
     this.namedCache = null // new document -> named-objects cache stale
     this.ctxCache = null // new document -> cached expr context stale (vars Map replaced just above)
@@ -1062,6 +1080,7 @@ export class FlatPlayer {
       for (const s of symSims) runActions(s.tl.onEnterFrame!, this.host)
       this.mouse.dx = 0 // movement consumed by this step (same contract as the real tick)
       this.mouse.dy = 0
+      this.mouse.wheel = 0
       this.fireFrameActions()
     }
     this.render()
@@ -1173,6 +1192,7 @@ export class FlatPlayer {
       }
       this.mouse.dx = 0 // movement consumed by this frame (onEnterFrame) -> the "mouse at rest" hands control back to the keyboard
       this.mouse.dy = 0
+      this.mouse.wheel = 0
 
       // 3) frame-actions (on the current frame) + single render.
       this.fireFrameActions() // can change frame/playing (gotoFrame, pause...)
@@ -1210,6 +1230,7 @@ export class FlatPlayer {
     this.canvas.removeEventListener('pointerup', this.onPointerUp)
     this.canvas.removeEventListener('pointercancel', this.onPointerCancel)
     this.canvas.removeEventListener('pointerleave', this.onPointerLeave)
+    this.canvas.removeEventListener('wheel', this.onWheel)
     this.cancelLongPress()
   }
 }

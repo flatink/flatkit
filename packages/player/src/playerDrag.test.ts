@@ -560,3 +560,21 @@ describe('FlatPlayer -- interactor (drag / dropped on)', () => {
     pl.destroy()
   })
 })
+
+describe('FlatPlayer -- wheel (mouse.wheel scroll)', () => {
+  const scrollDoc = (): Doc => ({
+    width: 100, height: 100, symbols: [], variables: { off: 0 },
+    layers: [{ id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: [] }],
+    timeline: { fps: 24, durationFrames: 1, tracks: [], onEnterFrame: [{ do: 'setVar', name: 'off', value: 'clamp(off + mouse.wheel, 0, 500)' }] },
+  })
+
+  it('the wheel feeds mouse.wheel into an `every frame` accumulator, consumed once per step', () => {
+    const r = playHeadless(scrollDoc(), [{ type: 'wheel', dy: 120 }, { type: 'wheel', dy: 120 }, { type: 'wheel', dy: -50 }])
+    expect(r.vars.off).toBe(190) // 0 +120 +120 -50 ; each delta integrated exactly once (resets each step → no runaway)
+  })
+
+  it('the scene expression bounds the scroll (clamp), no overshoot', () => {
+    const r = playHeadless(scrollDoc(), [{ type: 'wheel', dy: 1000 }, { type: 'wheel', dy: -1000 }])
+    expect(r.vars.off).toBe(0) // +1000 → clamp 500, then -1000 → clamp 0
+  })
+})

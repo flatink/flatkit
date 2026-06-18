@@ -64,7 +64,7 @@ Usage:
   --watch           recompile on every change in the folder (agent → player loop)
   --play            run the file WITHOUT a canvas, replay --script and print { sends, vars } (JSON)
   --trace           (with --play) HUMAN-READABLE log per gesture: emitted sends + variable diff (debug)
-  --script <f>      JSON gesture script: [{ "type": "down|move|up|cancel", "x", "y" }, { "type": "set", "name", "value" }, { "type": "wait", "frames": N }]
+  --script <f>      JSON gesture script: [{ "type": "down|move|up|cancel", "x", "y" }, { "type": "set", "name", "value" }, { "type": "wait", "frames": N }, { "type": "wheel", "dy": N }]
                     semantic (by NAME, the engine resolves coords): { "type": "drag", "source", "target" } · { "type": "tap", "target" }
                     · { "type": "scratch", "target" } (sweeps a reveal zone) · { "type": "connect", "source", "target" } (pulls a link wire)
                     "wait" lets the simulation run N fixed steps (60 Hz): "every frame" + playhead advance like in real playback
