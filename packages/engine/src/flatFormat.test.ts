@@ -425,6 +425,30 @@ describe('flatFormat — .flatink program', () => {
     expect(behaviorDiagnostics(src)).toEqual([])
   })
 
+  it('behavior placed BEFORE the scene block is honored, not silently dropped (scene survives too)', () => {
+    // A `fn` / `every frame` in the header used to make the composition parser bail and drop the WHOLE
+    // scene (layers: []), and the behavior was never parsed. Now placement is independent.
+    const header = [
+      'size 100 100', 'var a = 0', 'var d = 0',
+      'fn dbl(n) = n * 2',
+      'every frame { a = a + 1\n  d = dbl(a) }',
+      'scene { layer "L" { circle 50 50 10 fill #ff0000 } }',
+    ].join('\n')
+    const tail = [
+      'size 100 100', 'var a = 0', 'var d = 0',
+      'scene { layer "L" { circle 50 50 10 fill #ff0000 } }',
+      'fn dbl(n) = n * 2',
+      'every frame { a = a + 1\n  d = dbl(a) }',
+    ].join('\n')
+    for (const src of [header, tail]) {
+      const doc = parseProgramFull(src)
+      expect(doc.layers[0].items).toHaveLength(1) // scene preserved
+      expect(doc.functions?.map((f) => f.name)).toEqual(['dbl']) // fn parsed wherever it sits
+      expect(doc.timeline?.onEnterFrame).toHaveLength(2) // every-frame parsed
+    }
+    expect(behaviorDiagnostics(header)).toEqual([]) // no spurious diagnostics from the masked header/scene
+  })
+
   // ── `text "…" as "<id>"`: stable id, driven by the explicit `idExplicit` flag (zero heuristic) ──
   const prog = (textLine: string) => ['size 400 200', '', 'scene {', '  layer "L" {', `    ${textLine}`, '  }', '}', ''].join('\n')
   const firstText = (src: string) => parseProgram(src).layers[0].items[0] as Text

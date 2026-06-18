@@ -213,6 +213,17 @@ export function compileExpr(src: string): Compiled {
   }
 }
 
+/** Memoized `compileExpr`: the AST of an expression source is immutable, so we parse each distinct source
+ *  ONCE and reuse it. Hot for the channel resolver AND the `every frame` script interpreter (which evaluates
+ *  hundreds of expressions per frame); the cache turns those re-parses into a map lookup. The key set is
+ *  bounded by the doc's distinct expression sources. */
+const exprCache = new Map<string, Compiled>()
+export function compileCached(src: string): Compiled {
+  let c = exprCache.get(src)
+  if (!c) { c = compileExpr(src); exprCache.set(src, c) }
+  return c
+}
+
 // ── Evaluation ───────────────────────────────────────────────────────────────
 const num = (b: boolean) => (b ? 1 : 0)
 

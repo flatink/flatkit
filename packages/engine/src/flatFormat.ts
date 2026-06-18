@@ -789,33 +789,41 @@ function expandProgramSugar(src: string): string {
  *  so a slice that REMOVES a sub-region still maps 1:1 onto the source for diagnostics. */
 const blankSpan = (s: string) => s.replace(/[^\n]/g, ' ')
 
-/** Splits an EXPANDED program into the scene-script text + the `object "name" { … }` blocks. `sceneText`
- *  is the tail with each `object` span MASKED (blanked, newlines kept) so it stays positionally aligned
- *  with the source. `tailAt`/`bodyAt` = absolute offsets in `expanded` (drive diagnostic line mapping). */
+/** Single-line composition directives (header). Masked out of the behavior source so they don't reach the
+ *  DSL parser — everything else outside the `scene { … }` block IS behavior, wherever it sits. */
+const HEADER_DIRECTIVE = /^[ \t]*(?:size|background|timeline|var|asset|sound|use)\b[^\n]*/gm
+
+/** Splits an EXPANDED program into the scene-script text + the `object "name" { … }` blocks. Behavior is
+ *  taken from the WHOLE program (before AND after the `scene { … }` block) — so a `fn` / `every frame` /
+ *  `object` placed in the header is honored, not silently dropped — with the scene block and the header
+ *  composition directives MASKED (blanked, newlines kept) so only behavior reaches the DSL parser and every
+ *  offset stays 1:1 with the source. `bodyAt` = absolute offset of each object body (drives line mapping). */
 function extractBehavior(expanded: string): { sceneText: string; tailAt: number; objects: { name: string; body: string; bodyAt: number }[] } {
-  // Behavior = everything that follows the `scene { … }` block.
   const si = expanded.search(/\bscene\b/)
   const open = si >= 0 ? expanded.indexOf('{', si) : -1
   const close = open >= 0 ? matchBrace(expanded, open) : -1
-  const tailAt = close >= 0 ? close + 1 : expanded.length
-  const tail = close >= 0 ? expanded.slice(close + 1) : ''
+  // Mask the `scene { … }` block (from the `scene` KEYWORD through its `}`), then the header composition
+  // directives (before it). What remains, anywhere in the program, is behavior.
+  let src = close >= 0 ? expanded.slice(0, si) + blankSpan(expanded.slice(si, close + 1)) + expanded.slice(close + 1) : expanded
+  const headerEnd = si >= 0 ? si : src.length
+  src = src.slice(0, headerEnd).replace(HEADER_DIRECTIVE, blankSpan) + src.slice(headerEnd)
 
   // Extracts the `object "name" { … }` blocks; the rest (object spans blanked out) = scene scripts.
   let sceneText = '', i = 0
   const objects: { name: string; body: string; bodyAt: number }[] = []
-  while (i < tail.length) {
-    const m = /object\s+"((?:[^"\\]|\\.)*)"\s*\{/.exec(tail.slice(i))
-    if (!m) { sceneText += tail.slice(i); break }
+  while (i < src.length) {
+    const m = /object\s+"((?:[^"\\]|\\.)*)"\s*\{/.exec(src.slice(i))
+    if (!m) { sceneText += src.slice(i); break }
     const start = i + m.index
-    sceneText += tail.slice(i, start)
+    sceneText += src.slice(i, start)
     const ob = start + m[0].length - 1
-    const oc = matchBrace(tail, ob)
-    if (oc < 0) { sceneText += tail.slice(start); break }
-    objects.push({ name: m[1].replace(/\\(.)/g, (_, c) => (c === 'n' ? '\n' : c)), body: tail.slice(ob + 1, oc), bodyAt: tailAt + ob + 1 })
-    sceneText += blankSpan(tail.slice(start, oc + 1)) // mask the object span (keep newlines) → scene stays aligned
+    const oc = matchBrace(src, ob)
+    if (oc < 0) { sceneText += src.slice(start); break }
+    objects.push({ name: m[1].replace(/\\(.)/g, (_, c) => (c === 'n' ? '\n' : c)), body: src.slice(ob + 1, oc), bodyAt: ob + 1 })
+    sceneText += blankSpan(src.slice(start, oc + 1)) // mask the object span (keep newlines) → scene stays aligned
     i = oc + 1
   }
-  return { sceneText, tailAt, objects }
+  return { sceneText, tailAt: 0, objects } // sceneText is now absolute-positioned (whole program) → base line 1
 }
 
 /** Parse-level diagnostics of the BEHAVIOR (`object` block bodies AND scene scripts) — the unknown
@@ -1008,6 +1016,10 @@ class FlatParser {
         for (;;) { if (this.is('gain')) { this.next(); gain = this.num() } else if (this.is('loop')) { this.next(); loop = true } else break }
         sounds.push({ id: uid('snd'), assetId, startFrame, ...(gain != null ? { gain } : {}), ...(loop ? { loop } : {}) })
       }
+      // Behavior (fn / every frame / object / label) mistakenly placed BEFORE the scene block: skip its
+      // tokens so we still reach (and parse) the `scene { … }` block — it is parsed separately as behavior
+      // by `extractBehavior`. Without this, the composition parser bailed here and dropped the WHOLE scene.
+      else if (this.peek() && !this.is('scene')) this.next()
       else break
     }
     const layers: Layer[] = []

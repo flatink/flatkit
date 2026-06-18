@@ -9,7 +9,7 @@
 import type { Asset, Doc, Layer, Point, Text } from '@flatkit/types'
 import { resolveInstanceFrame, scheduleSounds, applyEasing, type Timeline, type Easing } from '@flatkit/engine/timeline'
 import { stateValueOf, initialStateValue, stateMachineByParam } from '@flatkit/engine/states'
-import { compileExpr, evalExpr, exprScope, type ExprContext, type Compiled } from '@flatkit/engine/expr'
+import { compileCached, evalExpr, exprScope, type ExprContext, type Compiled } from '@flatkit/engine/expr'
 import { runActions, MAX_SEND_TEXT, SEND_EVENT_NAME, type Action, type ActionHost, type ItemEvent } from '@flatkit/engine/actions'
 import { containerLayers, getSymbol, isGroup, isInstance, isText } from '@flatkit/engine/layers'
 import { renderLayers, type FilterCacheEntry } from './drawScene'
@@ -215,6 +215,13 @@ export class FlatPlayer {
   // evalNumber (hundreds/frame in a game) -> stutter. Invalidated by inputs (cf. bustNamed).
   private namedCache: NamedChannels | null = null
   private namedFrame = Number.NaN
+  // Per-frame expression context cache: the `every frame` interpreter calls exprCtx hundreds of times/frame;
+  // everything but the variables is stable within a frame (named channels memoized, funcs/mouse/keys reused),
+  // so we build it ONCE per frame and only refresh the live vars on reuse. Bypassed when `self` is set
+  // (a handler) or when called with interpolated vars (render between sim steps). Invalidated by bustNamed.
+  private ctxCache: ExprContext | null = null
+  private ctxFrame = Number.NaN
+  private funcNames: Set<string> = new Set() // value-function names → keep priority over vars when refreshing
   // -- Grabbing (drag / press / long-press) --
   private grabbed: string | null = null // grabbed item (between pointerdown and pointerup)
   private grabStart: Point = { x: 0, y: 0 } // world point of the grab (long-press tolerance)
@@ -236,6 +243,7 @@ export class FlatPlayer {
   /** Invalidates the named-objects cache (input changed outside of a frame advance). */
   private bustNamed(): void {
     this.namedFrame = Number.NaN
+    this.ctxCache = null // its baked-in named channels are now stale
   }
   private readonly onKeyDown = (e: KeyboardEvent) => {
     this.heldKeys.add(e.key)
@@ -627,8 +635,10 @@ export class FlatPlayer {
     this.valueFuncs = []
     for (const f of [...importedFunctions(this.doc.imports), ...(this.doc.functions ?? [])]) {
       if (f.kind === 'proc') this.procs.set(f.name, { params: f.params, body: f.body })
-      else this.valueFuncs.push({ name: f.name, params: f.params, comp: compileExpr(f.expr) })
+      else this.valueFuncs.push({ name: f.name, params: f.params, comp: compileCached(f.expr) })
     }
+    this.funcNames = new Set(this.valueFuncs.map((f) => f.name))
+    this.ctxCache = null // function set changed → drop the cached context
   }
 
   /** Calls a procedure `fn name(p) { ... }`: binds the params (save/restore), bounds the recursion. */
@@ -647,6 +657,14 @@ export class FlatPlayer {
    *  + scene objects by name (`Hero.x`, cf. sceneRefs). */
   private exprCtx(vars: Map<string, number | number[]> = this.vars): ExprContext {
     const interp = vars !== this.vars // interpolated render context -> we do not touch the memo (frame unchanged)
+    // FAST PATH: same frame, no handler `self`, real vars → reuse the cached ctx, refreshing only the live
+    // variables (intra-frame `setVar`s). The costly parts (named-channel copy, func closures) are reused.
+    // `funcNames` keep priority over a same-named var (matches the build order funcs-after-vars).
+    const cacheable = !interp && !this.selfChannels && !this.selfParent
+    if (cacheable && this.ctxCache && this.ctxFrame === this.frame && this.namedFrame === this.frame) {
+      for (const [k, v] of this.vars) if (!this.funcNames.has(k)) this.ctxCache[k] = v
+      return this.ctxCache
+    }
     const ctx: ExprContext = { mouse: this.mouse, keys: this.keyProxy, random: () => Math.random(), clock: this.mono / this.fps }
     for (const [k, v] of vars) ctx[k] = v
     for (const vf of this.valueFuncs) { // fn name(p) = expr -> closure (the body sees globals + math + time + params)
@@ -682,10 +700,11 @@ export class FlatPlayer {
     // World<->local conversions relative to the handler's object (cf. RFC coordinate-spaces): a WORLD point
     // (mouse.x, Hero.x) -> the object's PARENT space (where its x/y live), and inverse.
     if (this.selfParent) Object.assign(ctx, spaceConversions(this.selfParent))
+    if (cacheable) { this.ctxCache = ctx; this.ctxFrame = this.frame } // reuse this build for the rest of the frame
     return ctx
   }
   private evalNumber(src: string): number {
-    const c = compileExpr(src)
+    const c = compileCached(src)
     if (!c.ok) return 0
     return evalExpr(c.node, exprScope(this.exprCtx(), this.frame / this.fps, this.frame), 0)
   }
@@ -824,6 +843,7 @@ export class FlatPlayer {
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
     this.vars = cloneVars(doc.variables)
     this.namedCache = null // new document -> named-objects cache stale
+    this.ctxCache = null // new document -> cached expr context stale (vars Map replaced just above)
     this.filterCache.clear() // new document -> filter bitmaps stale
     this.revealStates.clear() // new document -> reveal coverage resets
     this.instNameCache = undefined // new document -> name→instance lookup stale

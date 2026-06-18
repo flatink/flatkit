@@ -19,7 +19,7 @@ import { lerpFilters, type Filter } from './filters'
 import { lerpColor } from './color'
 import { samplePathAt, projectToPath, lerpPath, type Path } from './path'
 import { applyEasing, rotDelta, EXPR_CHANNELS, type ExprChannel } from './timeline'
-import { compileExpr, evalExpr, exprScope, type Compiled } from './expr'
+import { compileCached, evalExpr, exprScope } from './expr'
 import { isPoseable, isText } from './layers'
 import type { Point, Region, Item, Layer, Pose, Cel, ResolveOpts } from '@flatkit/types'
 export type { Pose, Cel, ResolveOpts } from '@flatkit/types'
@@ -270,12 +270,6 @@ function resolveBoundText(t: { content: string; bind?: string; decimals?: number
 }
 
 // ── Container expressions (take priority over tween/HOLD) ────────────────────
-const exprCache = new Map<string, Compiled>()
-function compileCached(src: string): Compiled {
-  let c = exprCache.get(src)
-  if (!c) { c = compileExpr(src); exprCache.set(src, c) }
-  return c
-}
 
 /**
  * Apply a container's channel expressions on top of its resolved pose.

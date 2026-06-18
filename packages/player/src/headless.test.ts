@@ -118,6 +118,18 @@ describe('headless -- playHeadless', () => {
     expect(res.vars.mono as number).toBeGreaterThan(res.vars.wrap as number)
   })
 
+  it('per-frame exprCtx cache keeps intra-frame var mutations live (sequential deps + named ref)', () => {
+    // b reads `a` set EARLIER the same frame; c reads b. A stale cached context would freeze `a` at its
+    // start-of-frame value and break b/c. gx reads a named object (the per-frame-memoized named channels).
+    const doc = parseProgramFull([
+      'size 200 200', 'var a = 0', 'var b = 0', 'var c = 0', 'var gx = 0',
+      'scene { layer "L" { group "G" at 37,0 { layer "c" { circle 0 0 4 fill #ff0000 } } } }',
+      'every frame {', '  a = a + 1', '  b = a * 2', '  c = b + a', '  gx = G.x', '}',
+    ].join('\n')) as unknown as Doc
+    const res = playHeadless(doc, [{ type: 'wait', frames: 5 }])
+    expect(res.vars).toMatchObject({ a: 5, b: 10, c: 15, gx: 37 })
+  })
+
   it('the `set` gesture drives a variable (unlocks an enabled drag)', () => {
     const pc = { ...piece(), expressions: { x: 'px', y: 'py' } as Record<string, string> }
     const doc: Doc = {
