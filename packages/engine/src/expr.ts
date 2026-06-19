@@ -228,45 +228,49 @@ export function compileCached(src: string): Compiled {
 const num = (b: boolean) => (b ? 1 : 0)
 
 /** Resolve a bare name to its value. MATH (sin/PI/…) takes priority over variables (a `sin` variable never
- *  shadows the function), then the runtime context. OWN properties only on both — never reach inherited
- *  members (constructor, valueOf, __proto__…). MATH_CTX is consulted by reference (no per-eval copy). */
-const resolveName = (ctx: ExprContext, name: string): unknown =>
-  Object.hasOwn(MATH_CTX, name) ? MATH_CTX[name] : Object.hasOwn(ctx, name) ? ctx[name] : undefined
+ *  shadows the function), then the runtime `ctx` (small per-item overlay), then `base` (a large shared
+ *  context — variables + named objects — consulted BY REFERENCE so the caller never has to copy it into
+ *  `ctx`). OWN properties only on all three — never reach inherited members (constructor, __proto__…). */
+const resolveName = (ctx: ExprContext, name: string, base?: ExprContext): unknown =>
+  Object.hasOwn(MATH_CTX, name) ? MATH_CTX[name]
+    : Object.hasOwn(ctx, name) ? ctx[name]
+    : base !== undefined && Object.hasOwn(base, name) ? base[name]
+    : undefined
 
-function evalNode(node: Node, ctx: ExprContext): number {
+function evalNode(node: Node, ctx: ExprContext, base?: ExprContext): number {
   switch (node.t) {
     case 'num':
       return node.v
     case 'id': {
-      const v = resolveName(ctx, node.name)
+      const v = resolveName(ctx, node.name, base)
       return typeof v === 'number' ? v : Number.NaN
     }
     case 'member': {
-      const o = resolveName(ctx, node.obj)
+      const o = resolveName(ctx, node.obj, base)
       if (!o || typeof o !== 'object' || Array.isArray(o) || !Object.hasOwn(o, node.prop)) return Number.NaN
       const v = (o as Record<string, unknown>)[node.prop]
       return typeof v === 'number' ? v : Number.NaN
     }
     case 'index': {
-      const a = resolveName(ctx, node.name)
+      const a = resolveName(ctx, node.name, base)
       if (!Array.isArray(a)) return Number.NaN
-      const v = a[Math.round(evalNode(node.idx, ctx))]
+      const v = a[Math.round(evalNode(node.idx, ctx, base))]
       return typeof v === 'number' ? v : Number.NaN
     }
     case 'un': {
-      const x = evalNode(node.x, ctx)
+      const x = evalNode(node.x, ctx, base)
       return node.op === '-' ? -x : num(x === 0)
     }
     case 'cond':
-      return evalNode(node.c, ctx) === 0 ? evalNode(node.b, ctx) : evalNode(node.a, ctx)
+      return evalNode(node.c, ctx, base) === 0 ? evalNode(node.b, ctx, base) : evalNode(node.a, ctx, base)
     case 'call': {
-      const fn = resolveName(ctx, node.name) // MATH first, then ctx; own-props only (no inherited functions)
+      const fn = resolveName(ctx, node.name, base) // MATH first, then ctx, then base; own-props only
       if (typeof fn !== 'function') return Number.NaN
-      return fn(...node.args.map((a) => evalNode(a, ctx)))
+      return fn(...node.args.map((a) => evalNode(a, ctx, base)))
     }
     case 'bin': {
-      const l = evalNode(node.l, ctx)
-      const r = evalNode(node.r, ctx)
+      const l = evalNode(node.l, ctx, base)
+      const r = evalNode(node.r, ctx, base)
       switch (node.op) {
         case '+':
           return l + r
@@ -300,9 +304,11 @@ function evalNode(node: Node, ctx: ExprContext): number {
   }
 }
 
-/** Evaluate a compiled AST. `fallback` is returned when the result is not finite (NaN/∞). */
-export function evalExpr(node: Node, ctx: ExprContext, fallback = 0): number {
-  const v = evalNode(node, ctx)
+/** Evaluate a compiled AST. `fallback` is returned when the result is not finite (NaN/∞). `base` (optional)
+ *  is a large shared context consulted by reference for any name not in `ctx` — lets a hot caller pass a
+ *  tiny per-item `ctx` overlay without copying the scene-wide variables/objects into it each time. */
+export function evalExpr(node: Node, ctx: ExprContext, fallback = 0, base?: ExprContext): number {
+  const v = evalNode(node, ctx, base)
   return Number.isFinite(v) ? v : fallback
 }
 

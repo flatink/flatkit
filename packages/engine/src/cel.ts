@@ -308,6 +308,19 @@ function resolveTextPathChannels(tp: TextPath, frame: number, opts: ResolveOpts)
  * Apply a container's channel expressions on top of its resolved pose.
  * `value` = the decomposed component / current opacity; `time` = frame/fps.
  */
+// Small per-resolve-pass OVERLAY (space conversions + time/frame/clock), reused across a layer's items
+// (`self`/`value` are swapped per item/channel). The big scene context (opts.ctx: vars + named objects) is
+// NOT merged in — it's passed to `evalExpr` as the by-reference `base`, so we never copy it. Keyed by
+// `opts` (fresh per resolveLayerAt call → no cross-frame staleness; GC'd with opts).
+const evalOverlayCache = new WeakMap<ResolveOpts, ReturnType<typeof exprScope>>()
+function evalOverlayFor(opts: ResolveOpts, time: number, frame: number): ReturnType<typeof exprScope> {
+  let o = evalOverlayCache.get(opts)
+  if (o === undefined) {
+    o = exprScope(spaceConversions(opts.parent ?? IDENTITY), time, frame)
+    evalOverlayCache.set(opts, o)
+  }
+  return o
+}
 function applyExprChannels(
   ex: Partial<Record<ExprChannel, string>>,
   pose: ResolvedPose,
@@ -339,11 +352,12 @@ function applyExprChannels(
   self.hovered = st?.hovered ?? 0
   self.grabbed = st?.grabbed ?? 0
   self.pressed = st?.pressed ?? 0
-  const withSelf = { ...opts.ctx, self, ...spaceConversions(opts.parent ?? IDENTITY) }
-  // Build the eval context ONCE per item, then only swap `value` (the channel's current value) per channel —
-  // instead of an `exprScope` copy per channel. The ctx is item-local, so mutating `value` between the
-  // synchronous evals is safe; `self` is a live ref to `ch`, so later channels see earlier ones.
-  const evalCtx = exprScope(withSelf, time, frame)
+  // Tiny overlay (space conversions + time/frame/clock) shared across the layer's items; we swap only `self`
+  // here and `value` per channel. opts.ctx (the scene-wide vars + named objects) is consulted BY REFERENCE
+  // as evalExpr's `base` — never copied. Mutating the shared overlay between the SYNCHRONOUS evals is safe;
+  // `self` is a live ref to `ch`, so later channels see earlier ones.
+  const evalCtx = evalOverlayFor(opts, time, frame)
+  evalCtx.self = self
   let touchedT = false
   for (const c of EXPR_CHANNELS) {
     const src = ex[c]
@@ -351,7 +365,7 @@ function applyExprChannels(
     const compiled = compileCached(src)
     if (!compiled.ok) continue // invalid expression → ignored (the UI reports the error)
     evalCtx.value = ch[c]
-    ch[c] = evalExpr(compiled.node, evalCtx, ch[c])
+    ch[c] = evalExpr(compiled.node, evalCtx, ch[c], opts.ctx) // base = scene ctx, by reference (no copy)
     if (c !== 'opacity') touchedT = true
   }
   return {
