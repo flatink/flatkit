@@ -54,11 +54,19 @@ function buildSrc(): string {
 
 const doc = parseProgramFull(buildSrc()) as unknown as Parameters<typeof renderLayers>[1]
 
+// Realistic scene expression context — named objects' channels + variables — exactly what the PLAYER
+// threads to renderLayers as `rctx.expr`. WITHOUT it (`expr: undefined`) `applyExprChannels` has nothing
+// to resolve and the bench misses the dominant cost of heavy scenes (every channel expr re-reading the
+// scene-wide ctx). The channel exprs above reference `G<i>.x`, so those names must be present here.
+const exprCtx: Record<string, unknown> = { mouse: { x: 0, y: 0, dx: 0, dy: 0, wheel: 0 } }
+for (let i = 0; i < N_GROUPS; i++) exprCtx[`G${i}`] = { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0, opacity: 1 }
+for (let i = 0; i < M_STMTS; i++) exprCtx[`v${i}`] = 0
+
 function benchRender(frames: number): number {
   // resolve + draw (no-op ctx) per frame, advancing the frame each time
   const t0 = process.hrtime.bigint()
   for (let f = 0; f < frames; f++) {
-    renderLayers(noopCtx, doc, (doc as { layers: unknown[] }).layers as never, f % 600, null, new Set(), { fps: 24, expr: undefined } as never, IDENTITY, 0)
+    renderLayers(noopCtx, doc, (doc as { layers: unknown[] }).layers as never, f % 600, null, new Set(), { fps: 24, expr: exprCtx } as never, IDENTITY, 0)
   }
   return Number(process.hrtime.bigint() - t0) / 1e6
 }
