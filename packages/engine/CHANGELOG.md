@@ -1,5 +1,14 @@
 # @flatkit/engine
 
+## 0.17.1
+
+### Patch Changes
+
+- [`468c15d`](https://github.com/zwykstudio/flatkit/commit/468c15d3d69c5b4da621701ca861213a1b91dbe5) Thanks [@kaelhem](https://github.com/kaelhem)! - Fix pointer-move lag: the player rendered a full frame synchronously on every `pointermove` (which fire at 125–1000 Hz), on top of the 60 fps playback loop, saturating the main thread. Now the move render is coalesced — while a render loop (playback or a transition) is already running it repaints the next frame instead of per-event, and a static scene still renders synchronously so the cursor follows immediately. Also skip the per-move expression-cache invalidation when nothing reads `mouse.x`/`mouse.y` (a drag self-invalidates, so this is safe). Active-drag latency is unchanged (still synchronous).
+
+- Updated dependencies [[`468c15d`](https://github.com/zwykstudio/flatkit/commit/468c15d3d69c5b4da621701ca861213a1b91dbe5)]:
+  - @flatkit/types@0.17.1
+
 ## 0.17.0
 
 ### Minor Changes
