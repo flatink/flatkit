@@ -58,6 +58,34 @@ describe('polygonsToPath / pathToPolygons', () => {
     expect(ring.length).toBeGreaterThan(4) // curved edge 0→1 subdivided
     expect(ring[0]).toEqual({ x: 0, y: 0 })
   })
+
+  // Memoization (hit-test hot path): a path's geometry is invariant, so flatten ONCE and reuse — re-flattening
+  // every Bezier on every mouse-move was the real cursor lag (subdivision + GC churn). Cache key = path identity.
+  const curved = (): Path => ({ subpaths: [{ closed: true, segments: [
+    { anchor: { x: 0, y: 0 }, outHandle: { x: 0, y: 50 } },
+    { anchor: { x: 100, y: 0 }, inHandle: { x: 100, y: 50 } },
+  ] }] })
+
+  it('memoizes by path identity: the same object returns the SAME array (no re-flatten)', () => {
+    const path = curved()
+    expect(pathToPolygons(path)).toBe(pathToPolygons(path)) // cache hit → identical reference
+  })
+
+  it('a distinct path object is re-flattened (fresh array, identical geometry)', () => {
+    const a = pathToPolygons(curved())
+    const b = pathToPolygons(curved())
+    expect(b).not.toBe(a) // different objects → different cache slots…
+    expect(b).toEqual(a) // …but the same flattened rings
+  })
+
+  it('a non-default tolerance bypasses the cache and never pollutes it', () => {
+    const path = curved()
+    const fine = pathToPolygons(path) // default tol → cached
+    const coarse = pathToPolygons(path, 50) // coarse → fewer subdivisions, NOT served the cached fine rings
+    expect(coarse).not.toBe(fine)
+    expect(coarse[0].length).toBeLessThan(fine[0].length)
+    expect(pathToPolygons(path)).toBe(fine) // the default-tol cache is still intact
+  })
 })
 
 describe('pathToBezier (zero-regression guard)', () => {

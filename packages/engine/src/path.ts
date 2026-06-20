@@ -60,12 +60,24 @@ function flattenCubic(p0: Point, c1: Point, c2: Point, p3: Point, tol: number, o
 
 const mid = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
 
+const POLY_TOL = 0.25 // default flatness tolerance (px) — the only tolerance the hot hit-test path uses
+
+// Memoized flatten at the DEFAULT tolerance. A path's geometry is invariant: the doc owns it, and dynamic
+// geometry (morph/bind) yields NEW path objects rather than mutating in place — so the same object always
+// flattens to the same rings. Hit-testing calls `pathToPolygons` per item on EVERY mouse-move; without this
+// cache each move re-subdivides every Bezier (`mid`/`flattenCubic`) and allocates fresh rings → heavy GC
+// churn (the real "mouse lag"). WeakMap → entries are freed with their paths (no leak). A custom tolerance
+// bypasses the cache (rare, off the hot path). CALLERS MUST TREAT THE RESULT AS READ-ONLY (it may be shared).
+const polygonCache = new WeakMap<Path, Polygon[]>()
+
 /**
  * Flatten a path into point rings (for boolean ops / hit / bbox).
  * Handle-less edge → straight line (we only push the target anchor); edge with handle(s) →
- * adaptive subdivision of the cubic. `tol` = flatness tolerance (px).
+ * adaptive subdivision of the cubic. `tol` = flatness tolerance (px). Memoized at the default tolerance
+ * (see `polygonCache`); the returned rings are shared — DO NOT mutate them.
  */
-export function pathToPolygons(path: Path, tol = 0.25): Polygon[] {
+export function pathToPolygons(path: Path, tol = POLY_TOL): Polygon[] {
+  if (tol === POLY_TOL) { const cached = polygonCache.get(path); if (cached) return cached }
   const out: Polygon[] = []
   for (const sub of path.subpaths) {
     const segs = sub.segments
@@ -90,6 +102,7 @@ export function pathToPolygons(path: Path, tol = 0.25): Polygon[] {
     }
     if (ring.length) out.push(ring)
   }
+  if (tol === POLY_TOL) polygonCache.set(path, out)
   return out
 }
 
