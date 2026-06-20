@@ -18,11 +18,12 @@ import { parseUnits } from '@flatkit/engine/dsl'
 import { sanitizeDoc } from '@flatkit/engine/validateDoc'
 import { unitsToFunctions } from '@flatkit/engine/scriptDoc'
 import { containerBBox, containerBBoxUnion } from '@flatkit/engine/groups'
+import { isInstance, isGroup } from '@flatkit/engine/layers'
 import { IDENTITY } from '@flatkit/engine/transform'
 import { lintDocReport, docHasErrors } from '../programDoc'
 import { playHeadless, type Gesture } from '@flatkit/player/debug'
 import type { FuncDef } from '@flatkit/engine/actions'
-import type { Doc, Instance, Layer, SymbolDef } from '@flatkit/types'
+import type { Doc, Instance, Item, Layer, SymbolDef } from '@flatkit/types'
 
 const MIME: Record<string, string> = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
@@ -258,11 +259,57 @@ async function renderOnce(filePath: string, out: string, frame: number, vars: Re
   return renderDocToFile(doc, outPath, frame, vars, scaleAuto ? autoScale(doc.width, doc.height) : scale, steps)
 }
 
+const gcd = (a: number, b: number): number => { a = Math.abs(a); b = Math.abs(b); while (b) { const t = a % b; a = b; b = t } return a || 1 }
+const lcm = (a: number, b: number): number => Math.max(1, Math.round((a / gcd(a, b)) * b))
+
+/** Every instance in a symbol's subtree (descends into local groups; does NOT cross into other symbols). */
+function* instancesOf(sym: SymbolDef): Generator<Instance> {
+  const stack: Item[] = []
+  for (const l of sym.layers) stack.push(...l.items)
+  for (let it = stack.pop(); it; it = stack.pop()) {
+    if (isInstance(it)) yield it
+    else if (isGroup(it)) for (const l of it.layers) stack.push(...l.items)
+  }
+}
+
+/**
+ * Preview window length (frames). A `synced` instance loops on the PARENT's frame, so the symbol's own
+ * duration suffices — that's the historical behavior, kept for every symbol with no MovieClip descendant.
+ * But an `independent` (`loop`) descendant runs on its OWN duration, immune to the parent's wrap: to SHOW it
+ * loop CLEANLY the window must be a common multiple of every such clip's duration (and the root's) — its
+ * "loop seam". `once` clips only need the window to REACH their last frame (they hold afterwards). We walk
+ * the subtree, fold each independent clip's duration into the seam (LCM), and extend past the longest clip,
+ * keeping the window a whole number of seams. Capped, so coprime durations can't blow the window up.
+ */
+function previewDuration(root: SymbolDef, symbols: SymbolDef[]): number {
+  const byId = new Map(symbols.map((s) => [s.id, s]))
+  const seen = new Set<string>()
+  let seam = Math.max(1, root.timeline?.durationFrames ?? 1) // clean-loop period (multiple of every loop clip)
+  let longest = seam                                          // window must reach the last frame of any clip
+  const walk = (sym: SymbolDef | undefined): void => {
+    if (!sym || seen.has(sym.id)) return
+    seen.add(sym.id)
+    for (const it of instancesOf(sym)) {
+      const child = byId.get(it.symbolId)
+      const cdur = Math.max(1, child?.timeline?.durationFrames ?? 1)
+      const mode = it.playback?.mode
+      if (mode === 'independent') { seam = lcm(seam, cdur); longest = Math.max(longest, cdur) }
+      else if (mode === 'once') longest = Math.max(longest, cdur)
+      walk(child)
+    }
+  }
+  walk(root)
+  let dur = seam
+  while (dur < longest) dur += seam // keep a clean loop seam while covering the longest MovieClip
+  return Math.min(dur, 6000) // hard cap (~4 min @24fps) against a pathological coprime-duration blow-up
+}
+
 /**
  * Wraps ONE symbol from a `.flat` library into a minimal, playable Doc: a single centered instance on a
  * canvas auto-sized to the symbol's frame-0 bounds (+ padding). Lets you preview a library asset without
- * hand-authoring a wrapper `.flatink`. The root timeline borrows the symbol's own fps/duration so a `synced`
- * instance loops at its natural rate. Throws if the lib is empty or the named symbol is missing.
+ * hand-authoring a wrapper `.flatink`. The root timeline borrows the symbol's own fps and a duration long
+ * enough to show every nested MovieClip (`loop`/`once`) loop cleanly (`previewDuration`). Throws if the lib
+ * is empty or the named symbol is missing.
  */
 function buildPreviewDoc(flatPath: string, symbolName: string, pad: number, bboxMode: 'all' | 'frame0', setSpec: Record<string, string> = {}): { doc: Doc; symbol: SymbolDef; others: string[] } {
   const { symbols } = parseFlatLib(readFileSync(flatPath, 'utf8'))
@@ -277,7 +324,7 @@ function buildPreviewDoc(flatPath: string, symbolName: string, pad: number, bbox
   const instance: Instance = { id: 'preview_instance', kind: 'instance', name: symbol.name, transform: { ...IDENTITY }, symbolId: symbol.id }
   const layer: Layer = { id: 'preview_layer', name: 'preview', visible: true, locked: false, opacity: 1, items: [instance] }
   const tl = symbol.timeline
-  const dur = Math.max(1, tl?.durationFrames ?? 1)
+  const dur = previewDuration(symbol, symbols)
   const timeline = { fps: tl?.fps ?? 24, durationFrames: dur, tracks: [] }
   // ALL symbols stay in the library (the chosen one may instance the others) — only `instance` is on stage.
   let doc: Doc = { width: 1, height: 1, layers: [layer], symbols, timeline }

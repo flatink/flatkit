@@ -43,6 +43,11 @@ export type RenderCtx = {
   // keeps flowing so NESTED timelines (sub-loops / idles) keep playing under a state (RFC). Absent at the
   // root → falls back to `frame`.
   clockFrame?: number
+  // The runtime's MONOTONE heartbeat in SECONDS (`mono / fps`), set at the root and carried UNCHANGED down
+  // every scope. It drives `independent`/`once` instances (Flash MovieClip clock): they rebase on this beat
+  // (× their own fps) instead of the ancestor's wrapped frame, so a sub-loop is immune to a shorter parent.
+  // Absent (editor freeze / static walk) → such instances fall back to synced (parent-driven) playback.
+  monoTime?: number
   // Current instance's COLOR params (param name → hex) for `fill <param>` regions in its subtree.
   colorParams?: Record<string, string>
   // EDITOR: preview of a transform/move applied IN PLACE (z-index preserved) to the items
@@ -162,13 +167,14 @@ function accumDevBBox(doc: Doc, items: Item[], frame: number, matrix: Transform,
       const t = compose(matrix, it.transform)
       if (isInstance(it)) {
         const { sym, expr } = instanceScope(doc, it, rctx)
-        const { pose, clock } = instanceFrames(sym, it, clockOf(frame, rctx), rctx.freezeNested, expr)
-        const sub: RenderCtx = { fps: subFps(sym?.timeline?.fps, rctx), expr, clockFrame: clock }
+        const childFps = subFps(sym?.timeline?.fps, rctx)
+        const { pose, clock } = instanceFrames(sym, it, clockOf(frame, rctx), rctx.freezeNested, expr, monoFrameOf(childFps, rctx))
+        const sub: RenderCtx = { fps: childFps, expr, clockFrame: clock, monoTime: rctx.monoTime }
         const next = new Set([...seen, it.symbolId])
         for (const l of containerLayers(doc, it)) if (l.visible) accumDevBBox(doc, resolveLayerAt(l, pose, { fps: sub.fps, ctx: sub.expr, parent: t }), pose, t, next, acc, sub)
       } else if (isGroup(it) && it.timeline) {
         const groupFrame = rctx.freezeNested ? 0 : clockOf(frame, rctx)
-        const sub: RenderCtx = { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, clockFrame: groupFrame }
+        const sub: RenderCtx = { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, clockFrame: groupFrame, monoTime: rctx.monoTime }
         for (const l of it.layers) if (l.visible) accumDevBBox(doc, resolveLayerAt(l, groupFrame, { fps: sub.fps, ctx: sub.expr, parent: t }), groupFrame, t, seen, acc, sub)
       } else {
         for (const l of containerLayers(doc, it)) if (l.visible) accumDevBBox(doc, resolveLayerAt(l, frame, { fps: rctx.fps, ctx: rctx.expr, parent: t }), frame, t, seen, acc, rctx)
@@ -396,6 +402,11 @@ const MAX_NEST = 256
 /** Advancing playback clock handed to a scope's children (its own `clockFrame`, else its pose `frame`). */
 const clockOf = (frame: number, rctx: RenderCtx): number => rctx.clockFrame ?? frame
 
+/** The monotone MovieClip clock (frames at `childFps`) for an `independent`/`once` instance, from the
+ *  runtime beat (`monoTime` seconds). Undefined when there is no beat (editor/static walk) → synced. */
+const monoFrameOf = (childFps: number, rctx: RenderCtx): number | undefined =>
+  rctx.monoTime != null ? rctx.monoTime * childFps : undefined
+
 /** Enter an instance's sub-scope: merge its exposed params (declared/call-site/state-initial + runtime
  *  override) into the expr scope, and surface its color params. Shared by render/bbox/shape paths so the
  *  driven local frame and the subtree expressions read the SAME param values. */
@@ -439,13 +450,14 @@ function renderContainerChildren(
     const { sym, expr: subExpr, color } = instanceScope(doc, it, rctx)
     // (A) pose vs clock: a state machine pins `pose` (the symbol's cels) while `clock` keeps flowing into
     // the subtree → nested loops play under a pinned state. `clockFrame: clock` carries that forward.
-    const { pose, clock } = instanceFrames(sym, it, clockOf(frame, rctx), rctx.freezeNested, subExpr)
-    renderLayers(ctx, doc, containerLayers(doc, it), pose, hidden, seen, { fps: subFps(sym?.timeline?.fps, rctx), expr: subExpr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, paramsFor: rctx.paramsFor, clockFrame: clock, colorParams: color }, parent, depth + 1)
+    const childFps = subFps(sym?.timeline?.fps, rctx)
+    const { pose, clock } = instanceFrames(sym, it, clockOf(frame, rctx), rctx.freezeNested, subExpr, monoFrameOf(childFps, rctx))
+    renderLayers(ctx, doc, containerLayers(doc, it), pose, hidden, seen, { fps: childFps, expr: subExpr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, paramsFor: rctx.paramsFor, clockFrame: clock, monoTime: rctx.monoTime, colorParams: color }, parent, depth + 1)
   } else if (isGroup(it) && it.timeline) {
     // Local symbol (group with its own timeline) = a nested timeline too → rides the advancing clock so it
     // keeps playing under a state-pinned ancestor (frozen only in the editor's freezeNested mode).
     const groupFrame = rctx.freezeNested ? 0 : clockOf(frame, rctx)
-    renderLayers(ctx, doc, it.layers, groupFrame, hidden, seen, { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, clockFrame: groupFrame }, parent, depth + 1)
+    renderLayers(ctx, doc, it.layers, groupFrame, hidden, seen, { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, clockFrame: groupFrame, monoTime: rctx.monoTime }, parent, depth + 1)
   } else {
     // Group without a timeline = same scope as the parent (not a sub-scope) -> follows the scope's frame.
     renderLayers(ctx, doc, containerLayers(doc, it), frame, hidden, seen, rctx, parent, depth + 1)
@@ -487,13 +499,14 @@ function collectShape(
       const t = compose(matrix, it.transform)
       if (isInstance(it)) {
         const { sym, expr } = instanceScope(doc, it, rctx)
-        const { pose, clock } = instanceFrames(sym, it, clockOf(frame, rctx), rctx.freezeNested, expr)
-        const sub: RenderCtx = { fps: subFps(sym?.timeline?.fps, rctx), expr, clockFrame: clock }
+        const childFps = subFps(sym?.timeline?.fps, rctx)
+        const { pose, clock } = instanceFrames(sym, it, clockOf(frame, rctx), rctx.freezeNested, expr, monoFrameOf(childFps, rctx))
+        const sub: RenderCtx = { fps: childFps, expr, clockFrame: clock, monoTime: rctx.monoTime }
         const next = new Set([...seen, it.symbolId])
         for (const l of containerLayers(doc, it)) if (l.visible) collectShape(doc, resolveLayerAt(l, pose, { fps: sub.fps, ctx: sub.expr, parent: t }), pose, t, next, path, sub)
       } else if (isGroup(it) && it.timeline) {
         const groupFrame = rctx.freezeNested ? 0 : clockOf(frame, rctx)
-        const sub: RenderCtx = { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, clockFrame: groupFrame }
+        const sub: RenderCtx = { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, clockFrame: groupFrame, monoTime: rctx.monoTime }
         for (const l of it.layers) if (l.visible) collectShape(doc, resolveLayerAt(l, groupFrame, { fps: sub.fps, ctx: sub.expr, parent: t }), groupFrame, t, seen, path, sub)
       } else {
         for (const l of containerLayers(doc, it)) if (l.visible) collectShape(doc, resolveLayerAt(l, frame, { fps: rctx.fps, ctx: rctx.expr, parent: t }), frame, t, seen, path, rctx)

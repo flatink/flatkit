@@ -339,12 +339,33 @@ describe('resolveInstanceFrame', () => {
     expect(resolveInstanceFrame({ mode: 'singleFrame' }, 5, 20)).toBe(0) // default 0
   })
 
-  it('independent treated as synced in V1', () => {
-    expect(resolveInstanceFrame({ mode: 'independent' }, 25, 20)).toBe(5)
+  it('independent loops on the MONO clock (its own duration), ignoring the parent frame', () => {
+    // parentFrame 25 (would synced→5), but mono 50 mod 20 = 10 → immune to the parent's wrap.
+    expect(resolveInstanceFrame({ mode: 'independent' }, 25, 20, 50)).toBe(10)
+    expect(resolveInstanceFrame({ mode: 'independent' }, 0, 20, 7)).toBe(7)
+    expect(resolveInstanceFrame({ mode: 'independent' }, 0, 20, 23)).toBe(3) // wraps on 20, not on the parent
+  })
+
+  it('once plays through then HOLDS the last frame (clamped to [0, dur-1])', () => {
+    expect(resolveInstanceFrame({ mode: 'once' }, 0, 20, 5)).toBe(5)
+    expect(resolveInstanceFrame({ mode: 'once' }, 0, 20, 19)).toBe(19)
+    expect(resolveInstanceFrame({ mode: 'once' }, 0, 20, 100)).toBe(19) // held on the last frame
+    expect(resolveInstanceFrame({ mode: 'once' }, 0, 20, -3)).toBe(0) // clamped low
+  })
+
+  it('independent/once fall back to synced when there is no mono clock (static walk)', () => {
+    expect(resolveInstanceFrame({ mode: 'independent' }, 25, 20)).toBe(5) // no monoFrame → parent-driven
+    expect(resolveInstanceFrame({ mode: 'once' }, 25, 20)).toBe(5)
+  })
+
+  it('synced ignores the mono clock (graphic-symbol style, parent-driven)', () => {
+    expect(resolveInstanceFrame({ mode: 'synced' }, 25, 20, 99)).toBe(5)
+    expect(resolveInstanceFrame(undefined, 25, 20, 99)).toBe(5)
   })
 
   it('zero duration → frame 0 (no division by zero)', () => {
     expect(resolveInstanceFrame({ mode: 'synced' }, 7, 0)).toBe(0)
+    expect(resolveInstanceFrame({ mode: 'independent' }, 7, 0, 5)).toBe(0)
   })
 })
 

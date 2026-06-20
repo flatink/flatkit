@@ -1286,3 +1286,32 @@ describe('flatFormat — text on a path (`along`)', () => {
     expect(lit.textPath?.startExpr).toBeUndefined()
   })
 })
+
+describe('flatFormat — instance playback mode (loop / once / synced)', () => {
+  const parse = (attr: string): Instance => {
+    const src = `symbol "Clip" { timeline 24 24  layer "c" { circle 0 0 4 fill #000000 } }\n` +
+      `symbol "P" { timeline 24 24  layer "c" { instance "Clip" as "s"${attr} } }`
+    return parseFlatLib(src).symbols.find((s) => s.name === 'P')!.layers[0].items[0] as Instance
+  }
+
+  it('`loop` parses to independent, `once` to once, bare/`synced` to no playback (default)', () => {
+    expect(parse(' loop').playback).toEqual({ mode: 'independent' })
+    expect(parse(' once').playback).toEqual({ mode: 'once' })
+    expect(parse('').playback).toBeUndefined()
+    expect(parse(' synced').playback).toBeUndefined() // explicit default is a no-op
+  })
+
+  it('the keyword survives alongside other pose attrs, any order', () => {
+    expect(parse(' at 10,0 opacity 0.5 loop').playback).toEqual({ mode: 'independent' })
+  })
+
+  it('prints ` loop` / ` once` and round-trips idempotently', () => {
+    const src = `symbol "Clip" {\n  timeline 24 24\n  layer "c" {\n    circle 0 0 4 fill #000000\n  }\n}\n\n` +
+      `symbol "P" {\n  timeline 24 24\n  layer "c" {\n    instance "Clip" as "a" loop\n    instance "Clip" as "b" once\n    instance "Clip" as "c"\n  }\n}\n`
+    const printed = printFlat(parseFlatLib(src).symbols)
+    expect(printed).toContain('instance "Clip" as "a" loop')
+    expect(printed).toContain('instance "Clip" as "b" once')
+    expect(printed).toContain('instance "Clip" as "c"\n')
+    expect(printFlat(parseFlatLib(printed).symbols)).toBe(printed) // idempotent
+  })
+})

@@ -12,7 +12,7 @@
 //
 //  PURE module (no DOM).
 // ─────────────────────────────────────────────────────────────────────────────
-import type { Asset, Doc, Folder, Group, Image, Instance, Item, Layer, ParamDef, Region, StateAnchor, StateMachine, SymbolDef, Text } from '@flatkit/types'
+import type { Asset, Doc, Folder, Group, Image, Instance, InstancePlayback, Item, Layer, ParamDef, Region, StateAnchor, StateMachine, SymbolDef, Text } from '@flatkit/types'
 import type { Path } from './path'
 import { normalizeClosedForText } from './path'
 import type { Paint, Stop, Tint } from './paint'
@@ -182,10 +182,16 @@ function printImage(im: Image, withExpr: boolean): string {
   return `image ${q(im.assetId)} ${n(im.w)} ${n(im.h)}${asName}${printTransform(im.transform)}` + printPoseAttrs(im, withExpr)
 }
 
+/** Playback keyword for the non-default modes: `loop` (independent) / `once`. `synced`/`singleFrame` → ''. */
+function printPlayback(pb: InstancePlayback | undefined): string {
+  if (pb?.mode === 'independent') return ' loop'
+  if (pb?.mode === 'once') return ' once'
+  return ''
+}
 function printInstance(it: Instance, ctx: Ctx): string {
   const sym = ctx.symName(it.symbolId)
   const asName = it.name !== sym ? ` as ${q(it.name)}` : ''
-  return `instance ${q(sym)}${asName}${printTransform(it.transform)}` + printPoseAttrs(it, ctx.inlineExpr) + printCallSiteParams(it.params)
+  return `instance ${q(sym)}${asName}${printTransform(it.transform)}` + printPoseAttrs(it, ctx.inlineExpr) + printPlayback(it.playback) + printCallSiteParams(it.params)
 }
 /** Call-site param values: ` { name = value, … }` (empty/absent → nothing). */
 function printCallSiteParams(params?: Record<string, string>): string {
@@ -953,7 +959,7 @@ function tokenize(src: string): Tok[] {
   return out
 }
 
-type ParsedAttrs = { opacity?: number; pivot?: { x: number; y: number }; tint?: Tint; filters?: Filter[]; expressions?: Partial<Record<ExprChannel, string>>; noHit?: boolean; blend?: BlendMode; hitbox?: { w: number; h: number }; clip?: { x: number; y: number; w: number; h: number } }
+type ParsedAttrs = { opacity?: number; pivot?: { x: number; y: number }; tint?: Tint; filters?: Filter[]; expressions?: Partial<Record<ExprChannel, string>>; noHit?: boolean; blend?: BlendMode; hitbox?: { w: number; h: number }; clip?: { x: number; y: number; w: number; h: number }; playback?: InstancePlayback }
 
 /** An `align <point> of "target" [offset]` pending: `tf` is the SHARED ref with the item, mutated
  *  in place by resolveAligns once the scene is parsed (the bbox of `target` is then computable). */
@@ -1341,7 +1347,9 @@ class FlatParser {
     const transform = this.transform(name)
     const a = this.poseAttrs()
     const params = this.is('{') ? this.callSiteParams() : undefined // `instance "X" { hull = #fff, wave = 1.5 }`
-    return { id: uid('i'), kind: 'instance', name, transform, symbolId: '@' + symName, ...leafAttrs(a), ...(a.clip ? { clip: a.clip } : {}), ...exprAttr(a), ...(params ? { params } : {}) }
+    // `synced` is the default → store a `playback` only for the non-default modes (keeps round-trips minimal).
+    const playback = a.playback && a.playback.mode !== 'synced' ? a.playback : undefined
+    return { id: uid('i'), kind: 'instance', name, transform, symbolId: '@' + symName, ...leafAttrs(a), ...(a.clip ? { clip: a.clip } : {}), ...exprAttr(a), ...(playback ? { playback } : {}), ...(params ? { params } : {}) }
   }
   /** Call-site values for a symbol's exposed params: `{ name = <literal> [, name2 = …] }` (single-token literals). */
   private callSiteParams(): Record<string, string> {
@@ -1475,6 +1483,11 @@ class FlatParser {
       else if (this.is('blend')) { this.next(); a.blend = this.next().v as BlendMode }
       else if (this.is('hitbox')) { this.next(); const w = this.num(); const h = this.num(); a.hitbox = { w, h } }
       else if (this.is('clip')) { this.next(); const x = this.num(); const y = this.num(); const w = this.num(); const h = this.num(); a.clip = { x, y, w, h } }
+      // Instance playback mode (Flash symbol models) — only meaningful on an `instance`; ignored elsewhere.
+      // `loop` = independent MovieClip clock; `once` = play-through-and-hold; `synced` = default (no-op).
+      else if (this.is('loop')) { this.next(); a.playback = { mode: 'independent' } }
+      else if (this.is('once')) { this.next(); a.playback = { mode: 'once' } }
+      else if (this.is('synced')) { this.next(); a.playback = { mode: 'synced' } }
       else break
     }
     return a

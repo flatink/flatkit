@@ -73,15 +73,32 @@ export function resolveContent(tl: Timeline | undefined, frame: number): Map<str
   return out
 }
 
-/** Local frame of an instance according to its playback mode (nested timeline). */
+/**
+ * Local frame of an instance according to its playback mode (nested timeline).
+ *
+ * `parentFrame` = the ancestor's advancing clock (the SLAVE source for `synced`). `monoFrame` = the
+ * runtime's MONOTONE heartbeat already expressed in THIS instance's fps domain (`mono` seconds × clip fps)
+ * — the INDEPENDENT source for `independent`/`once`. Absent (no runtime clock, e.g. a static editor walk) →
+ * `independent`/`once` gracefully fall back to the synced (parent-driven) frame so a bare render still works.
+ *
+ *  - `singleFrame`           → the pinned frame.
+ *  - `independent` (`loop`)  → `mono mod dur`: loops on its OWN duration, immune to the parent's wrap.
+ *  - `once`                  → `clamp(mono, 0, dur-1)`: plays through once, then holds the last frame.
+ *  - `synced` (default)      → `parentFrame mod dur`: graphic-symbol style, truncated by the parent.
+ */
 export function resolveInstanceFrame(
   pb: InstancePlayback | undefined,
   parentFrame: number,
   symbolDuration: number,
+  monoFrame?: number,
 ): number {
   if (pb?.mode === 'singleFrame') return pb.frame ?? 0
-  // 'synced' and 'independent' (V1 = like synced): loop within [0, duration), graphic-symbol style.
   const dur = Math.max(1, symbolDuration)
+  if (monoFrame != null && (pb?.mode === 'independent' || pb?.mode === 'once')) {
+    if (pb.mode === 'once') return Math.max(0, Math.min(dur - 1, monoFrame))
+    return ((monoFrame % dur) + dur) % dur
+  }
+  // 'synced' (default), and independent/once with no runtime clock: loop on the parent's (wrapped) frame.
   return ((parentFrame % dur) + dur) % dur
 }
 

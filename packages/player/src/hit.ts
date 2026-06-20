@@ -111,8 +111,14 @@ function hitRegion(r: Region, pt: Point): boolean {
  *  - PLAYER: instances via `instanceFrames`; a local symbol (group+timeline) rides the clock; a plain
  *    group is the same scope (pose = parent frame, clock unchanged).
  */
-function subScopeFrames(it: Group | Instance, sym: SymbolDef | undefined, frame: number, clock: number, ctx: ExprContext, freeze: boolean): { pose: number; clock: number } {
-  if (isInstance(it)) return instanceFrames(sym, it, clock, freeze, ctx)
+function subScopeFrames(it: Group | Instance, sym: SymbolDef | undefined, frame: number, clock: number, ctx: ExprContext, freeze: boolean, fps: number): { pose: number; clock: number } {
+  if (isInstance(it)) {
+    // `independent`/`once` ride the runtime beat, not the parent clock — so the hit shape matches what's
+    // DRAWN (drawScene uses the same beat). `ctx.clock` carries `mono / fps` (seconds) → × the clip's fps.
+    const childFps = sym?.timeline?.fps ?? fps
+    const monoFrame = typeof ctx.clock === 'number' ? ctx.clock * childFps : undefined
+    return instanceFrames(sym, it, clock, freeze, ctx, monoFrame)
+  }
   if (isGroup(it) && it.timeline) { const f = freeze ? 0 : clock; return { pose: f, clock: f } }
   return { pose: frame, clock } // plain group = same scope (frame passes through)
 }
@@ -155,7 +161,7 @@ function hitInScope(
         const inst = isInstance(it)
         const sym = inst ? getSymbol(doc, it.symbolId) : undefined
         const subTl = inst ? sym?.timeline : isGroup(it) && it.timeline ? it.timeline : timeline // local symbol = its timeline; legacy group = parent scope
-        const { pose: subFrame, clock: subClock } = subScopeFrames(it, sym, frame, clock, ctx, freeze)
+        const { pose: subFrame, clock: subClock } = subScopeFrames(it, sym, frame, clock, ctx, freeze, fps)
         const next = inst ? new Set([...seen, it.symbolId]) : seen
         const deeper = hitInScope(doc, containerLayers(doc, it), subTl, subFrame, subClock, ctx, local, next, freeze, compose(parent, it.transform), depth + 1)
         if (deeper) return [it.id, ...deeper]
@@ -216,7 +222,7 @@ function collectInScope(
         const inst = isInstance(it)
         const sym = inst ? getSymbol(doc, it.symbolId) : undefined
         const subTl = inst ? sym?.timeline : isGroup(it) && it.timeline ? it.timeline : timeline
-        const { pose: subFrame, clock: subClock } = subScopeFrames(it, sym, frame, clock, ctx, freeze)
+        const { pose: subFrame, clock: subClock } = subScopeFrames(it, sym, frame, clock, ctx, freeze, fps)
         const next = inst ? new Set([...seen, it.symbolId]) : seen
         const deeper: string[][] = []
         collectInScope(doc, containerLayers(doc, it), subTl, subFrame, subClock, ctx, local, next, freeze, deeper, compose(parent, it.transform), depth + 1)
@@ -305,7 +311,7 @@ export function hitContextAt(
         const inst = isInstance(it)
         const sym = inst ? getSymbol(doc, it.symbolId) : undefined
         const subTl = inst ? sym?.timeline : isGroup(it) && it.timeline ? it.timeline : timeline // local symbol = its timeline; legacy group = parent scope
-        const { pose: subFrame, clock: subClock } = subScopeFrames(it, sym, frame, frame, ctx ?? {}, freeze)
+        const { pose: subFrame, clock: subClock } = subScopeFrames(it, sym, frame, frame, ctx ?? {}, freeze, fps)
         const seen = inst ? new Set([it.symbolId]) : new Set<string>()
         if (hitInScope(doc, containerLayers(doc, it), subTl, subFrame, subClock, ctx ?? {}, local, seen, freeze, it.transform)) return { item: it, layerId: layer.id }
       } else if (isText(it)) {

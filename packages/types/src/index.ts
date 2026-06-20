@@ -143,12 +143,27 @@ export type InstanceBind = {
   expr: Partial<Record<ExprChannel, string>> // bound channels
 }
 
-export type PlaybackMode = 'synced' | 'singleFrame' | 'independent'
+/**
+ * How a nested instance's OWN timeline advances (Flash's symbol-instance models):
+ *  - `synced`      — Graphic symbol: the local frame DERIVES from the ancestor's (a slave clock). Scrubbed
+ *                    and TRUNCATED by the parent (looped within [0,duration)). The default — deterministic,
+ *                    lip-sync / editor scrub friendly.
+ *  - `independent` — MovieClip: an INDEPENDENT clock. The playhead is driven by the runtime's monotone
+ *                    heartbeat (`mono`), looped on the instance's OWN duration, immune to any ancestor's
+ *                    loop length. For state-loops / idles that must keep their phase across the parent's wrap.
+ *  - `once`        — like `independent` but CLAMPED to [0, duration-1]: plays through once, then HOLDS the
+ *                    last frame forever (a one-shot: a splash, an explosion, a "fried" pose that stays fried).
+ *  - `singleFrame` — frozen on a fixed `frame` (a dead pose).
+ */
+export type PlaybackMode = 'synced' | 'singleFrame' | 'independent' | 'once'
 export type InstancePlayback = {
   mode: PlaybackMode
   frame?: number // for singleFrame
   speed?: number // reserved (independent)
   loop?: boolean // reserved (independent)
+  // reserved (Phase 2): per-instance phase offset / re-trigger anchor for `independent`/`once` — lets a
+  // one-shot (re)start from 0 when its state becomes visible, instead of riding the global `mono` from 0.
+  startFrame?: number
 }
 
 // ── Actions / interaction ────────────────────────────────────────────────────

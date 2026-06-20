@@ -954,7 +954,7 @@ export class FlatPlayer {
     const expr = this.playing && this.simActive && this.prevSimVars && this.simAlpha < 1
       ? this.exprCtx(lerpVars(this.prevSimVars, this.vars, this.simAlpha))
       : this.exprCtx()
-    renderLayers(ctx, doc, doc.layers, this.frame, null, new Set(), { fps: this.fps, expr, image: (id) => this.imageFor(id), filterCache: this.filterCache, imageEpoch: this.imageEpoch, itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id) })
+    renderLayers(ctx, doc, doc.layers, this.frame, null, new Set(), { fps: this.fps, expr, image: (id) => this.imageFor(id), filterCache: this.filterCache, imageEpoch: this.imageEpoch, itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), monoTime: this.mono / this.fps })
     ctx.restore()
   }
 
@@ -1072,7 +1072,12 @@ export class FlatPlayer {
   seek(frame: number): void {
     this.frame = Math.max(0, Math.min(this.duration, frame))
     this.lastFrameInt = Math.floor(this.frame) // a seek does not trigger the frame-actions (anti-loop)
+    // While PLAYING, `mono` free-runs across loop wraps (kept monotone by the sim/rAF) → an `independent`
+    // clip keeps its phase. A seek while NOT playing is a SCRUB / static render: anchor `mono` to the
+    // scrubbed frame so MovieClip clips (independent/once) resolve deterministically (phase = frame mod dur)
+    // — this is what makes a headless `seek`+`render` and `--render --frame N` reproducible.
     if (this.playing) this.startAudio(this.frame) // resyncs the audio
+    else this.mono = this.frame
     this.render()
   }
 

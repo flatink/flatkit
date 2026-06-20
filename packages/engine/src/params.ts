@@ -76,6 +76,12 @@ export type InstanceFrames = { pose: number; clock: number }
  *
  * `freeze` (the editor's `freezeNested`) keeps the historical behavior — nested timelines do not play, so
  * pose = clock = the frozen frame (a state-driven instance still freezes at its selected state's frame).
+ *
+ * `monoFrame` = the runtime's MONOTONE heartbeat in THIS instance's fps domain (`mono` s × clip fps). It
+ * feeds `independent`/`once` playback (a Flash MovieClip clock): such an instance REBASES on the global beat
+ * and ignores the ancestor's loop length, so its sub-loop never gets truncated by a shorter parent. The
+ * resulting `clock` is the instance's OWN local frame → it flows on (as the children's `parentClock`) so a
+ * `synced` child still rides this MovieClip's frame. Absent → independent/once fall back to synced.
  */
 export function instanceFrames(
   sym: SymbolDef | undefined,
@@ -83,9 +89,10 @@ export function instanceFrames(
   parentClock: number,
   freeze = false,
   expr?: ExprContext,
+  monoFrame?: number,
 ): InstanceFrames {
   if (freeze) { const f = frozenInstanceFrame(sym, inst); return { pose: f, clock: f } }
-  const clock = sym?.timeline ? resolveInstanceFrame(inst.playback, parentClock, sym.timeline.durationFrames) : parentClock
+  const clock = sym?.timeline ? resolveInstanceFrame(inst.playback, parentClock, sym.timeline.durationFrames, monoFrame) : parentClock
   const sm = sym?.states?.[0]
   if (!sm) return { pose: clock, clock } // no state → pose tracks the clock (ordinary nested playback)
   const raw = expr?.[sm.param]
