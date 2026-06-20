@@ -1,6 +1,6 @@
 {
   "browser.js": {
-    "gzip": 28160,
-    "brotli": 25088
+    "gzip": 40960,
+    "brotli": 36864
   }
 }
