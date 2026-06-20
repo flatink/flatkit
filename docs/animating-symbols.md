@@ -127,9 +127,26 @@ group "Fan" pivot 0,0 expr rotation "turns(time)" { … }   ← one turn per sec
 
 ## Looping & instancing
 
-The timeline loops over `[0, durationFrames)`. An `instance` of the symbol plays **synced** by default
-(loops at the symbol's own rate); `singleFrame` freezes it on one frame. `--preview` borrows the
-symbol's fps/duration so the wrapped instance loops at its natural rate.
+The timeline loops over `[0, durationFrames)`. An `instance` of a symbol chooses **how its own timeline
+advances** (Flash's symbol-instance models), written after the instance's attributes:
+
+```
+instance "Walk" as "legs"                # synced (default)
+instance "Walk" as "legs" loop           # independent (MovieClip)
+instance "Splash" as "fx" once           # play once, then hold the last frame
+```
+
+| mode | clock | behavior |
+|---|---|---|
+| *(default)* / `synced` | the parent's frame | **Graphic symbol**: scrubbed and *truncated* by the parent — if an ancestor's timeline is shorter than (or not a multiple of) the sub-loop, it snaps mid-cycle. Best for lip-sync, deterministic scrub. |
+| `loop` (`independent`) | the runtime's monotone clock | **MovieClip**: loops on its *own* duration, immune to any ancestor's loop length. Use for state-loops and idles that must keep their phase across the parent's wrap. |
+| `once` | the monotone clock, clamped | plays through **once**, then **holds** the last frame — a one-shot (a splash, an explosion, a pose that stays). |
+| `singleFrame` | — | frozen on a fixed frame. |
+
+A `loop`/`once` instance runs on the global heartbeat, so it never needs its parent padded to a common
+multiple ("LCM") of its sub-loops. In the **editor** it shows frame 0 (MovieClip-style authoring); it plays
+at runtime — edit its keyframes by opening the symbol itself. `--preview` sizes its window to show a nested
+`loop`/`once` looping cleanly, without touching the previewed symbol's own authored duration.
 
 ## Exposed parameters (`params`)
 
@@ -155,10 +172,12 @@ symbol "Boat" {
 
 - `params { <type> <name> = <default> [range <min> <max>] ["doc"] … }` — `<type>` is `color`, `number`,
   or `bool`. The default, range, and doc string make the interface self-describing.
-- **`color` params** are used as a paint — `fill hull` **or** `stroke hull <width>` (anywhere a `#color`
-  literal goes). Resolved per instance at render; *not* available in numeric expressions.
+- **`color` params** are used as a paint — `fill hull`, `stroke hull <width>`, a **gradient stop**
+  (`0:hull@0.8`, optional `@alpha`), or a **`tint hull <amount>`** (anywhere a `#color` literal goes).
+  Resolved per instance at render; *not* available in numeric expressions.
 - **`number` / `bool` params** become **variables in the symbol's expressions** (`wave`, `flag`). `bool`
-  reads as `1`/`0`.
+  reads as `1`/`0`. (`flatc --check` knows them — reading a declared param in an `expr` is not an "unknown
+  variable".)
 
 > The `timeline`, `params`, and `states` header blocks may appear in **any order** before the layers.
 

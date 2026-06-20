@@ -42,6 +42,18 @@ fill linear(90, 0:#bdecff, 1:#2f8fe0)          # angle: 0 = →, 90 = ↓ ; stop
 fill radial(0.5, 0.5, 0.5, 0:#fff, 1:#000)     # cx, cy, r (0..1), then stops
 ```
 
+A stop's color can be a symbol **`color` param** instead of a literal — so a gradient (a halo, a glow) is
+recolorable per instance, like `fill <param>` is for a solid. An optional `@alpha` (0..1) sets the stop's
+alpha, since a param is a 6-digit hue:
+
+```
+params { color teinte = #ffe9a8 }
+circle 0 0 60 fill radial(0.5, 0.5, 0.5, 0:teinte@0.8, 1:teinte@0)   # same hue, alpha fading 0.8 → 0
+```
+
+Param and literal stops mix freely (`0:teinte@0.8, 0.5:#3366ffcc, 1:teinte@0`). See
+[exposed parameters](animating-symbols.md#exposed-parameters-params).
+
 ### Filters
 
 `filter` works on any item (shape, text, image, group) — no need to wrap in a group:
@@ -145,7 +157,7 @@ layout (stack with `repeat` + `$()`, see [factoring](behavior-and-interactions.m
 ## Other item attributes
 
 - `pivot <x>,<y>` — origin offset (the rotation/scale center).
-- `tint <color> <amount>` — Flash-style tint, `amount` 0..1.
+- `tint <color> <amount>` — Flash-style tint, `amount` 0..1. `<color>` may be a symbol `color` param (`tint teinte 0.4`), recolorable per instance.
 - `nohit` — stays **drawn** but ignored by hit-testing (clicks pass through). On a group, applies to the
   whole subtree. Ideal for a decorative full-screen veil.
 
