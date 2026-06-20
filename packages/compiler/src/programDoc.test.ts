@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { scopeProgram, docLintContext, lintDoc, lintDocReport, docStructureWarnings, docHasErrors, docLayoutWarnings } from './programDoc'
 import { IDENTITY, translation } from '@flatkit/engine/transform'
-import type { Doc, Group, Image, Interaction, Layer, Text } from '@flatkit/types'
+import type { Doc, Group, Image, Interaction, Layer, SymbolDef, Text } from '@flatkit/types'
 
 const group = (id: string, name: string): Group => ({ id, kind: 'group', name, transform: IDENTITY, layers: [] })
 const layer = (items: Layer['items']): Layer => ({ id: 'L', name: 'L', visible: true, locked: false, opacity: 1, items })
@@ -54,6 +54,38 @@ describe('programDoc — lintDoc', () => {
       ],
     }
     expect(lintDocReport(d)).toBe('')
+  })
+})
+
+describe("programDoc — a symbol's params are known in its expr (RFC)", () => {
+  const exprGroup = (name: string, expr: Record<string, string>): Group => ({ id: `g_${name}`, kind: 'group', name, transform: IDENTITY, layers: [layer([])], expressions: expr })
+  const sym = (name: string, group: Group, extra: Partial<SymbolDef> = {}): SymbolDef =>
+    ({ id: `s_${name}`, name, timeline: { fps: 24, durationFrames: 24, tracks: [] }, layers: [layer([group])], ...extra })
+  const doc = (symbols: SymbolDef[]): Doc => ({ width: 100, height: 100, symbols, layers: [], timeline: { fps: 24, durationFrames: 24, tracks: [] } })
+
+  it('a param read in the symbol\'s own expr is NOT an unknown variable', () => {
+    const d = doc([sym('S', exprGroup('g', { scaleX: 'k' }), { params: [{ name: 'k', type: 'number', default: '1' }] })])
+    expect(lintDocReport(d)).toBe('')
+  })
+
+  it('a STATE param is known too', () => {
+    const d = doc([sym('D', exprGroup('g', { opacity: 'door' }), { states: [{ param: 'door', states: [{ name: 'open', frame: 0 }, { name: 'shut', frame: 12 }], initial: 'shut' }] })])
+    expect(lintDocReport(d)).toBe('')
+  })
+
+  it('SCOPING: a param of symbol A does not silence an unknown of the same name in symbol B', () => {
+    const d = doc([
+      sym('A', exprGroup('ga', { rotation: 'roulis' }), { params: [{ name: 'roulis', type: 'number', default: '1' }] }),
+      sym('B', exprGroup('gb', { rotation: 'roulis' })), // B declares no `roulis` → must still error
+    ])
+    const report = lintDocReport(d)
+    expect(report).toMatch(/\[B\].*unknown variable "roulis"/)
+    expect(report).not.toMatch(/\[A\]/) // A's legitimate use stays clean
+  })
+
+  it('a genuinely undeclared id (neither param nor let) is still flagged', () => {
+    const d = doc([sym('S', exprGroup('g', { scaleX: 'kk' }), { params: [{ name: 'k', type: 'number', default: '1' }] })])
+    expect(lintDocReport(d)).toMatch(/\[S\].*unknown variable "kk"/)
   })
 })
 
