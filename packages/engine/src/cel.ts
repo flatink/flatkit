@@ -317,7 +317,10 @@ const evalOverlayCache = new WeakMap<ResolveOpts, ReturnType<typeof exprScope>>(
 function evalOverlayFor(opts: ResolveOpts, time: number, frame: number): ReturnType<typeof exprScope> {
   let o = evalOverlayCache.get(opts)
   if (o === undefined) {
-    o = exprScope(spaceConversions(opts.parent ?? IDENTITY), time, frame)
+    // Carry the real MONOTONE `clock` from the scene ctx: the overlay wins over `base` in resolveName, so
+    // without this a channel expr reading `clock` would get the loop-wrapped `time` (exprScope's fallback).
+    const clock = typeof opts.ctx?.clock === 'number' ? opts.ctx.clock : undefined
+    o = exprScope(spaceConversions(opts.parent ?? IDENTITY), time, frame, undefined, clock)
     evalOverlayCache.set(opts, o)
   }
   return o

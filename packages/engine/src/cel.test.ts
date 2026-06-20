@@ -219,6 +219,14 @@ describe('cel — resolveLayerAt', () => {
     expect(tx(resolveLayerAt(l, 12, { fps: 24 })[0])).toBeCloseTo(0.5)
   })
 
+  it('`clock` channel expression reads the MONOTONE clock from the scene ctx, not loop-wrapped `time`', () => {
+    const g: Group = { ...group('g1'), expressions: { x: 'clock' } }
+    const l = layer([g], [{ frame: 0, poses: [{ id: 'g1' }] }])
+    // At frame 24 / fps 24, `time` = 1; the real monotone `clock` (7.5) must win (it's threaded into the
+    // per-layer eval overlay). Guards the regression where the overlay dropped clock → clock fell back to time.
+    expect(tx(resolveLayerAt(l, 24, { fps: 24, ctx: { clock: 7.5 } })[0])).toBeCloseTo(7.5)
+  })
+
   it('applies the pose to an instance (transform/opacity/tint) keeping its body', () => {
     const l = layer([inst('i1', 'SYM')], [
       { frame: 0, poses: [{ id: 'i1', transform: translation(7, 0), opacity: 0.3 }] },
