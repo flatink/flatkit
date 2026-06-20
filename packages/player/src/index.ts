@@ -7,6 +7,7 @@ export { FlatPlayer, sameOriginAssetResolver, type PlayerOptions } from './playe
 // (playHeadless, trace) live under `@flatkit/player/debug` — not needed for plain playback.
 export type { Gesture } from './player'
 export { renderLayers, renderItems, regionPath, applyTransform } from './drawScene'
+export { warmHitCache } from './hit' // pre-flatten hittable paths so the first hit-test isn't a cold-start jolt
 export { evaluateTimeline, resolveInstanceFrame } from '@flatkit/engine/timeline'
 export { resolveLayerAt } from '@flatkit/engine/cel'
 export { polygonsToPath, pathToPolygons, pathToBezier, transformPath, translatePath, pathBBox, clonePath } from '@flatkit/engine/path'

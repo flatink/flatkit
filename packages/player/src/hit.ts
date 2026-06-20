@@ -8,7 +8,7 @@
 //  and embeddable.
 // -----------------------------------------------------------------------------
 import type { Doc, Group, Instance, Item, Layer, Path, Point, Region, SymbolDef } from '@flatkit/types'
-import { containerLayers, getSymbol, isContainer, isGroup, isInstance, isText, isImage, layerStructure } from '@flatkit/engine/layers'
+import { containerLayers, getSymbol, isContainer, isGroup, isInstance, isRegion, isText, isImage, layerStructure } from '@flatkit/engine/layers'
 import { apply, invert, compose, IDENTITY, type Transform } from '@flatkit/engine/transform'
 import { type Timeline } from '@flatkit/engine/timeline'
 import { instanceFrames } from '@flatkit/engine/params'
@@ -237,6 +237,39 @@ export function hitChains(doc: Doc, frame: number, ctx: ExprContext, worldPt: Po
   const out: string[][] = []
   collectInScope(doc, doc.layers, doc.timeline, frame, frame, ctx, worldPt, new Set(), false, out)
   return out
+}
+
+/**
+ * Pre-flatten every hittable path (region fills + cel material) into the shared `pathToPolygons` cache, so
+ * the FIRST hit-test doesn't pay the whole scene's Bezier flattening at once — the cold-start jolt felt on
+ * the first `pointermove`/`pointerdown`, when the cache is still empty. Structural, frame-independent walk:
+ * the path objects come from the doc and are reused by the hit test BY REFERENCE, so warming them now means
+ * cache hits later. Recurses into groups and (once each) symbols; cycle-safe via `seenSym`. Returns the
+ * number of paths warmed. Call it OFF the critical path — the player schedules it on `requestIdleCallback`
+ * after the first paint, and a host can also call `FlatPlayer.warmHitCache()` explicitly.
+ */
+export function warmHitCache(doc: Doc): number {
+  let n = 0
+  const seenSym = new Set<string>()
+  const warm = (p: Path): void => { pathToPolygons(p); n++ }
+  const visitLayers = (layers: Layer[]): void => { for (const layer of layers) visitLayer(layer) }
+  const visitLayer = (layer: Layer): void => {
+    for (const it of layer.items) visitItem(it) // roster: containers (+ regions on a static layer)
+    if (layer.cels) for (const c of layer.cels) if (c.matter) for (const r of c.matter) warm(r.path) // cel material
+  }
+  const visitItem = (it: Item): void => {
+    if (isGroup(it)) { visitLayers(it.layers); return }
+    if (isInstance(it)) {
+      if (seenSym.has(it.symbolId)) return // a symbol's paths are shared across its instances → warm once
+      seenSym.add(it.symbolId)
+      const sym = getSymbol(doc, it.symbolId)
+      if (sym) visitLayers(sym.layers)
+      return
+    }
+    if (isRegion(it)) warm(it.path)
+  }
+  visitLayers(doc.layers)
+  return n
 }
 
 /**

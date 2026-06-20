@@ -98,4 +98,29 @@ describe('FlatPlayer -- self interaction state exposed to channel exprs (#10A)',
     expect(namedX()).toBe(70) // NOT stale at 30 → the move busted the named cache because the doc reads mouse.x
     pl.destroy()
   })
+
+  it('schedules the hit-cache warm on idle and cancels it on destroy', async () => {
+    const { FlatPlayer } = await import('./player')
+    let idleCb: (() => void) | null = null
+    let canceled = 0
+    vi.stubGlobal('requestIdleCallback', (cb: () => void) => { idleCb = cb; return 7 })
+    vi.stubGlobal('cancelIdleCallback', (id: number) => { if (id === 7) canceled++ })
+    const doc = { width: 100, height: 100, symbols: [], layers: [{ id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: [piece()] }], timeline: { fps: 24, durationFrames: 1, tracks: [] } } as unknown as Doc
+
+    const pl = new FlatPlayer(fakeCanvas({}), doc, { input: true })
+    expect(typeof idleCb).toBe('function') // warm is deferred to idle (off the first-paint path)
+    idleCb!() // the warm runs without error; the handle is cleared so destroy won't cancel
+    pl.destroy()
+    expect(canceled).toBe(0)
+
+    // destroyed BEFORE idle fires → the pending warm is canceled.
+    const pl2 = new FlatPlayer(fakeCanvas({}), doc, { input: true })
+    pl2.destroy()
+    expect(canceled).toBe(1)
+
+    // input:false → no auto hit-testing → nothing scheduled.
+    idleCb = null
+    new FlatPlayer(fakeCanvas({}), doc, { input: false }).destroy()
+    expect(idleCb).toBeNull()
+  })
 })

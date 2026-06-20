@@ -65,6 +65,22 @@ Re-profiler `voyage-bouchee` en bougeant la souris (Chrome perf trace) : `pointe
 **~146 ms → sub-ms** (plus de flatten ni de GC par-move). Côté EDU, on peut aussi mesurer dans le navigateur
 (dispatch de quelques `pointermove` + `performance.now()`).
 
+## Suivi (après 0.17.2 livré) — le COLD-START du premier move
+
+Vérifié côté EDU : 0.17.2 supprime le lag **récurrent** (smooth en continu), mais il reste un **gros à-coup sur
+le TOUT PREMIER hit-test** — `pointermove` OU `pointerdown` (les deux appellent `hitChains`). Le cache est vide,
+donc ce premier hit-test paie l'aplatissement de tous les paths hittables d'un coup (~les 146 ms), puis tout est
+en cache → fluide. (Donc selon que l'utilisateur bouge ou clique en premier, c'est l'un ou l'autre qui rame.)
+
+**Piste de fix** : **réchauffer le cache hors du chemin critique**, pour que la 1ʳᵉ interaction ne le paie pas.
+Quelques options (à toi) :
+- pendant le **premier render** (la boucle parcourt déjà les items) : aplatir au passage les paths des items
+  **hittables** (régions interactives / masques) → le cache est chaud avant tout move ;
+- ou un **warm-up paresseux** sur un callback idle/rAF après le 1er paint (flatten les paths hittables) ;
+- ou exposer une API `warmHitCache()` que l'hôte appelle après le montage.
+Le coût est inévitable une fois (il faut bien aplatir), mais il doit être **hors du premier geste** (caché dans
+le load, comme le reste de la prépa de scène), pas ressenti comme un à-coup d'interaction.
+
 ## Honnêteté
 
 Diagnostic depuis le **profil navigateur réel**, pas le headless — qui m'avait menti (mon point de test tombait

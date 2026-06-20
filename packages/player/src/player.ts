@@ -22,7 +22,7 @@ import { itemBoundsByName, itemBoundsById, dropZoneBounds, tracePathByName, grou
 import { projectToPath, samplePathAt, type Path } from '@flatkit/engine/path'
 import { apply, invert, spaceConversions, IDENTITY, type Transform } from '@flatkit/engine/transform'
 import type { Interactor } from '@flatkit/types'
-import { hitChains } from './hit'
+import { hitChains, warmHitCache as warmHitPaths } from './hit'
 
 /** A replayable gesture (`--play` / `--record` format). Coords in SCENE units. `id` = pointerId (default 1).
  *  Prefer SEMANTIC gestures (`drag`/`tap` by object NAME): robust, readable, and it is the engine that
@@ -213,6 +213,7 @@ export class FlatPlayer {
   private readonly mouse = { x: 0, y: 0, dx: 0, dy: 0, wheel: 0 } // dx/dy = movement SINCE the last tick; wheel = accumulated wheel delta SINCE the last tick (both reset after onEnterFrame) -> "what happened this frame?"
   private usesWheel = false // does the scene read `mouse.wheel`? → capture the wheel + preventDefault (else let the page scroll over the canvas)
   private usesMousePos = false // does the scene read `mouse.x`/`mouse.y`? → only then must a pointermove bust the expr cache
+  private hitWarmId = 0 // requestIdleCallback handle for the deferred hit-cache warm-up (0 = none pending)
   private readonly heldKeys = new Set<string>()
   private readonly keyProxy = new Proxy(
     {},
@@ -626,6 +627,7 @@ export class FlatPlayer {
       this.canvas.addEventListener('pointercancel', this.onPointerCancel)
       this.canvas.addEventListener('pointerleave', this.onPointerLeave)
       this.canvas.addEventListener('wheel', this.onWheel, { passive: false }) // non-passive: may preventDefault when the scene reads mouse.wheel
+      this.scheduleHitWarm() // pre-flatten hittable paths on idle → the FIRST move/click isn't a cold-start jolt
     }
     if (opts.autoplay) this.play()
   }
@@ -1232,9 +1234,31 @@ export class FlatPlayer {
     this.seek(0)
   }
 
+  // -- Hit-cache warm-up --
+  // The hit-test flattens each region's Bezier path to polygons on demand (cached by path identity). On a
+  // cold cache the FIRST pointermove/pointerdown flattens the whole scene at once — a one-time jolt. Warm it
+  // on idle after the first paint so that jolt lands during load, not on the user's first gesture.
+  private scheduleHitWarm(): void {
+    const ric = (globalThis as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback
+    if (!ric) return // no idle scheduler (headless / older browser) → host can call `warmHitCache()` instead
+    this.hitWarmId = ric(() => { this.hitWarmId = 0; warmHitPaths(this.doc) }, { timeout: 2000 })
+  }
+  /** Pre-flatten the hittable paths NOW (and cancel the scheduled idle warm). For a host that wants to hide
+   *  the one-time cost behind its own loading state, or runs in a browser without `requestIdleCallback`. */
+  warmHitCache(): void {
+    this.cancelHitWarm()
+    warmHitPaths(this.doc)
+  }
+  private cancelHitWarm(): void {
+    if (!this.hitWarmId) return
+    ;(globalThis as { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback?.(this.hitWarmId)
+    this.hitWarmId = 0
+  }
+
   /** Releases the listeners. To be called when the player is no longer used. */
   destroy(): void {
     this.pause()
+    this.cancelHitWarm()
     if (this.transRaf) { cancelAnimationFrame(this.transRaf); this.transRaf = 0 } // stop the transition driver on a torn-down player
     window.removeEventListener('resize', this.onResize)
     globalThis.removeEventListener('keydown', this.onKeyDown)

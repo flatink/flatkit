@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { pointInPolygons, pointNearPath, pathFollowsPolygons, hitChain, hitChains, hitContextAt } from './hit'
+import { pointInPolygons, pointNearPath, pathFollowsPolygons, hitChain, hitChains, hitContextAt, warmHitCache } from './hit'
 import { translation } from '@flatkit/engine/transform'
 import { polygonsToPath } from '@flatkit/engine/path'
 import type { Doc, Layer, Point, Region } from '@flatkit/types'
@@ -218,5 +218,32 @@ describe('hitContextAt -- frame-aware editor selection', () => {
     // closed (initial) → panel at x=0 → the reverse
     expect(hitContextAt(doc, closed, undefined, 0, { x: 10, y: 10 })?.item.id).toBe('D')
     expect(hitContextAt(doc, closed, undefined, 0, { x: 110, y: 10 })).toBeNull()
+  })
+})
+
+// Pre-flatten the hittable paths so the FIRST hit-test isn't a cold-start jolt (an empty cache otherwise
+// flattens every Bezier in the scene at once on the first pointermove/pointerdown).
+describe('warmHitCache (pre-flatten hittable paths)', () => {
+  it('flattens every region path: scene + group + symbol + cel matter', () => {
+    const group = { id: 'g', kind: 'group' as const, name: 'g', transform: translation(0, 0), layers: [layerOf([region('r2', square(20, 20, 5))])] }
+    const inst = { id: 'i', kind: 'instance' as const, name: 'i', transform: translation(0, 0), symbolId: 'S' }
+    const sym = { id: 'S', name: 'Sym', layers: [layerOf([region('r3', square(30, 30, 5))])] }
+    const celLayer = { id: 'CL', name: 'cl', visible: true, locked: false, opacity: 1, items: [], cels: [{ frame: 0, poses: [], matter: [region('r4', square(40, 40, 5))] }] } as unknown as Layer
+    const doc = { width: 100, height: 100, symbols: [sym], layers: [layerOf([region('r1', square(10, 10, 5)), group, inst]), celLayer] } as unknown as Doc
+    expect(warmHitCache(doc)).toBe(4) // r1 (scene) + r2 (group) + r3 (symbol) + r4 (cel material)
+  })
+
+  it('warms a symbol once across instances and is cycle-safe (a self-referencing symbol)', () => {
+    const sym = { id: 'S', name: 'Sym', layers: [layerOf([region('r', square(0, 0, 5)), { id: 'self', kind: 'instance' as const, name: 'self', transform: translation(0, 0), symbolId: 'S' }])] }
+    const inst = (id: string) => ({ id, kind: 'instance' as const, name: id, transform: translation(0, 0), symbolId: 'S' })
+    const doc = { width: 100, height: 100, symbols: [sym], layers: [layerOf([inst('a'), inst('b')])] } as unknown as Doc
+    expect(warmHitCache(doc)).toBe(1) // S warmed once; its self-instance is skipped → no infinite loop
+  })
+
+  it('does not change hit results (pure pre-flattening)', () => {
+    const doc = { width: 100, height: 100, symbols: [], layers: [layerOf([region('r', square(50, 50, 10))])] } as unknown as Doc
+    warmHitCache(doc)
+    expect(hitChain(doc, 0, {}, { x: 50, y: 50 })).toEqual(['r']) // inside
+    expect(hitChain(doc, 0, {}, { x: 0, y: 0 })).toEqual([]) // outside
   })
 })
