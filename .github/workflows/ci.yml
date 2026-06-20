@@ -1,8 +1,11 @@
 name: CI
 
+# Branches and PRs run THE GATE (gate.yml). `main` is owned by release.yml (which runs the same gate before
+# publishing), and `changeset-release/main` is a staging branch already gated when the change hit main — both
+# are excluded here so the gate never runs twice for the same change.
 on:
   push:
-    branches: [main]
+    branches-ignore: [main, changeset-release/main]
   pull_request:
 
 # Cancel superseded runs on the same branch/PR.
@@ -14,56 +17,5 @@ permissions:
   contents: read
 
 jobs:
-  verify:
-    runs-on: ubuntu-24.04 # pinned (not -latest) so the runner image can't shift under us
-    # Third-party actions are pinned to a full commit SHA (supply-chain hardening): a moved tag can no
-    # longer swap the code we run. The trailing comment tracks the human-readable version; Dependabot
-    # (.github/dependabot.yml) bumps both the SHA and the comment together.
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false # no git push from CI -> do not leave the token in .git/config
-
-      # pnpm before setup-node so the node cache can use the pnpm store.
-      # The version is read from the root package.json "packageManager" field.
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 24
-          cache: pnpm
-
-      # Optional deps (skia-canvas, native, debug-only --render) are left to pnpm's
-      # build-script allowlist: their binaries do not build in CI, so the --render test
-      # self-skips. Everything else installs deterministically from the lockfile.
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      # Fail the build on a known HIGH/critical advisory in the dependency tree.
-      - name: Audit dependencies
-        run: pnpm audit --audit-level high
-
-      - name: Lint
-        run: pnpm run lint
-
-      - name: English-only guard
-        run: pnpm run check:english
-
-      - name: Typecheck
-        run: pnpm run typecheck
-
-      - name: Test
-        run: pnpm run test
-
-      # Build every package to dist/ and lint the would-be-published tarballs (publint + are-the-types-wrong).
-      - name: Build & publishability
-        run: pnpm run check:pack
-
-      # Bundle-size guard: the self-contained player runtime (dist/browser.js) must stay within budget.
-      # `check:pack` already built dist/. Bump scripts/size-budget.json (--update) when growth is intentional.
-      - name: Bundle size guard
-        run: pnpm run check:size
-
-      # Smoke-test the wired CLI binary end to end.
-      - name: flatc CLI smoke
-        run: node packages/compiler/bin/flatc.mjs --help
+  gate:
+    uses: ./.github/workflows/gate.yml

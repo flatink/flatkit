@@ -1,12 +1,12 @@
 name: Release
 
-# On every push to main: run THE GATE first, then either STAGE a version bump or PUBLISH.
+# On every push to main: run THE GATE (gate.yml, same as CI), then either STAGE a version bump or PUBLISH.
 #  - changesets pending  → `changeset version` bumps + writes CHANGELOGs, pushed to `changeset-release/main`
 #    with NO pull request (the zwykstudio org blocks Actions from opening PRs — that failing PR step was the
 #    systematic red ✗). The maintainer fast-forwards main onto that branch to trigger the publish run.
 #  - no changesets pending → versions are final (main was fast-forwarded) → publish to npm.
-# The gate runs BEFORE both, so a red build (lint / English / typecheck / test / publishability) never reaches
-# npm — which the separate ci.yml run could not enforce on the publish job.
+# The publish job `needs:` the gate, so a red build never reaches npm — which a separate ci.yml run could not
+# enforce on the publish job.
 on:
   push:
     branches: [main]
@@ -19,14 +19,20 @@ permissions:
   contents: read
 
 jobs:
+  # The SAME gate as CI (single definition in gate.yml), run once for this push.
+  gate:
+    uses: ./.github/workflows/gate.yml
+
   release:
+    needs: gate # never stage or publish unless the gate is green
     runs-on: ubuntu-24.04
     permissions:
       contents: write # push the staged bump branch + publish tags / GitHub releases
       id-token: write # npm provenance (OIDC)
-    # Third-party actions pinned to a commit SHA (see ci.yml); Dependabot keeps them current.
+    # Third-party actions pinned to a commit SHA (see gate.yml); Dependabot keeps them current.
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        # credentials persisted (default) so the "Stage version bump" step can push changeset-release/main
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
 
@@ -39,14 +45,6 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # THE GATE — a red build fails the job HERE, before any version push or publish, so it can never reach
-      # npm. `verify` = lint + check:english + typecheck + test; `check:pack` builds and lints the would-be
-      # published tarballs (publint + types).
-      - name: Gate
-        run: |
-          pnpm run verify
-          pnpm run check:pack
-
       - name: Pending changesets?
         id: cs
         run: |
@@ -57,8 +55,8 @@ jobs:
           fi
 
       # PENDING → stage the bump on `changeset-release/main` WITHOUT a PR. `check:english` re-runs because the
-      # CHANGELOGs are generated HERE (the gate above ran before they existed) — a non-ASCII changeset summary
-      # is caught now instead of after publish.
+      # CHANGELOGs are generated HERE (the gate ran before they existed) — a non-ASCII changeset summary is
+      # caught now instead of after publish.
       - name: Stage version bump (no PR)
         if: steps.cs.outputs.pending == 'true'
         run: |
