@@ -59,6 +59,11 @@ jobs:
       - name: Build & publishability
         run: pnpm run check:pack
 
+      # Bundle-size guard: the self-contained player runtime (dist/browser.js) must stay within budget.
+      # `check:pack` already built dist/. Bump scripts/size-budget.json (--update) when growth is intentional.
+      - name: Bundle size guard
+        run: pnpm run check:size
+
       # Smoke-test the wired CLI binary end to end.
       - name: flatc CLI smoke
         run: node packages/compiler/bin/flatc.mjs --help

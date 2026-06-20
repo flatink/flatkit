@@ -16,6 +16,8 @@
     "lint": "eslint . --max-warnings 0",
     "check:english": "node scripts/check-english.mjs",
     "check:pack": "pnpm build && node scripts/check-pack.mjs",
+    "check:size": "node scripts/check-size.mjs",
+    "size": "pnpm -C packages/player build && node scripts/check-size.mjs",
     "bench": "node --import tsx packages/player/bench/render.bench.mts",
     "verify": "pnpm run lint && pnpm run check:english && pnpm run typecheck && pnpm run test",
     "changeset": "changeset",

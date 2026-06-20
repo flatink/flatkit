@@ -1,0 +1,6 @@
+{
+  "browser.js": {
+    "gzip": 28160,
+    "brotli": 25088
+  }
+}
