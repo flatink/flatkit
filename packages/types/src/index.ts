@@ -42,10 +42,15 @@ export type PolyGroup = Ring[]
 export type Shape = PolyGroup[]
 
 // ── Paint ────────────────────────────────────────────────────────────────────
-export type Stop = { offset: number; color: string }
+// A gradient stop. `color` is the literal hex (and the fallback). A stop can instead be bound to a symbol
+// COLOR param: `param` names it (resolved per instance at render, like a region's `fillParam`), and `alpha`
+// (0..1) overrides the alpha channel — a color param is a 6-digit hue, so a halo wanting "same hue, alpha
+// fading 0.8 -> 0" carries the alpha on the stop. Absent param/alpha = a plain hex stop (unchanged).
+export type Stop = { offset: number; color: string; param?: string; alpha?: number }
 
-/** A Flash-style "tint" color effect: recolors a container toward `color` by `amount` (0..1). */
-export type Tint = { color: string; amount: number }
+/** A Flash-style "tint" color effect: recolors a container toward `color` by `amount` (0..1). `param` (if
+ *  set) binds the tint hue to a symbol COLOR param, resolved per instance at render (else the literal `color`). */
+export type Tint = { color: string; amount: number; param?: string }
 
 /** Blend mode (Flash / After Effects style). `add`/`screen` = additive light (glow, mixing); `multiply` = shadow. */
 export type BlendMode = 'add' | 'screen' | 'multiply'

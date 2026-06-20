@@ -10,9 +10,29 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Region, Stop, Tint, Paint, Stroke, BBox } from '@flatkit/types'
 export type { Stop, Tint, Paint, Stroke } from '@flatkit/types'
-import { lerpColor } from './color'
+import { lerpColor, splitAlpha, withAlpha } from './color'
 
 export const solid = (color: string): Paint => ({ type: 'solid', color })
+
+/**
+ * Resolve a "color ref" (hex | symbol color-param + optional alpha) to a concrete CSS color, given the
+ * instance's color-param scope. THE shared primitive behind `fill <param>` (solid), gradient stops and tint:
+ *  - `param` set & resolvable in `colorParams` → that color (else fall back to the literal `hex`);
+ *  - `alpha` set → OVERRIDES the alpha channel (a param color is a 6-digit hue → a stop can fade it).
+ * No param and no alpha → returns `hex` unchanged (the hot path for ordinary literal colors).
+ */
+export function resolveColorRef(hex: string, param: string | undefined, alpha: number | undefined, colorParams?: Record<string, string>): string {
+  if (param == null && alpha == null) return hex
+  let c = param != null ? (colorParams?.[param] ?? hex) : hex
+  if (alpha != null) c = withAlpha(splitAlpha(c).rgb, alpha)
+  return c
+}
+
+/** A gradient stop's resolved CSS color (param + per-stop alpha applied). */
+export const resolveStopColor = (s: Stop, colorParams?: Record<string, string>): string => resolveColorRef(s.color, s.param, s.alpha, colorParams)
+
+/** A tint's resolved color (its `param` resolved against the scope, else its literal `color`). */
+export const resolveTintColor = (t: Tint, colorParams?: Record<string, string>): string => resolveColorRef(t.color, t.param, undefined, colorParams)
 
 export function defaultGradient(type: 'linear' | 'radial', from = '#e63946', to = '#1d3557'): Paint {
   const stops: Stop[] = [
@@ -25,7 +45,9 @@ export function defaultGradient(type: 'linear' | 'radial', from = '#e63946', to 
 }
 
 const n = (v: number) => Math.round(v * 1000) / 1000
-const stopsKey = (s: Stop[]) => s.map((x) => `${n(x.offset)}@${x.color}`).join(',')
+// A param stop must NOT merge with a literal stop (or a different param): the key carries param + alpha so
+// `paintKey` distinguishes them (two regions merge only if their paint resolves identically).
+const stopsKey = (s: Stop[]) => s.map((x) => `${n(x.offset)}@${x.param ? `$${x.param}/${x.alpha ?? ''}` : x.color}`).join(',')
 const boxKey = (b?: BBox) => (b ? `#${n(b.minX)},${n(b.minY)},${n(b.maxX)},${n(b.maxY)}` : '')
 
 /** Stable key: two paints merge iff their keys are equal. */
@@ -49,10 +71,16 @@ export function regionPaint(region: Region): Paint {
 
 const lerpN = (a: number, b: number, t: number) => a + (b - a) * t
 
-/** Interpolate two stop lists (by index if same length, otherwise keep `a`). */
+/** Interpolate two stop lists (by index if same length, otherwise keep `a`). Carries `a`'s param binding
+ *  (resolution happens at render, post-lerp) and lerps the per-stop alpha. */
 function lerpStops(a: Stop[], b: Stop[], t: number): Stop[] {
   if (a.length !== b.length) return a
-  return a.map((s, i) => ({ offset: lerpN(s.offset, b[i].offset, t), color: lerpColor(s.color, b[i].color, t) }))
+  return a.map((s, i) => ({
+    offset: lerpN(s.offset, b[i].offset, t),
+    color: lerpColor(s.color, b[i].color, t),
+    ...(s.param ? { param: s.param } : {}),
+    ...(s.alpha != null ? { alpha: lerpN(s.alpha, b[i].alpha ?? s.alpha, t) } : {}),
+  }))
 }
 
 /**
@@ -78,9 +106,9 @@ export function lerpPaint(a: Paint, b: Paint, t: number): Paint {
   return a
 }
 
-/** Interpolate two tints (color + amount). */
+/** Interpolate two tints (color + amount). Carries `a`'s param binding (resolved at render). */
 export function lerpTint(a: Tint, b: Tint, t: number): Tint {
-  return { color: lerpColor(a.color, b.color, t), amount: lerpN(a.amount, b.amount, t) }
+  return { color: lerpColor(a.color, b.color, t), amount: lerpN(a.amount, b.amount, t), ...(a.param ? { param: a.param } : {}) }
 }
 
 /** Interpolate two strokes (width + paint); styles taken from `a`. */

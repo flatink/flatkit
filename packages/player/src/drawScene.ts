@@ -13,7 +13,7 @@
 // -----------------------------------------------------------------------------
 import type { Doc, Group, Instance, Item, Layer, Region, SymbolDef, Text } from '@flatkit/types'
 import { regionBBox, type BBox } from '@flatkit/engine/bbox'
-import { regionPaint, type Paint, type Tint } from '@flatkit/engine/paint'
+import { regionPaint, resolveStopColor, resolveTintColor, type Paint, type Tint } from '@flatkit/engine/paint'
 import { cssFilterString, type Filter } from '@flatkit/engine/filters'
 import { containerLayers, getSymbol, isContainer, isGroup, isInstance, isText, isImage, isRegion, layerStructure } from '@flatkit/engine/layers'
 import { pathToBezier, transformPath, makePathSampler, pathBBox, type Path } from '@flatkit/engine/path'
@@ -536,8 +536,9 @@ export function maskClipPath(doc: Doc, mask: Layer, frame: number, rctx: RenderC
   return path
 }
 
-/** Canvas style of a paint (solid or gradient), anchored to `bbox`. Reused for fill AND stroke. */
-function paintStyle(ctx: CanvasRenderingContext2D, paint: Paint, bbox: ReturnType<typeof regionBBox>, fallback: string): string | CanvasGradient {
+/** Canvas style of a paint (solid or gradient), anchored to `bbox`. Reused for fill AND stroke.
+ *  `colorParams` resolves a stop bound to a symbol color param (`0:teinte@0.8`) per instance. */
+function paintStyle(ctx: CanvasRenderingContext2D, paint: Paint, bbox: ReturnType<typeof regionBBox>, fallback: string, colorParams?: Record<string, string>): string | CanvasGradient {
   if (paint.type === 'solid') return paint.color
   const b = paint.box ?? bbox
   if (!b) return fallback
@@ -557,13 +558,22 @@ function paintStyle(ctx: CanvasRenderingContext2D, paint: Paint, bbox: ReturnTyp
     const cy = b.minY + paint.cy * h
     g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(0.0001, paint.r * Math.max(w, h)))
   }
-  for (const s of paint.stops) g.addColorStop(clamp01(s.offset), s.color)
+  for (const s of paint.stops) g.addColorStop(clamp01(s.offset), resolveStopColor(s, colorParams))
   return g
 }
 
 function fillStyleFor(ctx: CanvasRenderingContext2D, region: Region, colorParams?: Record<string, string>): string | CanvasGradient {
   if (region.fillParam) { const c = colorParams?.[region.fillParam]; if (c) return c } // `fill <param>` → the instance's color (else fall back to region.color)
-  return paintStyle(ctx, regionPaint(region), regionBBox(region), region.color)
+  return paintStyle(ctx, regionPaint(region), regionBBox(region), region.color, colorParams)
+}
+
+/** Active tint with its color RESOLVED against the param scope (null if absent / amount ~0). Returns the
+ *  same object untouched when there's no param binding → no allocation on the hot path. Resolving here means
+ *  the filter-cache signature and the composite both see the recolored value (cache busts on a param change). */
+function resolveTint(tint: Tint | undefined, colorParams?: Record<string, string>): Tint | null {
+  if (!tint || tint.amount <= 0.001) return null
+  if (!tint.param) return tint
+  return { color: resolveTintColor(tint, colorParams), amount: tint.amount }
 }
 
 /** Draws a list of ALREADY RESOLVED items (poses applied) at a frame. */
@@ -621,7 +631,7 @@ function renderOneItem(
       const next = isInstance(it) ? new Set([...seen, it.symbolId]) : seen
       const ctm = it.transform
       const childParent = compose(parent, ctm) // WORLD space of the container's children
-      const tint = it.tint && it.tint.amount > 0.001 ? it.tint : null
+      const tint = resolveTint(it.tint, rctx.colorParams)
       const scale = scaleOf(ctx)
       const filterStr = cssFilterString(it.filters, scale)
       // Tint AND/OR filters -> isolate the content off-screen (area = object's box) then recompose.
@@ -649,12 +659,12 @@ function renderOneItem(
       const pb = it.textPath ? pathBBox(it.textPath.path) : null
       if (pb) expandRect(acc, matOf(ctx.getTransform()), pb.minX - it.size, pb.minY - it.size, pb.maxX + it.size, pb.maxY + it.size)
       else expandRect(acc, compose(matOf(ctx.getTransform()), it.transform), 0, 0, it.box.w, it.box.h)
-      paintLeaf(ctx, it.tint, it.filters, opacity, acc, scaleOf(ctx), (c) => paintText(c, it))
+      paintLeaf(ctx, resolveTint(it.tint, rctx.colorParams) ?? undefined, it.filters, opacity, acc, scaleOf(ctx), (c) => paintText(c, it))
     } else if (isImage(it)) {
       const src = rctx.image?.(it.assetId) ?? null
       const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
       expandRect(acc, compose(matOf(ctx.getTransform()), it.transform), 0, 0, it.w, it.h)
-      paintLeaf(ctx, it.tint, it.filters, opacity, acc, scaleOf(ctx), (c) => paintImage(c, it, src))
+      paintLeaf(ctx, resolveTint(it.tint, rctx.colorParams) ?? undefined, it.filters, opacity, acc, scaleOf(ctx), (c) => paintImage(c, it, src))
     } else {
       // Region: fill (unless noFill) + optional outline (stroke), same Bezier path.
       const reg = it as Region
@@ -691,7 +701,7 @@ function paintRegion(c: CanvasRenderingContext2D, reg: Region, colorParams?: Rec
     if (s.miterLimit != null) c.miterLimit = s.miterLimit
     c.setLineDash(s.dash ?? [])
     const paramColor = reg.strokeParam ? colorParams?.[reg.strokeParam] : undefined // `stroke <param>` → instance color
-    c.strokeStyle = paramColor || paintStyle(c, s.paint, regionBBox(reg), reg.color) // empty/undefined → literal paint
+    c.strokeStyle = paramColor || paintStyle(c, s.paint, regionBBox(reg), reg.color, colorParams) // empty/undefined → literal paint (gradient stops resolved per param)
     c.stroke(path)
   }
 }

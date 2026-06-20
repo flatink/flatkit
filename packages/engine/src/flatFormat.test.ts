@@ -1315,3 +1315,50 @@ describe('flatFormat — instance playback mode (loop / once / synced)', () => {
     expect(printFlat(parseFlatLib(printed).symbols)).toBe(printed) // idempotent
   })
 })
+
+describe('flatFormat — param colors in gradient stops + tint', () => {
+  const halo = (fill: string, tint = '') => `symbol "Halo" {\n  params {\n    color teinte = #ffe9a8\n  }\n  layer "c" {\n    group "g"${tint} {\n      layer "c" {\n        circle 0 0 60 ${fill}\n      }\n    }\n  }\n}`
+  const firstRegion = (src: string): Region => {
+    const g = parseFlatLib(src).symbols[0].layers[0].items[0] as Group
+    return g.layers[0].items[0] as Region
+  }
+
+  it('parses `offset:param@alpha` stops into { param, alpha } with the param default as fallback hex', () => {
+    const r = firstRegion(halo('fill radial(0.5, 0.5, 0.5, 0:teinte@0.8, 1:teinte@0)'))
+    expect(r.paint?.type).toBe('radial')
+    expect(r.paint?.type === 'radial' && r.paint.stops).toEqual([
+      { offset: 0, color: '#ffe9a8', param: 'teinte', alpha: 0.8 },
+      { offset: 1, color: '#ffe9a8', param: 'teinte', alpha: 0 },
+    ])
+  })
+
+  it('a param stop without alpha, and mixed with literal stops, parse correctly', () => {
+    const r = firstRegion(halo('fill linear(90, 0:teinte, 0.5:#3366ffcc, 1:#000000)'))
+    expect(r.paint?.type === 'linear' && r.paint.stops).toEqual([
+      { offset: 0, color: '#ffe9a8', param: 'teinte' },
+      { offset: 0.5, color: '#3366ffcc' },
+      { offset: 1, color: '#000000' },
+    ])
+  })
+
+  it('`tint <param> <amount>` binds the tint hue to a param', () => {
+    const g = parseFlatLib(halo('fill #ffe9a8', ' tint teinte 0.6')).symbols[0].layers[0].items[0] as Group
+    expect(g.tint).toEqual({ color: '#ffe9a8', param: 'teinte', amount: 0.6 })
+  })
+
+  it('round-trips param stops + tint idempotently (param@alpha printed, literal hex untouched)', () => {
+    const src = halo('fill radial(0.5, 0.5, 0.5, 0:teinte@0.8, 0.5:#3366ffcc, 1:teinte@0)', ' tint teinte 0.5')
+    const printed = printFlat(parseFlatLib(src).symbols)
+    expect(printed).toContain('radial(0.5, 0.5, 0.5, 0:teinte@0.8, 0.5:#3366ffcc, 1:teinte@0)')
+    expect(printed).toContain('tint teinte 0.5')
+    expect(printFlat(parseFlatLib(printed).symbols)).toBe(printed)
+  })
+
+  it('a literal hex gradient is unchanged (non-regression)', () => {
+    const r = firstRegion(halo('fill radial(0.5, 0.5, 0.5, 0:#ffe9a8, 1:#000000)'))
+    expect(r.paint?.type === 'radial' && r.paint.stops).toEqual([
+      { offset: 0, color: '#ffe9a8' },
+      { offset: 1, color: '#000000' },
+    ])
+  })
+})

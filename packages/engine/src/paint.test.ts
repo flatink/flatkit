@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { defaultGradient, lerpPaint, lerpTint, paintEquals, paintKey, solid, type Paint } from './paint'
+import { defaultGradient, lerpPaint, lerpTint, paintEquals, paintKey, resolveColorRef, resolveStopColor, resolveTintColor, solid, type Paint } from './paint'
 import { hexToHsv, hsvToHex, normalizeHex } from './color'
+import type { Stop } from '@flatkit/types'
 
 describe('paint', () => {
   it('equality by key: same solids merge, different paints do not', () => {
@@ -67,5 +68,53 @@ describe('color', () => {
       const { h, s, v } = hexToHsv(hex)
       expect(hsvToHex(h, s, v)).toBe(hex)
     }
+  })
+})
+
+describe('color refs (param + alpha) — fill/stop/tint unification', () => {
+  const scope = { teinte: '#7ec8ff' }
+
+  it('a plain hex (no param/no alpha) passes through untouched', () => {
+    expect(resolveColorRef('#ffe9a8', undefined, undefined, scope)).toBe('#ffe9a8')
+    expect(resolveColorRef('#ffe9a8', undefined, undefined, undefined)).toBe('#ffe9a8')
+  })
+
+  it('a param resolves against the scope, falling back to the literal hex when unbound', () => {
+    expect(resolveColorRef('#ffe9a8', 'teinte', undefined, scope)).toBe('#7ec8ff')
+    expect(resolveColorRef('#ffe9a8', 'teinte', undefined, {})).toBe('#ffe9a8') // unresolved → fallback
+    expect(resolveColorRef('#ffe9a8', 'teinte', undefined, undefined)).toBe('#ffe9a8')
+  })
+
+  it('alpha OVERRIDES the channel (a 6-digit param hue gains the stop alpha)', () => {
+    expect(resolveColorRef('#ffe9a8', 'teinte', 0.8, scope)).toBe('#7ec8ffcc') // 0.8*255 ≈ 0xcc
+    expect(resolveColorRef('#ffe9a8', 'teinte', 0, scope)).toBe('#7ec8ff00')
+    expect(resolveColorRef('#112233', undefined, 0.5, scope)).toBe('#11223380') // alpha on a literal too
+  })
+
+  it('resolveStopColor / resolveTintColor wrap the same primitive', () => {
+    const s: Stop = { offset: 0, color: '#ffe9a8', param: 'teinte', alpha: 0.8 }
+    expect(resolveStopColor(s, scope)).toBe('#7ec8ffcc')
+    expect(resolveTintColor({ color: '#ffe9a8', param: 'teinte', amount: 0.5 }, scope)).toBe('#7ec8ff')
+  })
+
+  it('a param stop does NOT merge with a literal stop or a different param (paintKey distinguishes)', () => {
+    const base = defaultGradient('radial')
+    if (base.type !== 'radial') throw new Error('radial')
+    const litA: Paint = { ...base, stops: [{ offset: 0, color: '#ffe9a8' }, { offset: 1, color: '#000000' }] }
+    const paramA: Paint = { ...base, stops: [{ offset: 0, color: '#ffe9a8', param: 'teinte', alpha: 0.8 }, { offset: 1, color: '#000000' }] }
+    const paramB: Paint = { ...base, stops: [{ offset: 0, color: '#ffe9a8', param: 'autre', alpha: 0.8 }, { offset: 1, color: '#000000' }] }
+    expect(paintEquals(litA, paramA)).toBe(false)
+    expect(paintEquals(paramA, paramB)).toBe(false)
+    expect(paintKey(paramA)).toBe(paintKey({ ...paramA })) // same param/alpha → mergeable
+  })
+
+  it('lerpStops / lerpTint carry the param binding (resolution stays at render)', () => {
+    const a: Paint = { type: 'linear', angle: 0, stops: [{ offset: 0, color: '#ffe9a8', param: 'teinte', alpha: 0.8 }] }
+    const b: Paint = { type: 'linear', angle: 0, stops: [{ offset: 0, color: '#000000', param: 'teinte', alpha: 0 }] }
+    const mid = lerpPaint(a, b, 0.5)
+    if (mid.type !== 'linear') throw new Error('linear')
+    expect(mid.stops[0].param).toBe('teinte')
+    expect(mid.stops[0].alpha).toBeCloseTo(0.4)
+    expect(lerpTint({ color: '#000', param: 'teinte', amount: 0 }, { color: '#fff', param: 'teinte', amount: 1 }, 0.5).param).toBe('teinte')
   })
 })

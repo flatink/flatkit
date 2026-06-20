@@ -70,7 +70,8 @@ export function pathToData(path: Path): string {
 }
 
 // ── Paint ──────────────────────────────────────────────────────────────────────
-const printStops = (stops: Stop[]) => stops.map((s) => `${n(s.offset)}:${s.color}`).join(', ')
+const printStop = (s: Stop) => (s.param ? `${n(s.offset)}:${s.param}${s.alpha != null ? `@${n(s.alpha)}` : ''}` : `${n(s.offset)}:${s.color}`)
+const printStops = (stops: Stop[]) => stops.map(printStop).join(', ')
 function printPaint(p: Paint): string {
   if (p.type === 'solid') return p.color
   if (p.type === 'linear') return `linear(${n(p.angle)}, ${printStops(p.stops)})`
@@ -103,7 +104,7 @@ function printPoseAttrs(it: Poseable, withExpr: boolean): string {
   if (it.opacity != null && it.opacity < 1) s += ` opacity ${n(it.opacity)}`
   if (it.noHit) s += ' nohit'
   if (it.pivot) s += ` pivot ${n(it.pivot.x)},${n(it.pivot.y)}`
-  if (it.tint && it.tint.amount > 0) s += ` tint ${it.tint.color} ${n(it.tint.amount)}`
+  if (it.tint && it.tint.amount > 0) s += ` tint ${it.tint.param ?? it.tint.color} ${n(it.tint.amount)}`
   if (it.blend) s += ` blend ${it.blend}`
   if ('hitbox' in it && it.hitbox) s += ` hitbox ${n(it.hitbox.w)} ${n(it.hitbox.h)}`
   if ('clip' in it && it.clip) s += ` clip ${n(it.clip.x)} ${n(it.clip.y)} ${n(it.clip.w)} ${n(it.clip.h)}`
@@ -222,7 +223,7 @@ function printPose(p: Pose, depth: number, rosterName: (id: string) => string): 
   if (p.scaleX != null && p.scaleX === p.scaleY) s += ` scale ${n(p.scaleX)}`
   else { if (p.scaleX != null) s += ` scaleX ${n(p.scaleX)}`; if (p.scaleY != null) s += ` scaleY ${n(p.scaleY)}` }
   if (p.opacity != null) s += ` opacity ${n(p.opacity)}`
-  if (p.tint) s += ` tint ${p.tint.color} ${n(p.tint.amount)}`
+  if (p.tint) s += ` tint ${p.tint.param ?? p.tint.color} ${n(p.tint.amount)}`
   if (p.spin) s += ` spin ${p.spin}`
   if (p.turns) s += ` turns ${n(p.turns)}`
   if (p.filters) for (const f of p.filters) s += ' ' + printFilter(f)
@@ -953,7 +954,7 @@ function tokenize(src: string): Tok[] {
       continue
     }
     if (/[a-zA-Z_]/.test(c)) { let j = i + 1; while (j < N && /[\w-]/.test(src[j])) j++; out.push({ k: 'id', v: src.slice(i, j) }); i = j; continue }
-    if ('{}(),:=[]'.includes(c)) { out.push({ k: 'punc', v: c }); i++; continue }
+    if ('{}(),:=[]@'.includes(c)) { out.push({ k: 'punc', v: c }); i++; continue } // `@` = alpha marker in a param gradient stop (`0:teinte@0.8`)
     i++
   }
   return out
@@ -998,6 +999,9 @@ class FlatParser {
   get pendingAligns(): PendingAlign[] { return this.aligns }
   private readonly textPaths: PendingTextPath[] = []
   get pendingTextPaths(): PendingTextPath[] { return this.textPaths }
+  // Color-param defaults of the symbol being parsed (name → default hex) — the fallback color for a stop/tint
+  // bound to a param (`0:teinte@…`, `tint teinte …`), so it renders even outside an instance scope.
+  private colorDefaults = new Map<string, string>()
   constructor(private readonly t: Tok[]) {}
   private peek() { return this.t[this.p] }
   private next() { return this.t[this.p++] }
@@ -1099,9 +1103,12 @@ class FlatParser {
       else if (this.is('params')) params.push(...this.paramsBlock())
       else break
     }
+    // Expose this symbol's color-param defaults so a stop/tint bound to a param keeps a usable fallback hex.
+    this.colorDefaults = new Map(params.filter((p) => p.type === 'color').map((p) => [p.name, p.default]))
     const layers: Layer[] = []
     while (!this.is('}')) layers.push(...this.layer())
     this.eat('}')
+    this.colorDefaults = new Map()
     return { id: uid('sym'), name, layers, ...(timeline ? { timeline } : {}), ...(params.length ? { params } : {}), ...(states.length ? { states } : {}), ...(folderId ? { folderId } : {}) }
   }
   /** `params { <type> <name> = <default> [range <min> <max>] ["doc"] … }` — color | number | bool. */
@@ -1222,7 +1229,7 @@ class FlatParser {
       else if (this.is('scale')) { this.next(); scaleX = scaleY = this.num() }
       else if (this.is('scaleX')) { this.next(); scaleX = this.num() }
       else if (this.is('scaleY')) { this.next(); scaleY = this.num() }
-      else if (this.is('tint')) { this.next(); const color = this.next().v; const amount = this.num(); tint = { color, amount } }
+      else if (this.is('tint')) { this.next(); tint = this.tintValue() }
       else if (this.is('spin')) { this.next(); spin = this.next().v as 'cw' | 'ccw' }
       else if (this.is('turns')) { this.next(); turns = this.num() }
       else if (this.is('filter')) { (filters ??= []).push(this.filter()) }
@@ -1476,7 +1483,7 @@ class FlatParser {
     for (;;) {
       if (this.is('opacity')) { this.next(); a.opacity = this.num() }
       else if (this.is('pivot')) { this.next(); const x = this.num(); this.eat(','); const y = this.num(); a.pivot = { x, y } }
-      else if (this.is('tint')) { this.next(); const color = this.next().v; const amount = this.num(); a.tint = { color, amount } }
+      else if (this.is('tint')) { this.next(); a.tint = this.tintValue() }
       else if (this.is('filter')) { (a.filters ??= []).push(this.filter()) }
       else if (this.is('expr')) { this.next(); const ch = this.next().v as ExprChannel; const ex = this.str(); (a.expressions ??= {})[ch] = ex }
       else if (this.is('nohit')) { this.next(); a.noHit = true }
@@ -1523,12 +1530,26 @@ class FlatParser {
   private stops(): Stop[] {
     const out: Stop[] = []
     for (;;) {
-      const off = this.num(); this.eat(':'); const col = this.next().v
-      out.push({ offset: off, color: col })
+      const off = this.num(); this.eat(':')
+      const k = this.peek()
+      if (k?.k === 'color') { this.next(); out.push({ offset: off, color: k.v }) } // literal hex (alpha may be baked: #rrggbbaa)
+      else { // a symbol COLOR param ref, optionally with an alpha override: `teinte` / `teinte@0.8`
+        const param = this.next().v
+        const stop: Stop = { offset: off, color: this.colorDefaults.get(param) ?? '#000000', param }
+        if (this.is('@')) { this.next(); stop.alpha = this.num() }
+        out.push(stop)
+      }
       if (this.is(',')) this.next()
       else break
     }
     return out
+  }
+  /** `tint <color|param> <amount>` — a literal hex, or a symbol COLOR param ref (resolved per instance). */
+  private tintValue(): Tint {
+    const k = this.peek()
+    if (k?.k === 'color') { this.next(); return { color: k.v, amount: this.num() } }
+    const param = this.next().v
+    return { color: this.colorDefaults.get(param) ?? '#000000', param, amount: this.num() }
   }
 }
 
