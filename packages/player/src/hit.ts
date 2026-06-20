@@ -10,8 +10,8 @@
 import type { Doc, Group, Instance, Item, Layer, Path, Point, Region, SymbolDef } from '@flatkit/types'
 import { containerLayers, getSymbol, isContainer, isGroup, isInstance, isText, isImage, layerStructure } from '@flatkit/engine/layers'
 import { apply, invert, compose, IDENTITY, type Transform } from '@flatkit/engine/transform'
-import { resolveInstanceFrame, type Timeline } from '@flatkit/engine/timeline'
-import { frozenInstanceFrame } from '@flatkit/engine/params'
+import { type Timeline } from '@flatkit/engine/timeline'
+import { instanceFrames } from '@flatkit/engine/params'
 import { resolveLayerAt } from '@flatkit/engine/cel'
 import { pathToPolygons } from '@flatkit/engine/path'
 import { guidePathOf } from './drawScene'
@@ -104,17 +104,17 @@ function hitRegion(r: Region, pt: Point): boolean {
 }
 
 /**
- * Sub-scope frame of a container, consistent with rendering:
- *  - `freeze` (EDITOR): sub-scopes (instances / local symbols) FROZEN at 0 (like freezeNested);
- *  - otherwise (PLAYER): animated local frame. Groups without a timeline follow the parent frame.
+ * Sub-scope POSE frame + playback CLOCK of a container, consistent with rendering (drawScene). `clock` =
+ * the advancing clock of the current scope; a state pin freezes the child's pose while its clock flows
+ * (so a moving sub-loop under a pinned state is clickable where it's DRAWN, not where it'd be frozen).
+ *  - `freeze` (EDITOR): sub-scopes FROZEN (a state-driven instance at its selected state's frame, else 0);
+ *  - PLAYER: instances via `instanceFrames`; a local symbol (group+timeline) rides the clock; a plain
+ *    group is the same scope (pose = parent frame, clock unchanged).
  */
-function subScopeFrame(it: Group | Instance, sym: SymbolDef | undefined, frame: number, freeze: boolean): number {
-  const subScope = isInstance(it) || (isGroup(it) && !!it.timeline)
-  if (!subScope) return frame
-  // EDITOR (freeze): frozen, but a state-driven instance hit-tests at its selected state's frame (its open
-  // shape), consistent with the render; non-state sub-scopes stay at 0.
-  if (freeze) return isInstance(it) ? frozenInstanceFrame(sym, it) : 0
-  return isInstance(it) && sym?.timeline ? resolveInstanceFrame(it.playback, frame, sym.timeline.durationFrames) : frame
+function subScopeFrames(it: Group | Instance, sym: SymbolDef | undefined, frame: number, clock: number, ctx: ExprContext, freeze: boolean): { pose: number; clock: number } {
+  if (isInstance(it)) return instanceFrames(sym, it, clock, freeze, ctx)
+  if (isGroup(it) && it.timeline) { const f = freeze ? 0 : clock; return { pose: f, clock: f } }
+  return { pose: frame, clock } // plain group = same scope (frame passes through)
 }
 
 // Same cap as the renderer (drawScene.ts): an untrusted doc with pathological container nesting must not
@@ -127,6 +127,7 @@ function hitInScope(
   layers: Layer[],
   timeline: Timeline | undefined,
   frame: number,
+  clock: number, // advancing playback clock of this scope (= frame, unless an ancestor is state-pinned)
   ctx: ExprContext,
   pt: Point,
   seen: Set<string>,
@@ -154,9 +155,9 @@ function hitInScope(
         const inst = isInstance(it)
         const sym = inst ? getSymbol(doc, it.symbolId) : undefined
         const subTl = inst ? sym?.timeline : isGroup(it) && it.timeline ? it.timeline : timeline // local symbol = its timeline; legacy group = parent scope
-        const subFrame = subScopeFrame(it, sym, frame, freeze)
+        const { pose: subFrame, clock: subClock } = subScopeFrames(it, sym, frame, clock, ctx, freeze)
         const next = inst ? new Set([...seen, it.symbolId]) : seen
-        const deeper = hitInScope(doc, containerLayers(doc, it), subTl, subFrame, ctx, local, next, freeze, compose(parent, it.transform), depth + 1)
+        const deeper = hitInScope(doc, containerLayers(doc, it), subTl, subFrame, subClock, ctx, local, next, freeze, compose(parent, it.transform), depth + 1)
         if (deeper) return [it.id, ...deeper]
       } else if (isText(it)) {
         if (pointInBox(it.transform, it.box.w, it.box.h, pt)) return [it.id]
@@ -172,7 +173,7 @@ function hitInScope(
 
 /** Chain of items under `worldPt` at the given frame (animated poses at all levels, PLAYER: composed). */
 export function hitChain(doc: Doc, frame: number, ctx: ExprContext, worldPt: Point): string[] {
-  return hitInScope(doc, doc.layers, doc.timeline, frame, ctx, worldPt, new Set(), false) ?? []
+  return hitInScope(doc, doc.layers, doc.timeline, frame, frame, ctx, worldPt, new Set(), false) ?? []
 }
 
 /**
@@ -186,6 +187,7 @@ function collectInScope(
   layers: Layer[],
   timeline: Timeline | undefined,
   frame: number,
+  clock: number, // advancing playback clock of this scope (= frame, unless an ancestor is state-pinned)
   ctx: ExprContext,
   pt: Point,
   seen: Set<string>,
@@ -214,10 +216,10 @@ function collectInScope(
         const inst = isInstance(it)
         const sym = inst ? getSymbol(doc, it.symbolId) : undefined
         const subTl = inst ? sym?.timeline : isGroup(it) && it.timeline ? it.timeline : timeline
-        const subFrame = subScopeFrame(it, sym, frame, freeze)
+        const { pose: subFrame, clock: subClock } = subScopeFrames(it, sym, frame, clock, ctx, freeze)
         const next = inst ? new Set([...seen, it.symbolId]) : seen
         const deeper: string[][] = []
-        collectInScope(doc, containerLayers(doc, it), subTl, subFrame, ctx, local, next, freeze, deeper, compose(parent, it.transform), depth + 1)
+        collectInScope(doc, containerLayers(doc, it), subTl, subFrame, subClock, ctx, local, next, freeze, deeper, compose(parent, it.transform), depth + 1)
         for (const d of deeper) out.push([it.id, ...d]) // container hit only via a descendant
       } else if (isText(it)) {
         if (pointInBox(it.transform, it.box.w, it.box.h, pt)) out.push([it.id])
@@ -233,7 +235,7 @@ function collectInScope(
 /** All hit chains under `worldPt`, from topmost to bottom (see `collectInScope`). */
 export function hitChains(doc: Doc, frame: number, ctx: ExprContext, worldPt: Point): string[][] {
   const out: string[][] = []
-  collectInScope(doc, doc.layers, doc.timeline, frame, ctx, worldPt, new Set(), false, out)
+  collectInScope(doc, doc.layers, doc.timeline, frame, frame, ctx, worldPt, new Set(), false, out)
   return out
 }
 
@@ -270,9 +272,9 @@ export function hitContextAt(
         const inst = isInstance(it)
         const sym = inst ? getSymbol(doc, it.symbolId) : undefined
         const subTl = inst ? sym?.timeline : isGroup(it) && it.timeline ? it.timeline : timeline // local symbol = its timeline; legacy group = parent scope
-        const subFrame = subScopeFrame(it, sym, frame, freeze)
+        const { pose: subFrame, clock: subClock } = subScopeFrames(it, sym, frame, frame, ctx ?? {}, freeze)
         const seen = inst ? new Set([it.symbolId]) : new Set<string>()
-        if (hitInScope(doc, containerLayers(doc, it), subTl, subFrame, ctx ?? {}, local, seen, freeze, it.transform)) return { item: it, layerId: layer.id }
+        if (hitInScope(doc, containerLayers(doc, it), subTl, subFrame, subClock, ctx ?? {}, local, seen, freeze, it.transform)) return { item: it, layerId: layer.id }
       } else if (isText(it)) {
         if (pointInBox(it.transform, it.box.w, it.box.h, worldPt)) return { item: it, layerId: layer.id }
       } else if (isImage(it)) {

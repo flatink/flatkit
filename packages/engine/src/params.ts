@@ -7,8 +7,9 @@
 //  a runtime override (`Boat.wave = 1.5`, layered on by the player). State params (the `states` block)
 //  also surface here as numeric scope values so internal expressions agree with the driven playhead.
 // ─────────────────────────────────────────────────────────────────────────────
-import type { SymbolDef, Instance, ParamDef } from '@flatkit/types'
+import type { SymbolDef, Instance, ParamDef, ExprContext } from '@flatkit/types'
 import { stateValueOf, initialStateValue, stateFrame } from './states'
+import { resolveInstanceFrame } from './timeline'
 export type { ParamDef, ParamType } from '@flatkit/types'
 
 export type ResolvedParams = { numeric: Record<string, number>; color: Record<string, string> }
@@ -57,6 +58,38 @@ export function frozenInstanceFrame(sym: SymbolDef | undefined, inst: Pick<Insta
   const sm = sym?.states?.[0]
   if (!sm) return 0
   return stateFrame(sm, resolveInstanceParams(sym, inst).numeric[sm.param] ?? initialStateValue(sm))
+}
+
+/** A sub-scope's POSE frame (where its cels resolve) and playback CLOCK (where its NESTED timelines tick).
+ *  Equal in the ordinary case; a state machine DECOUPLES them. */
+export type InstanceFrames = { pose: number; clock: number }
+
+/**
+ * Resolve an instance sub-scope's pose frame vs its playback clock (design (A), RFC states-vs-nested-loops).
+ *
+ * `parentClock` = the ADVANCING clock handed down by the scope above. In the ordinary case it equals the
+ * parent's frame; once an ancestor symbol is state-PINNED, the parent's pose frame is frozen but its clock
+ * keeps flowing — that flowing value is `parentClock`. The instance loops it within its own timeline →
+ * `clock` (so its nested loops keep playing). `pose` is normally the same, EXCEPT a state machine pins it
+ * to the selected state's frame: the symbol's own cels freeze on the state's pose while its sub-loops run.
+ * That is what lets a state HOST a running loop / an idle without forcing every pose to move.
+ *
+ * `freeze` (the editor's `freezeNested`) keeps the historical behavior — nested timelines do not play, so
+ * pose = clock = the frozen frame (a state-driven instance still freezes at its selected state's frame).
+ */
+export function instanceFrames(
+  sym: SymbolDef | undefined,
+  inst: Pick<Instance, 'playback' | 'params'>,
+  parentClock: number,
+  freeze = false,
+  expr?: ExprContext,
+): InstanceFrames {
+  if (freeze) { const f = frozenInstanceFrame(sym, inst); return { pose: f, clock: f } }
+  const clock = sym?.timeline ? resolveInstanceFrame(inst.playback, parentClock, sym.timeline.durationFrames) : parentClock
+  const sm = sym?.states?.[0]
+  if (!sm) return { pose: clock, clock } // no state → pose tracks the clock (ordinary nested playback)
+  const raw = expr?.[sm.param]
+  return { pose: stateFrame(sm, typeof raw === 'number' ? raw : initialStateValue(sm)), clock }
 }
 
 /** Default value of a single color param by name (for a render fallback when no instance override). */

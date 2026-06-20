@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveInstanceParams, frozenInstanceFrame } from './params'
+import { resolveInstanceParams, frozenInstanceFrame, instanceFrames } from './params'
 import type { Instance, SymbolDef } from '@flatkit/types'
 
 const sym = (over: Partial<SymbolDef> = {}): SymbolDef => ({
@@ -62,5 +62,45 @@ describe('params — frozenInstanceFrame (editor static state preview)', () => {
 
   it('fractional/animated value lerps between anchors (in-between frame)', () => {
     expect(frozenInstanceFrame(door(), inst({ door: '0.5' }))).toBe(12) // halfway 0→24
+  })
+})
+
+// RFC states-vs-nested-loops (design A): a state machine DECOUPLES the symbol's pose frame from the clock
+// it hands to nested timelines, so a sub-loop keeps playing under a pinned state (without forcing every
+// pose to move). `instanceFrames` is the shared engine decision used by render (drawScene) and hit-testing.
+describe('params — instanceFrames (pose vs playback clock)', () => {
+  const tl = (durationFrames: number) => ({ fps: 24, durationFrames, tracks: [] })
+  const spin = (dur = 24): SymbolDef => ({ id: 'q', name: 'Spin', timeline: tl(dur), layers: [] })
+  const parent = (): SymbolDef => ({
+    id: 'p', name: 'Parent', timeline: tl(48), layers: [],
+    states: [{ param: 'state', states: [{ name: 'calme', frame: 0 }, { name: 'agite', frame: 24 }], initial: 'calme' }],
+  })
+  const playback = (params?: Record<string, string>): Pick<Instance, 'playback' | 'params'> => ({ params })
+
+  it('no state machine → pose tracks the clock (ordinary nested playback, looped in the timeline)', () => {
+    expect(instanceFrames(spin(24), playback(), 30)).toEqual({ pose: 6, clock: 6 }) // 30 % 24
+    expect(instanceFrames(spin(24), playback(), 100)).toEqual({ pose: 4, clock: 4 }) // 100 % 24
+  })
+
+  it('state machine PINS the pose but the clock keeps flowing (THE FIX)', () => {
+    const calme = (clock: number) => instanceFrames(parent(), playback(), clock, false, { state: 0 })
+    // pose stays on the `calme` anchor (frame 0) at every instant…
+    expect(calme(30).pose).toBe(0)
+    expect(calme(100).pose).toBe(0)
+    // …while the clock advances (so a sub-loop inside keeps playing): 30 % 48, 100 % 48.
+    expect(calme(30).clock).toBe(30)
+    expect(calme(100).clock).toBe(4)
+  })
+
+  it('a fractional state value (a transition) moves the pose while the clock still flows independently', () => {
+    // state = 0.5 → pose lerps to the in-between frame (drives a cross-fade), clock unaffected.
+    const mid = instanceFrames(parent(), playback(), 30, false, { state: 0.5 })
+    expect(mid.pose).toBe(12) // halfway between anchors 0 and 24
+    expect(mid.clock).toBe(30) // independent of the state
+  })
+
+  it('freeze (editor freezeNested) keeps both frozen at the selected state frame', () => {
+    expect(instanceFrames(parent(), playback(), 30, true, { state: 0 })).toEqual({ pose: 0, clock: 0 })
+    expect(instanceFrames(spin(24), playback(), 30, true)).toEqual({ pose: 0, clock: 0 }) // no states → 0
   })
 })
