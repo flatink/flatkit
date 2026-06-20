@@ -52,7 +52,7 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
       if (hasChannels(it) && isPoseable(it) && it.expressions) {
         const base: ResolvedPose = { transform: it.transform, opacity: it.opacity ?? 1, tint: it.tint, filters: it.filters }
         const pose = applyExprChannels(it.expressions, base, frame, opts, it.id, it.pivot)
-        out = { ...it, transform: pose.transform, opacity: pose.opacity, ...(pose.tint ? { tint: pose.tint } : {}), ...(pose.filters ? { filters: pose.filters } : {}) } as Item
+        out = { ...it, transform: pose.transform, opacity: pose.opacity, ...(pose.tint ? { tint: pose.tint } : {}), ...(pose.filters ? { filters: pose.filters } : {}) }
       }
       return resolveDynamicText(out, frame, opts)
     })
@@ -71,7 +71,7 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
   // Material: MORPH (shape tween) if A interpolates toward B (material defined on both sides); otherwise
   // HOLD (last key ≤ frame whose `matter` is defined).
   let matter: Region[] | undefined
-  if (A.shapeTween && B && A.matter && A.matter.length && B.matter && B.matter.length) {
+  if (A.shapeTween && B && A.matter?.length && B.matter?.length) {
     const span = B.frame - A.frame
     const t = applyEasing(span <= 0 ? 0 : (frame - A.frame) / span, A.ease)
     matter = morphMatter(A.matter, B.matter, t)
@@ -81,7 +81,7 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
       if (c.matter !== undefined) matter = c.matter
     }
   }
-  const out: Item[] = matter && matter.length ? [...matter] : []
+  const out: Item[] = matter?.length ? [...matter] : []
 
   // Containers present at A (poses), tweened toward B if applicable (or guided by a guide layer).
   const byId = A.poses.length > 1 ? new Map(layer.items.map((it) => [it.id, it])) : null // O(1) lookup per pose (vs O(items) find)
@@ -103,6 +103,7 @@ type ResolvedPose = { transform: Transform; opacity: number; tint?: Tint; filter
 type PoseBody = { transform?: Transform; pivot?: Point; opacity?: number; tint?: Tint; filters?: Filter[] }
 
 const DEG = Math.PI / 180
+const ORIGIN: Point = { x: 0, y: 0 } // shared default pivot (read-only) — avoids allocating per applyExprChannels call
 
 /** Decomposed geometry of a pose, around the body's pivot. */
 type PoseGeom = { px: number; py: number; rot: number; sx: number; sy: number; explicitRot: boolean }
@@ -120,7 +121,7 @@ function poseGeom(p: Pose, baseT: Transform, pivot: Point): PoseGeom {
   const pv = apply(src, pivot)
   return {
     px: pv.x, py: pv.y,
-    rot: p.rotate != null ? p.rotate * DEG : d.rotation,
+    rot: p.rotate == null ? d.rotation : p.rotate * DEG,
     sx: p.scaleX ?? d.scaleX,
     sy: p.scaleY ?? d.scaleY,
     explicitRot: p.rotate != null,
@@ -327,7 +328,7 @@ function applyExprChannels(
   frame: number,
   opts: ResolveOpts,
   id?: string,
-  pivot: Point = { x: 0, y: 0 },
+  pivot: Point = ORIGIN,
 ): ResolvedPose {
   if (!EXPR_CHANNELS.some((ch) => ex[ch])) return pose
   const dec = decompose(pose.transform)
@@ -348,7 +349,7 @@ function applyExprChannels(
   // `self` also carries the object's interaction state (hovered/grabbed/pressed → 0/1) so channel
   // expressions can do hover-lift / grab-tilt feedback. Stashed on `ch` (same ref) → stays live with x/y.
   const self = ch as Record<string, number>
-  const st = id !== undefined ? opts.itemState?.(id) : undefined
+  const st = id === undefined ? undefined : opts.itemState?.(id)
   self.hovered = st?.hovered ?? 0
   self.grabbed = st?.grabbed ?? 0
   self.pressed = st?.pressed ?? 0

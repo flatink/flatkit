@@ -26,8 +26,7 @@ export type Compiled = { ok: true; node: Node } | { ok: false; error: string }
 
 // ── Tokenizer ────────────────────────────────────────────────────────────────
 type Tok = { k: 'num' | 'id' | 'op' | 'eof'; v: string }
-const OPS3: string[] = []
-const OPS2 = ['<=', '>=', '==', '!=', '&&', '||']
+const OPS2 = ['<=', '>=', '==', '!=', '&&', '||'] // no 3-char operators in this language
 const OPS1 = '+-*/%<>!?:.,()[]'
 
 function tokenize(src: string): Tok[] {
@@ -55,11 +54,6 @@ function tokenize(src: string): Tok[] {
       continue
     }
     const two = src.slice(i, i + 2)
-    if (OPS3.includes(src.slice(i, i + 3))) {
-      out.push({ k: 'op', v: src.slice(i, i + 3) })
-      i += 3
-      continue
-    }
     if (OPS2.includes(two)) {
       out.push({ k: 'op', v: two })
       i += 2
@@ -79,7 +73,7 @@ function tokenize(src: string): Tok[] {
 // ── Parser (recursive descent) ───────────────────────────────────────────────
 class Parser {
   private p = 0
-  constructor(private toks: Tok[]) {}
+  constructor(private readonly toks: Tok[]) {}
   private peek() {
     return this.toks[this.p]
   }
