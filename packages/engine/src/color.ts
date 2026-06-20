@@ -13,7 +13,7 @@ export function normalizeHex(input: string): string | null {
 /** Split a hex color into its RGB color (#rrggbb) + alpha (0..1). */
 export function splitAlpha(hex: string): { rgb: string; alpha: number } {
   const h = normalizeHex(hex) ?? '#000000'
-  if (h.length === 9) return { rgb: h.slice(0, 7), alpha: parseInt(h.slice(7, 9), 16) / 255 }
+  if (h.length === 9) return { rgb: h.slice(0, 7), alpha: Number.parseInt(h.slice(7, 9), 16) / 255 }
   return { rgb: h, alpha: 1 }
 }
 
@@ -30,9 +30,9 @@ export function withAlpha(rgbHex: string, alpha: number): string {
 export function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const h = normalizeHex(hex) ?? '#000000'
   return {
-    r: parseInt(h.slice(1, 3), 16),
-    g: parseInt(h.slice(3, 5), 16),
-    b: parseInt(h.slice(5, 7), 16),
+    r: Number.parseInt(h.slice(1, 3), 16),
+    g: Number.parseInt(h.slice(3, 5), 16),
+    b: Number.parseInt(h.slice(5, 7), 16),
   }
 }
 
