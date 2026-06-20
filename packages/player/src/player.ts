@@ -527,6 +527,9 @@ export class FlatPlayer {
     if (clickId || grabId) this.render() // reflects the changes (variables/frame)
   }
   private readonly onPointerUp = (e: PointerEvent) => {
+    // Release the capture acquired on down even if the press never became a grab/tap (e.g. a click-only
+    // target whose press turned into a drag) — guarded so it never throws on an uncaptured pointer.
+    if (this.canvas.hasPointerCapture?.(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId)
     if (!this.grabbed && this.pendingClick === null) return
     const grabbedId = this.grabbed
     const click = this.pendingClick
@@ -534,7 +537,6 @@ export class FlatPlayer {
     const p = this.worldPoint(e)
     this.trackPointerPos(p) // mouse.* must reflect the release point for `when released`/`when clicked`
     this.record('up', p, e.pointerId)
-    this.canvas.releasePointerCapture?.(e.pointerId)
     if (grabbedId) {
       // Write the gesture outputs BEFORE emitting `release`, so a `when released` handler can read them
       // (link target index / end position) — consistent with `drag`, which writes its vars before `dragged`.
@@ -548,11 +550,11 @@ export class FlatPlayer {
   }
   // Interrupted gesture (canceled touch, OS gesture): we release WITHOUT a drop (the pointer did not "let go" on a target).
   private readonly onPointerCancel = (e: PointerEvent) => {
+    if (this.canvas.hasPointerCapture?.(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId) // release even a click-only capture
     this.pendingClick = null // an interrupted gesture is never a click
     if (!this.grabbed) return
     const id = this.grabbed
     this.record('cancel', this.worldPoint(e), e.pointerId)
-    this.canvas.releasePointerCapture?.(e.pointerId)
     this.fireEvent(id, 'release')
     this.clearGrab()
     this.render()
@@ -1149,6 +1151,7 @@ export class FlatPlayer {
     this.last = performance.now()
     this.simAcc = 0
     this.prevSimVars = null; this.simAlpha = 1; this.simActive = false // restart from a clean interpolation state
+    this.mouse.dx = 0; this.mouse.dy = 0; this.mouse.wheel = 0 // discard pointer deltas banked while paused (no jump on resume)
     this.startAudio(this.frame)
     const tick = (now: number) => {
       if (!this.playing) return

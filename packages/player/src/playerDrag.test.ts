@@ -577,4 +577,14 @@ describe('FlatPlayer -- wheel (mouse.wheel scroll)', () => {
     const r = playHeadless(scrollDoc(), [{ type: 'wheel', dy: 1000 }, { type: 'wheel', dy: -1000 }])
     expect(r.vars.off).toBe(0) // +1000 → clamp 500, then -1000 → clamp 0
   })
+
+  it('wheel scrolled while PAUSED is discarded on play() — no banked jump on resume', () => {
+    const h: Handlers = {}
+    const pl = new FlatPlayer(fakeCanvas(h), scrollDoc(), opts) // autoplay off → paused
+    ;(h.wheel as unknown as (e: { deltaY: number; deltaMode: number; preventDefault(): void }) => void)({ deltaY: 300, deltaMode: 0, preventDefault() {} })
+    pl.play() // resume discards the wheel banked while no frame was integrating it
+    pl.stepSim(1)
+    expect(pl.getVar('off')).toBe(0) // not 300 — no sudden jump from the paused-scroll backlog
+    pl.destroy()
+  })
 })
