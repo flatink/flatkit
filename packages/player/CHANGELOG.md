@@ -1,5 +1,13 @@
 # @flatkit/player
 
+## 0.16.2
+
+### Patch Changes
+
+- Updated dependencies [[`ecc39a2`](https://github.com/zwykstudio/flatkit/commit/ecc39a2c3b7d8354e5e8b11bc964566958fee45d)]:
+  - @flatkit/engine@0.16.2
+  - @flatkit/types@0.16.2
+
 ## 0.16.1
 
 ### Patch Changes
