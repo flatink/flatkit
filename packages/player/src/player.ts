@@ -135,6 +135,9 @@ const RESERVED = new Set(['time', 'frame', 'clock', 'value']) // runtime-provide
 /** The scene references `mouse.wheel` in some expression → the player should listen to the wheel and
  *  `preventDefault` it (consume the scroll). Else the listener stays inert and the page scrolls normally. */
 const docUsesWheel = (doc: Doc): boolean => /mouse\s*\.\s*wheel/.test(JSON.stringify(doc))
+// Does any expression read the pointer POSITION (`mouse.x`/`mouse.y`)? If not, a pointermove changes no
+// expression input, so the per-move `bustNamed()` (cache invalidation → rebuild) is pure waste — skip it.
+const docReadsMousePos = (doc: Doc): boolean => /mouse\s*\.\s*[xy]/.test(JSON.stringify(doc))
 const SIM_MAX_STEPS = 30 // "spiral of death" safeguard after a long pause (backgrounded tab)
 
 const CLICK_EVENTS: readonly ItemEvent[] = ['click']
@@ -209,6 +212,7 @@ export class FlatPlayer {
   private funcDepth = 0 // anti-recursion guard (procedures + value functions)
   private readonly mouse = { x: 0, y: 0, dx: 0, dy: 0, wheel: 0 } // dx/dy = movement SINCE the last tick; wheel = accumulated wheel delta SINCE the last tick (both reset after onEnterFrame) -> "what happened this frame?"
   private usesWheel = false // does the scene read `mouse.wheel`? → capture the wheel + preventDefault (else let the page scroll over the canvas)
+  private usesMousePos = false // does the scene read `mouse.x`/`mouse.y`? → only then must a pointermove bust the expr cache
   private readonly heldKeys = new Set<string>()
   private readonly keyProxy = new Proxy(
     {},
@@ -457,7 +461,7 @@ export class FlatPlayer {
     this.mouse.dy += p.y - this.mouse.y
     this.mouse.x = p.x
     this.mouse.y = p.y
-    this.bustNamed() // the mouse moved -> objects bound to mouse.* must be refreshed
+    if (this.usesMousePos) this.bustNamed() // refresh the expr cache only if something reads mouse.x/y (a drag self-busts in applyDrag); else a move changes no expression input
     if (this.pendingClick && Math.hypot(p.x - this.grabStart.x, p.y - this.grabStart.y) > TAP_TOL) this.pendingClick = null // moved past the tap tolerance → a drag, not a click
     // Grab in progress: the grabbed item receives `drag` (even if the pointer leaves it).
     if (this.grabbed) {
@@ -480,7 +484,12 @@ export class FlatPlayer {
         this.hovered = hov
       }
     }
-    this.render() // follows the mouse (and reflects enter/leave)
+    // Coalesce the move render. A pointermove fires at 125–1000 Hz, but a full render costs ~ms. When a
+    // render loop is ALREADY running (playback, or the transition rAF), it repaints the next frame at
+    // ~60 fps and `bustNamed()` above makes that frame reflect the new pointer — so a synchronous per-event
+    // render here is pure waste that saturates the main thread ("the scene lags when I move the mouse").
+    // A static scene (no loop) still renders synchronously, so the cursor/hover follows immediately.
+    if (!this.playing && !this.transRaf) this.render() // else: the running loop paints the next frame
   }
   /** Sync `mouse.x/y` to a pointer position WITHOUT the move-delta accumulation, so a `when pressed` /
    *  `when released` handler reads the ACTUAL press/release point. On touch there is no hover `move` to set
@@ -593,6 +602,7 @@ export class FlatPlayer {
     this.ctx = ctx
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
     this.usesWheel = docUsesWheel(this.doc)
+    this.usesMousePos = docReadsMousePos(this.doc)
     this.loop = opts.loop ?? true
     this.pad = opts.padding ?? 0
     this.audioOn = opts.audio ?? true
@@ -895,6 +905,7 @@ export class FlatPlayer {
   load(doc: Doc): void {
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
     this.usesWheel = docUsesWheel(this.doc)
+    this.usesMousePos = docReadsMousePos(this.doc)
     this.vars = cloneVars(doc.variables)
     this.namedCache = null // new document -> named-objects cache stale
     this.ctxCache = null // new document -> cached expr context stale (vars Map replaced just above)

@@ -56,6 +56,40 @@ describe('cel — channel expressions transform around the declared pivot', () =
   })
 })
 
+// Image-by-image ("stepped") playback: cels WITHOUT `tween` are HELD (last cel ≤ frame) and SNAP to the
+// next — a legitimate authoring style, NOT a freeze. `tween` only adds interpolation. (RFC: a no-`tween`,
+// no-`states` symbol must animate stepped, not gel on cel 0 — confirmed already supported here.)
+describe('cel — stepped (no-tween) cels hold + snap (image-by-image, never frozen)', () => {
+  const G = group('g')
+  it('position: holds cel 0 within [0,9) then snaps to cel 9 (distinct across the boundary)', () => {
+    const l = layer([G], [
+      { frame: 0, poses: [{ id: 'g', transform: translation(20, 0) }] },
+      { frame: 9, poses: [{ id: 'g', transform: translation(60, 0) }] },
+    ])
+    expect(tx(resolveLayerAt(l, 0)[0])).toBe(20)
+    expect(tx(resolveLayerAt(l, 4)[0])).toBe(20) // held, no interpolation…
+    expect(tx(resolveLayerAt(l, 8)[0])).toBe(20) // …still cel 0 — stepped, not frozen
+    expect(tx(resolveLayerAt(l, 9)[0])).toBe(60) // SNAP to cel 9
+    expect(tx(resolveLayerAt(l, 14)[0])).toBe(60)
+  })
+  it('opacity steps too (the gating idiom)', () => {
+    const l = layer([G], [
+      { frame: 0, poses: [{ id: 'g', opacity: 1 }] },
+      { frame: 9, poses: [{ id: 'g', opacity: 0.2 }] },
+    ])
+    expect(resolveLayerAt(l, 4)[0].opacity).toBe(1)
+    expect(resolveLayerAt(l, 9)[0].opacity).toBe(0.2)
+  })
+  it('filters step too (the per-cel `glow` case from the RFC)', () => {
+    const l = layer([G], [
+      { frame: 0, poses: [{ id: 'g', filters: [{ type: 'glow', blur: 2, color: '#ffffff' }] }] },
+      { frame: 9, poses: [{ id: 'g', filters: [{ type: 'glow', blur: 14, color: '#ff0000' }] }] },
+    ])
+    expect((resolveLayerAt(l, 4)[0] as Group).filters).toEqual([{ type: 'glow', blur: 2, color: '#ffffff' }])
+    expect((resolveLayerAt(l, 9)[0] as Group).filters).toEqual([{ type: 'glow', blur: 14, color: '#ff0000' }])
+  })
+})
+
 describe('cel — resolveLayerAt', () => {
   it('without cels → returns layer.items (static)', () => {
     const l = layer([region('r1'), group('g1')])

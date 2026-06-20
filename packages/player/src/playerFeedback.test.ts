@@ -59,4 +59,43 @@ describe('FlatPlayer -- self interaction state exposed to channel exprs (#10A)',
     expect(lastItemState()('Piece')).toBeUndefined()
     pl.destroy()
   })
+
+  it('coalesces the move render while a loop runs (no synchronous per-event render)', async () => {
+    const { FlatPlayer } = await import('./player')
+    const doc: Doc = {
+      width: 100, height: 100, symbols: [], layers: [{ id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: [piece()] } as Layer],
+      interactors: [{ targetId: 'Piece', axis: 'xy', varX: 'px', varY: 'py' }], variables: { px: 0, py: 0 },
+      timeline: { fps: 24, durationFrames: 1, tracks: [] },
+    }
+    const h: Handlers = {}
+    const pl = new FlatPlayer(fakeCanvas(h), doc, { input: true })
+    // STATIC (no loop): a move paints synchronously so the cursor/hover follows immediately.
+    renderCalls.length = 0
+    h.pointermove({ clientX: 10, clientY: 10, pointerId: 1 })
+    expect(renderCalls.length).toBe(1)
+    // PLAYING: the rAF loop repaints the next frame → a move must NOT add a synchronous render.
+    pl.play()
+    renderCalls.length = 0
+    h.pointermove({ clientX: 20, clientY: 20, pointerId: 1 })
+    expect(renderCalls.length).toBe(0)
+    pl.destroy()
+  })
+
+  it('a channel expression reading mouse.x still refreshes on a plain move (gated bustNamed stays correct)', async () => {
+    const { FlatPlayer } = await import('./player')
+    const M = { id: 'M', kind: 'group', name: 'M', transform: IDENTITY, layers: [], expressions: { x: 'mouse.x' } }
+    const doc = {
+      width: 100, height: 100, symbols: [],
+      layers: [{ id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: [M] }],
+      timeline: { fps: 24, durationFrames: 1, tracks: [] },
+    } as unknown as Doc
+    const h: Handlers = {}
+    const pl = new FlatPlayer(fakeCanvas(h), doc, { input: true })
+    const namedX = () => (renderCalls.at(-1)![6] as { expr: Record<string, { x: number }> }).expr.M.x
+    h.pointermove({ clientX: 30, clientY: 0, pointerId: 1 })
+    expect(namedX()).toBe(30)
+    h.pointermove({ clientX: 70, clientY: 0, pointerId: 1 })
+    expect(namedX()).toBe(70) // NOT stale at 30 → the move busted the named cache because the doc reads mouse.x
+    pl.destroy()
+  })
 })
