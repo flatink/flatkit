@@ -1,5 +1,16 @@
 # @flatkit/compiler
 
+## 0.17.3
+
+### Patch Changes
+
+- [`a8af28a`](https://github.com/zwykstudio/flatkit/commit/a8af28a5825cacf5e72acbe81cf8e01b49dd2140) Thanks [@kaelhem](https://github.com/kaelhem)! - Warm the hit-test path cache so the FIRST interaction isn't a cold-start jolt. The 0.17.2 cache removed the recurring mouse lag, but on an empty cache the very first pointermove/pointerdown still flattened every hittable Bezier path in the scene at once (~one-time stall). The player now pre-flattens all hittable region/cel-material paths on `requestIdleCallback` after the first paint (when input is enabled), so that one-time cost lands during load instead of on the user's first gesture. Also exposes `FlatPlayer.warmHitCache()` and a standalone `warmHitCache(doc)` export for hosts that want to trigger it explicitly (or run in a browser without `requestIdleCallback`).
+
+- Updated dependencies [[`a8af28a`](https://github.com/zwykstudio/flatkit/commit/a8af28a5825cacf5e72acbe81cf8e01b49dd2140)]:
+  - @flatkit/types@0.17.3
+  - @flatkit/engine@0.17.3
+  - @flatkit/player@0.17.3
+
 ## 0.17.2
 
 ### Patch Changes
