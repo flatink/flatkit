@@ -1,5 +1,22 @@
 # @flatkit/player
 
+## 0.16.3
+
+### Patch Changes
+
+- [`c32026c`](https://github.com/zwykstudio/flatkit/commit/c32026ca3e3bad35612c3e06b127a99b89850636) Thanks [@kaelhem](https://github.com/kaelhem)! - fix(player): two pointer-input edge cases (from the security/quality review)
+
+  - **Wheel while paused.** The `mouse.wheel` delta banked while the player is PAUSED is now discarded on
+    `play()`, so scrolling a paused scene no longer applies as a sudden jump on resume (it accumulated with
+    nothing integrating it).
+  - **Pointer capture.** `onPointerUp`/`onPointerCancel` now always release the pointer capture (guarded by
+    `hasPointerCapture`), including when a click-only press turned into a drag — previously the explicit
+    release was skipped on that path (the browser auto-released, but the state was inconsistent).
+
+- Updated dependencies []:
+  - @flatkit/types@0.16.3
+  - @flatkit/engine@0.16.3
+
 ## 0.16.2
 
 ### Patch Changes

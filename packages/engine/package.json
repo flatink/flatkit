@@ -1,6 +1,6 @@
 {
   "name": "@flatkit/engine",
-  "version": "0.16.2",
+  "version": "0.16.3",
   "description": "Pure FlatInk engine: model evaluation, expressions, timeline, geometry, layers. No canvas, no clipper. Shared by the player and the compiler.",
   "license": "MIT",
   "author": "Zwyk Studio",
