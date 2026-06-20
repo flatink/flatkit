@@ -1,5 +1,18 @@
 # @flatkit/compiler
 
+## 0.17.0
+
+### Minor Changes
+
+- [`3de508a`](https://github.com/zwykstudio/flatkit/commit/3de508a13fd44e39a2f92c7f0b60d1886928d097) Thanks [@kaelhem](https://github.com/kaelhem)! - States no longer freeze nested timelines. A symbol's `states` block used to pin its whole subtree's frame, so any timeline nested inside a state (a sub-loop, an idle) froze. The pinned POSE frame is now decoupled from the playback CLOCK handed to children: a state pins the symbol's own pose while the timelines nested inside it keep playing. This lets a state host a running loop (e.g. a `marche`/`panique` cycle selector) or an idle that runs during a state — authored entirely in keyframes, no `expr` scripting. Looping is opt-in: a frozen pose with no nested loop stays frozen, so existing state assets render unchanged.
+
+### Patch Changes
+
+- Updated dependencies [[`3de508a`](https://github.com/zwykstudio/flatkit/commit/3de508a13fd44e39a2f92c7f0b60d1886928d097)]:
+  - @flatkit/types@0.17.0
+  - @flatkit/engine@0.17.0
+  - @flatkit/player@0.17.0
+
 ## 0.16.3
 
 ### Patch Changes

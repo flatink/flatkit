@@ -1,6 +1,6 @@
 {
   "name": "@flatkit/compiler",
-  "version": "0.16.3",
+  "version": "0.17.0",
   "description": "The FlatInk language (parser + AST) and compiler (.flatink → .flatpack). Ships the flatc CLI.",
   "license": "MIT",
   "author": "Zwyk Studio",
