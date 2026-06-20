@@ -1,7 +1,12 @@
 name: Release
 
-# On every push to main, changesets either opens/updates a "Version Packages" PR (when changesets are
-# pending) or, once that PR is merged (versions bumped, changesets consumed), publishes to npm.
+# On every push to main: run THE GATE first, then either STAGE a version bump or PUBLISH.
+#  - changesets pending  → `changeset version` bumps + writes CHANGELOGs, pushed to `changeset-release/main`
+#    with NO pull request (the zwykstudio org blocks Actions from opening PRs — that failing PR step was the
+#    systematic red ✗). The maintainer fast-forwards main onto that branch to trigger the publish run.
+#  - no changesets pending → versions are final (main was fast-forwarded) → publish to npm.
+# The gate runs BEFORE both, so a red build (lint / English / typecheck / test / publishability) never reaches
+# npm — which the separate ci.yml run could not enforce on the publish job.
 on:
   push:
     branches: [main]
@@ -17,8 +22,7 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     permissions:
-      contents: write # create the version PR, tags and GitHub releases
-      pull-requests: write # open/update the "Version Packages" PR
+      contents: write # push the staged bump branch + publish tags / GitHub releases
       id-token: write # npm provenance (OIDC)
     # Third-party actions pinned to a commit SHA (see ci.yml); Dependabot keeps them current.
     steps:
@@ -35,10 +39,47 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Create Release PR or publish
+      # THE GATE — a red build fails the job HERE, before any version push or publish, so it can never reach
+      # npm. `verify` = lint + check:english + typecheck + test; `check:pack` builds and lints the would-be
+      # published tarballs (publint + types).
+      - name: Gate
+        run: |
+          pnpm run verify
+          pnpm run check:pack
+
+      - name: Pending changesets?
+        id: cs
+        run: |
+          if find .changeset -name '*.md' ! -name 'README.md' | grep -q .; then
+            echo "pending=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pending=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # PENDING → stage the bump on `changeset-release/main` WITHOUT a PR. `check:english` re-runs because the
+      # CHANGELOGs are generated HERE (the gate above ran before they existed) — a non-ASCII changeset summary
+      # is caught now instead of after publish.
+      - name: Stage version bump (no PR)
+        if: steps.cs.outputs.pending == 'true'
+        run: |
+          pnpm changeset version
+          pnpm run check:english
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B changeset-release/main
+          git add -A
+          git commit -m "Version Packages"
+          git push -f origin changeset-release/main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # NO pending changesets → publish. In publish mode the changesets action does NOT open a PR (so it
+      # succeeds cleanly); it publishes only versions not already on npm (idempotent), tags them, and creates
+      # the GitHub releases with npm provenance.
+      - name: Publish to npm
+        if: steps.cs.outputs.pending == 'false'
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
         with:
-          version: pnpm version-packages
           publish: pnpm release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
