@@ -34,11 +34,10 @@ describe('lint — expressions', () => {
     expect(d[0].message).toMatch(/invalid expression/)
   })
 
-  it('two statements on one line → friendly diagnosis (not "unexpected character")', () => {
-    const d = lint('y = a  x = b') // the #1 footgun: a 2nd `channel = …` crammed onto one line
-    expect(d.length).toBe(1)
-    expect(d[0].message).toMatch(/two statements on one line/)
-    expect(d[0].message).not.toMatch(/unexpected character/)
+  it('two statements on one line now parse (the parser splits at the boundary, no error)', () => {
+    expect(lint('x = 1  y = 2')).toEqual([]) // x, y are channels → two valid bindings, nothing to report
+    const d = lint('y = a  x = b') // a, b are unknown vars — flagged as such, NOT as "two statements"
+    expect(d.every((x) => !/two statements on one line/.test(x.message))).toBe(true)
   })
 
   it('comparisons are NOT mistaken for a second statement (regex excludes ==/<=/>=/!=)', () => {

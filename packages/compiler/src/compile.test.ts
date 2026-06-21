@@ -58,6 +58,34 @@ describe('compile — .flat + .flatink → .flatpack (Doc)', () => {
       for (const s of doc.symbols) for (const l of s.layers) expect(Array.isArray(resolveLayerAt(l, f, { fps: 24 }))).toBe(true)
     }
   })
+
+  it('statements crammed on one line compile exactly like one-per-line (if lint passes, compile works)', () => {
+    const out = compileFlatpack(`
+size 400 300
+var score = 0
+var ticks = 0
+
+scene {
+  layer "c" {
+    instance "Hero" as "player" at 100,100
+  }
+}
+
+every frame { score = score + 1  ticks = ticks + 1 }
+
+object "player" {
+  x = mouse.x  opacity = 1
+}`, [ASSET])
+    // action body: both crammed assignments land as two setVars
+    expect(out.timeline?.onEnterFrame).toEqual([
+      { do: 'setVar', name: 'score', value: 'score + 1' },
+      { do: 'setVar', name: 'ticks', value: 'ticks + 1' },
+    ])
+    // object bindings: both channels split onto the instance's expressions
+    const player = out.layers[0].items[0] as { expressions?: Record<string, string> }
+    expect(player.expressions?.x).toBe('mouse.x')
+    expect(player.expressions?.opacity).toBe('1')
+  })
 })
 
 // CAPSTONE: the editor GENERATES the sources (Doc → .flat + .flatink + media), the compiler reassembles them.

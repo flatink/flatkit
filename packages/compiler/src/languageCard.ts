@@ -14,6 +14,7 @@ import { PACKAGES } from '@flatkit/engine/stdlib'
 export function languageCard(): string {
   return `# FlatInk Script — reference
 Numbers only (0 = false, anything else = true). No string type (only event/label/asset names in quotes). Comment: // to end of line.
+One statement per line — a newline ends the statement (write \`x = 1\` then \`y = 2\` on separate lines, not \`x = 1  y = 2\`).
 
 ## Events (attach to an object or to the scene)
 when loaded { }      // once, on start

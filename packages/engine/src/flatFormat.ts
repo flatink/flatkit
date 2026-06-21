@@ -875,11 +875,12 @@ function extractBehavior(expanded: string): { sceneText: string; tailAt: number;
 }
 
 /** Parse-level diagnostics of the BEHAVIOR (`object` block bodies AND scene scripts) — the unknown
- *  channels / malformed statements (e.g. two statements on one line) that `parseProgramFull` DROPS
- *  silently (it keeps only `.units`, discarding `.diagnostics`). The Doc-based linter can't recover them:
- *  a dropped binding/action never reaches the model. Without this, `--check` would wave through e.g.
- *  `object "X" { scaleZ = 1 }` or `every frame { if c { a=1  b=2 } }`. Errors only, scoped by
- *  `object "name"` / `scene`, with line numbers absolute in the (expanded) source. */
+ *  channels / malformed statements (e.g. an incomplete `x =` with no value) that `parseProgramFull`
+ *  DROPS silently (it keeps only `.units`, discarding `.diagnostics`). The Doc-based linter can't recover
+ *  them: a dropped binding/action never reaches the model. Without this, `--check` would wave through e.g.
+ *  `object "X" { scaleZ = 1 }`. (Two statements on one line — `a = 1  b = 2` — is NOT an error: the parser
+ *  splits at the boundary.) Errors only, scoped by `object "name"` / `scene`, with line numbers absolute
+ *  in the (expanded) source. */
 export function behaviorDiagnostics(src: string): { scope: string; diag: Diagnostic }[] {
   const expanded = expandProgramSugar(src)
   const lineAt = (off: number) => expanded.slice(0, off).split('\n').length // 1-based line at an absolute offset

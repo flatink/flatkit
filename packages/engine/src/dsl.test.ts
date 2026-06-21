@@ -363,12 +363,40 @@ describe('dsl — diagnostics', () => {
     expect(r.units).toEqual([{ kind: 'binding', channel: 'rotation', expr: 'time' }])
   })
 
-  it('two assignments on one line → "one action per line", column on the 2nd =', () => {
-    const line = '  x = 1  y = 2'
-    const r = parseUnits(`when clicked {\n${line}\n}`)
-    const d = r.diagnostics.find((x) => /one action per line/.test(x.message))
-    expect(d).toBeTruthy()
-    expect(line[(d!.col ?? 0) - 1]).toBe('=') // points at the offending "=", not the start of the expression
+  it('two assignments on one line parse as two statements (the newline is implied at the boundary)', () => {
+    const r = parseUnits('when clicked {\n  x = 1  y = 2\n}')
+    expect(r.diagnostics).toEqual([])
+    expect(r.units).toEqual([{ kind: 'event', event: 'click', body: [
+      { do: 'setVar', name: 'x', value: '1' },
+      { do: 'setVar', name: 'y', value: '2' },
+    ] }])
+  })
+
+  it('three crammed assignments split recursively; the left expr keeps its operators/spaces', () => {
+    const r = parseUnits('when clicked {\n  a = p + q  b = 2  c = 3\n}')
+    expect(r.diagnostics).toEqual([])
+    expect((r.units[0] as { body: unknown[] }).body).toEqual([
+      { do: 'setVar', name: 'a', value: 'p + q' },
+      { do: 'setVar', name: 'b', value: '2' },
+      { do: 'setVar', name: 'c', value: '3' },
+    ])
+  })
+
+  it('an indexed write followed by a plain one on the same line splits too', () => {
+    const r = parseUnits('when clicked {\n  arr[0] = 1  x = 2\n}')
+    expect(r.diagnostics).toEqual([])
+    expect((r.units[0] as { body: unknown[] }).body).toEqual([
+      { do: 'setIndex', name: 'arr', index: '0', value: '1' },
+      { do: 'setVar', name: 'x', value: '2' },
+    ])
+  })
+
+  it('two channel bindings on one line split into two bindings', () => {
+    const r = parseUnits('rotation = a + b  opacity = 1')
+    expect(r.units).toEqual([
+      { kind: 'binding', channel: 'rotation', expr: 'a + b' },
+      { kind: 'binding', channel: 'opacity', expr: '1' },
+    ])
   })
 
   it('"send" payload containing an assignment → error (footgun absorbed)', () => {
@@ -379,6 +407,66 @@ describe('dsl — diagnostics', () => {
   it('a comparator in a payload/expression is NOT confused with an assignment', () => {
     const r = parseUnits('when clicked {\n  send "evt", a == b\n}')
     expect(r.diagnostics.filter((d) => /one action per line/.test(d.message))).toEqual([])
+  })
+})
+
+// ADVERSARIAL: the split must NEVER turn a single VALID expression into two statements (silent
+// miscompile). A bare level-0 `=` is the only trigger, and no valid FlatInk expression contains one.
+describe('dsl — multi-statement split: no silent miscompile', () => {
+  /** Parse a single binding line and assert it stays ONE binding with the whole expression. */
+  const one = (src: string, channel: string, expr: string) => {
+    const r = parseUnits(src)
+    expect(r.diagnostics).toEqual([])
+    expect(r.units).toEqual([{ kind: 'binding', channel, expr }])
+  }
+
+  it('comparators / operators with "=" are not mistaken for a 2nd statement', () => {
+    one('rotation = a >= b', 'rotation', 'a >= b')
+    one('opacity = a == b', 'opacity', 'a == b')
+    one('opacity = a <= b', 'opacity', 'a <= b')
+    one('opacity = a != b', 'opacity', 'a != b')
+    one('opacity = a >= b ? 1 : 0', 'opacity', 'a >= b ? 1 : 0')
+  })
+
+  it('a "=" nested in a call/array/index is depth-protected (not a split point)', () => {
+    one('opacity = sin(time) * 0.5 + 0.5', 'opacity', 'sin(time) * 0.5 + 0.5')
+    one('x = clamp(a, lo, hi)', 'x', 'clamp(a, lo, hi)')
+  })
+
+  it('a "=" inside a // comment never triggers a split', () => {
+    one('rotation = 1 // y = 2', 'rotation', '1') // the comment is stripped, no second statement
+  })
+
+  it('the left expression keeps operators/calls when a real 2nd statement follows', () => {
+    const r = parseUnits('rotation = a == b  opacity = sin(t) * 2')
+    expect(r.diagnostics).toEqual([])
+    expect(r.units).toEqual([
+      { kind: 'binding', channel: 'rotation', expr: 'a == b' },
+      { kind: 'binding', channel: 'opacity', expr: 'sin(t) * 2' },
+    ])
+  })
+
+  it('nested-bracket LHS on either side of the boundary is captured whole', () => {
+    const r = parseUnits('when loaded {\n  occ[sl[j]] = 1  arr[i] = 2\n}')
+    expect(r.diagnostics).toEqual([])
+    expect((r.units[0] as { body: unknown[] }).body).toEqual([
+      { do: 'setIndex', name: 'occ', index: 'sl[j]', value: '1' },
+      { do: 'setIndex', name: 'arr', index: 'i', value: '2' },
+    ])
+  })
+
+  it('a dotted-member set (Name.param) splits at the next statement', () => {
+    const r = parseUnits('when loaded {\n  Hero.mood = calm  x = 2\n}')
+    expect(r.diagnostics).toEqual([])
+    expect((r.units[0] as { body: unknown[] }).body).toEqual([
+      { do: 'setParam', target: 'Hero', param: 'mood', value: 'calm' },
+      { do: 'setVar', name: 'x', value: '2' },
+    ])
+  })
+
+  it('a degenerate chain (x = y = 2) does NOT split or hang — left for the linter to flag', () => {
+    const r = parseUnits('rotation = a = 2') // ambiguous → keep as one (invalid) expr, no crash/loop
+    expect(r.units).toEqual([{ kind: 'binding', channel: 'rotation', expr: 'a = 2' }])
   })
 })
 

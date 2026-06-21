@@ -398,7 +398,7 @@ describe('flatFormat — .flatink program', () => {
     expect(diags[0].diag.message).toContain('unknown channel "scaleZ"')
   })
 
-  it('behaviorDiagnostics surfaces a dropped parse error in a SCENE script (two statements on one line)', () => {
+  it('behaviorDiagnostics surfaces a dropped parse error in a SCENE script (incomplete assignment)', () => {
     const src = [
       'size 100 100',          // 1
       'var a = 0',             // 2
@@ -409,7 +409,7 @@ describe('flatFormat — .flatink program', () => {
       '  }',                   // 7
       '}',                     // 8
       'every frame {',         // 9
-      '  if a < 5 { a = 1  b = 2 }', // 10
+      '  if a < 5 { a = }',    // 10 — incomplete RHS (note: `a = 1  b = 2` now parses as two statements)
       '}',                     // 11
       '',
     ].join('\n')
@@ -417,7 +417,19 @@ describe('flatFormat — .flatink program', () => {
     expect(diags).toHaveLength(1)
     expect(diags[0].scope).toBe('scene')
     expect(diags[0].diag.line).toBe(10) // absolute line, mapped through the masked scene text
-    expect(diags[0].diag.message).toContain('one action per line')
+    expect(diags[0].diag.message).toContain('expression expected after "="')
+  })
+
+  it('behaviorDiagnostics is silent on statements crammed on one line (the parser splits them)', () => {
+    const src = [
+      'size 100 100', 'var a = 0', 'var b = 0',
+      'scene {', '  layer "L" {', '    circle 0 0 5 fill #f00', '  }', '}',
+      'every frame {', '  if a < 5 { a = 1  b = 2 }', '}', '',
+    ].join('\n')
+    expect(behaviorDiagnostics(src)).toEqual([])
+    expect(parseProgramFull(src).timeline?.onEnterFrame).toEqual([
+      { do: 'if', cond: 'a < 5', then: [{ do: 'setVar', name: 'a', value: '1' }, { do: 'setVar', name: 'b', value: '2' }] },
+    ])
   })
 
   it('behaviorDiagnostics is silent on a clean program', () => {

@@ -443,6 +443,40 @@ class Parser {
     this.err(`${kind}: one action per line — unexpected "=" (separate them with a line break)`, { i: pos.i + eq, line: pos.line, col: pos.col + eq })
     return true
   }
+  /** In `expr`, given a stray level-0 `=` at index `eq`, returns the offset where the SECOND statement
+   *  begins: back up over the spaces before `=`, then over its LHS — an identifier or dotted member
+   *  (`Name.param`) and/or an indexed target (`arr[i]`, brackets balanced). */
+  private secondStmtStart(expr: string, eq: number): number {
+    let j = eq
+    while (j > 0 && (expr[j - 1] === ' ' || expr[j - 1] === '\t')) j--
+    for (;;) {
+      if (expr[j - 1] === ']') { // a balanced [...] index segment (arr[i], occ[sl[i]])
+        let d = 0
+        while (j > 0) { const c = expr[--j]; if (c === ']') d++; else if (c === '[') { d--; if (d === 0) break } }
+        continue
+      }
+      if (j > 0 && /[A-Za-z0-9_.]/.test(expr[j - 1])) { while (j > 0 && /[A-Za-z0-9_.]/.test(expr[j - 1])) j--; continue }
+      break
+    }
+    return j
+  }
+  /** Captures an assignment/binding RHS up to end-of-line — BUT if a second statement is crammed on the
+   *  same line (a level-0 non-comparator `=`, the #1 LLM footgun), stops before it and leaves the cursor
+   *  at its start so the enclosing loop parses it as its own statement. `split` then tells the caller to
+   *  skip `endStatement` (the cursor sits mid-line on the next statement, not on the newline). FlatInk ends
+   *  a statement at the newline; this makes `a = 1  b = 2` parse as two, instead of erroring. */
+  private splitRhs(): { expr: string; split: boolean } {
+    const start = this.mark()
+    const full = this.lineExpr()
+    const eq = this.strayAssignIndex(full)
+    if (eq < 0) return { expr: full, split: false }
+    const cut = this.secondStmtStart(full, eq)
+    if (cut <= 0) return { expr: full, split: false } // degenerate (e.g. `x = y = 2`) → leave as-is, flagged downstream
+    // `full` is comment-stripped + trimmed, but capture began at `start` AFTER skipSpace and `cut` lands
+    // before any trailing comment → offsets map 1:1 onto the source (a single physical line, no '\n').
+    this.reset({ i: start.i + cut, line: start.line, col: start.col + cut })
+    return { expr: full.slice(0, cut).replace(/[ \t]+$/, ''), split: true }
+  }
   /** Captures an expression up to the end of line (or `}`). */
   private lineExpr(): string {
     let raw = ''
@@ -549,9 +583,9 @@ class Parser {
         if (!suffix) { this.err('parameter name expected after "."', m); this.skipLine(); return null }
         this.next()
         this.skipSpace()
-        const value = this.lineExpr()
+        const { expr: value, split } = this.splitRhs()
         if (!value) { this.err('value (state name or expression) expected after "="', m); return null }
-        this.endStatement() // NB: value not lint-checked as an expression — it may be a bare state name, resolved at runtime
+        if (!split) this.endStatement() // NB: value not lint-checked as an expression — it may be a bare state name, resolved at runtime
         return { do: 'setParam', target: name, param: suffix, value }
       }
       if (!suffix || this.peek() !== '(') { this.err('"(" expected for a qualified call "pkg.proc(…)" or "=" for "Name.param = value"', m); this.skipLine(); return null }
@@ -585,10 +619,10 @@ class Parser {
       if (!this.eat('=')) { this.err(`"=" expected after "${name}[…]"`, m); this.skipLine(); return null }
       this.skipSpace()
       const vpos = this.mark()
-      const value = this.lineExpr()
+      const { expr: value, split } = this.splitRhs()
       if (!value) { this.err('expression expected after "="', m); return null }
       this.exprSite(value, vpos)
-      this.endStatement()
+      if (!split) this.endStatement()
       return { do: 'setIndex', name, index: idx, value }
     }
     if (!this.eat('=')) {
@@ -598,14 +632,13 @@ class Parser {
     }
     this.skipSpace()
     const pos = this.mark()
-    const value = this.lineExpr()
+    const { expr: value, split } = this.splitRhs()
     if (!value) {
       this.err('expression expected after "="', m)
       return null
     }
-    if (this.flagStrayAssign(value, pos, 'assignment')) { this.endStatement(); return null }
     this.exprSite(value, pos)
-    this.endStatement()
+    if (!split) this.endStatement()
     return { do: 'setVar', name, value }
   }
 
@@ -1063,13 +1096,13 @@ class Parser {
           if (!this.eat('=')) { this.err(`"=" expected after "${ch}"`, bm); this.skipLine(); continue }
           this.skipSpace()
           const pos = this.mark()
-          const expr = this.lineExpr()
+          const { expr, split } = this.splitRhs()
           const deg = ch === 'rotationDeg' // authoring sugar: `rotationDeg = e` → `rotation = rad(e)`
           const scale = ch === 'scale' // authoring sugar: `scale = e` → `scaleX = e` + `scaleY = e`
           if (!deg && !scale && !isChannel(ch)) { this.err(`unknown channel "${ch}" (expected: ${EXPR_CHANNELS.join(', ')}, rotationDeg, scale)`, bm); continue }
           if (!expr) { this.err('expression expected after "="', bm); continue }
           this.exprSite(expr, pos)
-          this.endStatement()
+          if (!split) this.endStatement()
           if (scale) bindings.push({ channel: 'scaleX', expr }, { channel: 'scaleY', expr })
           else bindings.push(deg ? { channel: 'rotation', expr: `rad(${expr})` } : { channel: ch as ExprChannel, expr })
         }
@@ -1124,7 +1157,7 @@ class Parser {
         }
         this.skipSpace()
         const pos = this.mark()
-        const expr = this.lineExpr()
+        const { expr, split } = this.splitRhs()
         const deg = w === 'rotationDeg' // authoring sugar: `rotationDeg = e` → `rotation = rad(e)` (degrees → radians)
         const scale = w === 'scale' // authoring sugar: `scale = e` → `scaleX = e` + `scaleY = e` (uniform scale)
         if (!deg && !scale && !isChannel(w)) {
@@ -1136,7 +1169,7 @@ class Parser {
           return null
         }
         this.exprSite(expr, pos)
-        this.endStatement()
+        if (!split) this.endStatement()
         if (scale) return [{ kind: 'binding', channel: 'scaleX', expr }, { kind: 'binding', channel: 'scaleY', expr }]
         return { kind: 'binding', channel: deg ? 'rotation' : (w as ExprChannel), expr: deg ? `rad(${expr})` : expr }
       }
