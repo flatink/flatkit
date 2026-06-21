@@ -1,5 +1,16 @@
 # @flatkit/engine
 
+## 0.19.5
+
+### Patch Changes
+
+- [`48d96ae`](https://github.com/zwykstudio/flatkit/commit/48d96ae1ca00de5f05cad2f29a4cd9d290ea1983) Thanks [@kaelhem](https://github.com/kaelhem)! - `flatc --check` success message no longer contains the word "error".
+
+  The success line was `flatc: no errors` -- which contains "errors", so a tool or agent that greps the output for "error" to detect a failure gets a false positive (it reads success as failure). The line is now `flatc: check passed` (and surfaces a `N warning(s)` count when there are non-blocking warnings). The real failure signal stays the exit code (non-zero on error); on a failure the per-line report still prints "error" to stderr, so grepping for "error" now matches only genuine failures.
+
+- Updated dependencies [[`48d96ae`](https://github.com/zwykstudio/flatkit/commit/48d96ae1ca00de5f05cad2f29a4cd9d290ea1983)]:
+  - @flatkit/types@0.19.5
+
 ## 0.19.4
 
 ### Patch Changes
