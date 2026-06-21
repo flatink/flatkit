@@ -28,7 +28,8 @@ flatc <program.flatink> --watch      # recompile on every change in the folder
 ```
 
 `--check` also covers approximate **layout** warnings: text overflowing the canvas, clipped items,
-missing/overlapping drop zones, never-used variables.
+missing/overlapping drop zones, never-used variables, and a `color` param used as a paint (a `fill`/`stroke`,
+a gradient stop `0:teinte@…`, or a `tint`) that the symbol doesn't declare — a silent "dead recolor".
 
 ## See what you draw — `--render`
 

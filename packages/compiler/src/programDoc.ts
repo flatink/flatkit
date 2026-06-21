@@ -13,7 +13,7 @@ import type { Doc, EditFrame, Group, Instance } from '@flatkit/types'
 import { printUnits, type Diagnostic } from '@flatkit/engine/dsl'
 import { joinScopeProgram, scopeRegions } from './scopeProgram'
 import { functionsToUnits, importsToUnits, objectToUnits, timelineToUnits, variablesToUnits } from '@flatkit/engine/scriptDoc'
-import { contextLayers, getScopeTimeline, isContainer, isGroup, isText, isImage, isPoseable } from '@flatkit/engine/layers'
+import { contextLayers, getScopeTimeline, isContainer, isGroup, isText, isImage, isPoseable, isRegion } from '@flatkit/engine/layers'
 import { importedFunctions } from '@flatkit/engine/stdlib'
 import { objectNames } from '@flatkit/engine/sceneRefs'
 import { itemBBox, dropZoneBounds } from '@flatkit/engine/groups'
@@ -21,7 +21,7 @@ import { makePathSampler } from '@flatkit/engine/path'
 import { bboxIntersects } from '@flatkit/engine/bbox'
 import { lint, localVariables, type LintContext } from './lint'
 import { parseUnits } from '@flatkit/engine/dsl'
-import type { Item, Layer, Text } from '@flatkit/types'
+import type { Item, Layer, ParamDef, SymbolDef, Text } from '@flatkit/types'
 
 /** Rebuilds the "program" text of a scope (imports + variables + functions + scene cycle
  *  + one `object "Name" { … }` block per scripted container with a unique name). Pure, round-trip via printUnits. */
@@ -135,7 +135,43 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
       out.push(warn(`a channel expression uses \`time\`, but the timeline loops every ${secs}s (durationFrames ${dur}) — \`time\` resets each loop, so the motion jumps. Use the monotone \`clock\` (never wraps), drive it by \`frame/${dur}\`, or set a longer \`timeline\`.`))
     }
   }
+  out.push(...docPaintParamWarnings(doc))
   out.push(...docLayoutWarnings(doc))
+  return out
+}
+
+/** A scope's declared `color` param names (the only params usable as a paint color). */
+const colorParamNames = (params?: ParamDef[]): Set<string> => new Set((params ?? []).filter((p) => p.type === 'color').map((p) => p.name))
+
+/**
+ * A `color` param used as a paint (`fill`/`stroke`, a gradient **stop** `0:teinte@…`, or a `tint`) that the
+ * owning symbol does NOT declare → a SILENT "dead recolor" (it falls back to the literal hex, the picker does
+ * nothing). Warns per scope, with the param scoped to ITS symbol (the scene declares none). Mirrors how the
+ * lint now knows a symbol's params in its `expr`. Non-blocking (a warning), so it never breaks a build.
+ */
+export function docPaintParamWarnings(doc: Doc): { scope: string; diag: Diagnostic }[] {
+  const out: { scope: string; diag: Diagnostic }[] = []
+  const checkScope = (scope: string, layers: Layer[], known: Set<string>) => {
+    const flag = (param: string, where: string, who?: string) => {
+      if (known.has(param)) return
+      const hint = known.size ? `declared color params: ${[...known].join(', ')}` : 'this scope declares no color params'
+      out.push({ scope, diag: { line: 1, col: 1, severity: 'warning', message: `unknown color param "${param}" in ${where}${who ? ` (${who})` : ''} — ${hint}` } })
+    }
+    const visit = (it: Item) => {
+      const who = 'name' in it ? it.name : undefined
+      if (isRegion(it)) {
+        if (it.fillParam) flag(it.fillParam, 'a fill', who)
+        if (it.strokeParam) flag(it.strokeParam, 'a stroke', who)
+        const stops = it.paint && it.paint.type !== 'solid' ? it.paint.stops : []
+        for (const s of stops) if (s.param) flag(s.param, 'a gradient stop', who)
+      }
+      if (isPoseable(it) && it.tint?.param) flag(it.tint.param, 'a tint', who)
+      if (isGroup(it)) for (const l of it.layers) for (const c of l.items) visit(c) // a group is the same scope; an instance is a separate symbol (linted on its own pass)
+    }
+    for (const l of layers) for (const it of l.items) visit(it)
+  }
+  checkScope('scene', doc.layers, new Set())
+  for (const s of doc.symbols) checkScope(s.name, s.layers, colorParamNames((s as SymbolDef).params))
   return out
 }
 

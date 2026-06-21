@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { scopeProgram, docLintContext, lintDoc, lintDocReport, docStructureWarnings, docHasErrors, docLayoutWarnings } from './programDoc'
 import { IDENTITY, translation } from '@flatkit/engine/transform'
-import type { Doc, Group, Image, Interaction, Layer, SymbolDef, Text } from '@flatkit/types'
+import type { Doc, Group, Image, Interaction, Layer, Paint, Region, SymbolDef, Text } from '@flatkit/types'
 
 const group = (id: string, name: string): Group => ({ id, kind: 'group', name, transform: IDENTITY, layers: [] })
 const layer = (items: Layer['items']): Layer => ({ id: 'L', name: 'L', visible: true, locked: false, opacity: 1, items })
@@ -165,5 +165,41 @@ describe('programDoc — layout warnings', () => {
   it('text-on-path never triggers the CANVAS-overflow / clipped warnings (box is irrelevant)', () => {
     const ws = docLayoutWarnings(doc([onPath('OVERFLOWING LABEL', 20)]))
     expect(ws.filter((w) => /overflows the canvas|clipped at the canvas edge/.test(w.diag.message))).toEqual([])
+  })
+})
+
+describe('programDoc — a color param used as a paint must be declared (RFC follow-up)', () => {
+  const radial = (param: string): Paint => ({ type: 'radial', cx: 0.5, cy: 0.5, r: 0.5, stops: [{ offset: 0, color: '#ffe9a8', param, alpha: 0.8 }, { offset: 1, color: '#000000' }] })
+  const region = (extra: Partial<Region>): Region => ({ id: 'r', color: '#ffffff', path: { subpaths: [] }, ...extra })
+  const haloSym = (item: Layer['items'][number], declare = true): SymbolDef =>
+    ({ id: 's_Halo', name: 'Halo', layers: [layer([item])], ...(declare ? { params: [{ name: 'teinte', type: 'color', default: '#ffe9a8' }] } : {}) })
+  const doc1 = (item: Layer['items'][number], declare = true): Doc => ({ width: 100, height: 100, symbols: [haloSym(item, declare)], layers: [] })
+  const paintWarn = (d: Doc) => lintDoc(d).filter((w) => /unknown color param/.test(w.diag.message)).map((w) => `[${w.scope}] ${w.diag.message}`)
+
+  it('a declared `color` param in a stop / tint / fill is clean', () => {
+    expect(paintWarn(doc1(region({ paint: radial('teinte') })))).toEqual([])
+    expect(paintWarn(doc1({ id: 'g', kind: 'group', name: 'g', transform: IDENTITY, layers: [layer([])], tint: { color: '#fff', param: 'teinte', amount: 0.5 } }))).toEqual([])
+    expect(paintWarn(doc1(region({ fillParam: 'teinte' })))).toEqual([])
+  })
+
+  it('a typo in a stop / tint / fill / stroke is flagged (warning, scoped to the symbol)', () => {
+    expect(paintWarn(doc1(region({ paint: radial('teint') })))[0]).toMatch(/\[Halo\].*unknown color param "teint" in a gradient stop/)
+    expect(paintWarn(doc1({ id: 'g', kind: 'group', name: 'g', transform: IDENTITY, layers: [layer([])], tint: { color: '#fff', param: 'tinte', amount: 0.5 } }))[0]).toMatch(/in a tint/)
+    expect(paintWarn(doc1(region({ fillParam: 'teinet' })))[0]).toMatch(/in a fill/)
+    expect(paintWarn(doc1(region({ strokeParam: 'teim' })))[0]).toMatch(/in a stroke/)
+  })
+
+  it('it is a WARNING, not an error (does not block a build)', () => {
+    expect(docHasErrors(doc1(region({ paint: radial('teint') })))).toBe(false)
+  })
+
+  it('SCOPING: `teinte` declared in symbol A does not silence the same name in symbol B', () => {
+    const d: Doc = { width: 100, height: 100, layers: [], symbols: [
+      haloSym(region({ paint: radial('teinte') })), // A: declares teinte → clean
+      { id: 's_B', name: 'B', layers: [layer([region({ paint: radial('teinte') })])] }, // B: no params → must warn
+    ] }
+    const w = paintWarn(d)
+    expect(w).toHaveLength(1)
+    expect(w[0]).toMatch(/\[B\].*unknown color param "teinte"/)
   })
 })
