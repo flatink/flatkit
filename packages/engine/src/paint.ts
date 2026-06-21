@@ -23,8 +23,12 @@ export const solid = (color: string): Paint => ({ type: 'solid', color })
  */
 export function resolveColorRef(hex: string, param: string | undefined, alpha: number | undefined, colorParams?: Record<string, string>): string {
   if (param == null && alpha == null) return hex
-  let c = param != null ? (colorParams?.[param] ?? hex) : hex
-  if (alpha != null) c = withAlpha(splitAlpha(c).rgb, alpha)
+  // OWN string values only: an untrusted `.flatpack` can carry `param: "__proto__"` (the bracket read would
+  // return `Object.prototype`, an object) or a non-string value -> fall back to the literal `hex`, never feed
+  // a non-string to the color helpers (which would throw and crash the whole render).
+  const resolved = param != null && colorParams != null ? colorParams[param] : undefined
+  let c = typeof resolved === 'string' ? resolved : hex
+  if (alpha != null && Number.isFinite(alpha)) c = withAlpha(splitAlpha(c).rgb, alpha) // ignore a NaN/Inf alpha (untrusted)
   return c
 }
 

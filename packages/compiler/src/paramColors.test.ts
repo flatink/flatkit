@@ -31,11 +31,8 @@ async function preview(lib: string): Promise<Doc> {
   return JSON.parse(readFileSync(out, 'utf8')) as Doc
 }
 
-/** Render the doc with `teinte` recolored to `hex` (the gallery path: mutate the param default, re-resolve). */
-function renderWith(base: Doc, hex: string): { px: Uint8ClampedArray; w: number; h: number } {
-  const d = structuredClone(base)
-  const sym = d.symbols!.find((s: SymbolDef) => s.params?.some((p) => p.name === 'teinte'))!
-  sym.params!.find((p) => p.name === 'teinte')!.default = hex
+/** Render any doc on a skia canvas → pixels (no mutation). */
+function renderDoc(d: Doc): { px: Uint8ClampedArray; w: number; h: number } {
   const w = d.width, h = d.height
   const c = new Canvas(w, h) as unknown as HTMLCanvasElement
   ;(c as unknown as { getBoundingClientRect: () => DOMRect }).getBoundingClientRect = () =>
@@ -44,6 +41,13 @@ function renderWith(base: Doc, hex: string): { px: Uint8ClampedArray; w: number;
   p.seek(0); p.render()
   const ctx = (c as unknown as { getContext: (t: string) => { getImageData: (x: number, y: number, w: number, h: number) => { data: Uint8ClampedArray } } }).getContext('2d')
   return { px: Uint8ClampedArray.from(ctx.getImageData(0, 0, w, h).data), w, h }
+}
+/** Render the doc with `teinte` recolored to `hex` (the gallery path: mutate the param default, re-resolve). */
+function renderWith(base: Doc, hex: string): { px: Uint8ClampedArray; w: number; h: number } {
+  const d = structuredClone(base)
+  const sym = d.symbols!.find((s: SymbolDef) => s.params?.some((p) => p.name === 'teinte'))!
+  sym.params!.find((p) => p.name === 'teinte')!.default = hex
+  return renderDoc(d)
 }
 const mad = (a: Uint8ClampedArray, b: Uint8ClampedArray) => { let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length }
 /** Count alpha transitions along the middle row — a soft gradient has many, a hard disk ~2. */
@@ -87,5 +91,18 @@ describe('param colors (RFC) — a color param drives a gradient stop / a tint',
   it('a literal hex gradient is unaffected by the param (non-regression)', async () => {
     const doc = await preview(HALO('fill radial(0.5, 0.5, 0.5, 0:#ffe9a8cc, 1:#ffe9a800)'))
     expect(mad(renderWith(doc, '#ffe9a8').px, renderWith(doc, '#7ec8ff').px)).toBe(0) // recolor does nothing to a hex gradient
+  })
+
+  it('a CRAFTED gradient (string offset, __proto__ param, bad alpha) does not crash the render', () => {
+    // The player runs untrusted `.flatpack` JSON and `sanitizeDoc` does not validate paint stops -> a
+    // malformed/malicious gradient must degrade, never throw (addColorStop is strict about offset + color).
+    const evil = {
+      width: 40, height: 40, symbols: [], timeline: { fps: 24, durationFrames: 24, tracks: [] },
+      layers: [{ id: 'L', name: 'L', visible: true, locked: false, opacity: 1, items: [{
+        id: 'r', color: '#fff', path: { subpaths: [{ closed: true, segments: [{ anchor: { x: 0, y: 0 } }, { anchor: { x: 40, y: 0 } }, { anchor: { x: 40, y: 40 } }, { anchor: { x: 0, y: 40 } }] }] },
+        paint: { type: 'radial', cx: 0.5, cy: 0.5, r: 0.5, stops: [{ offset: 'evil', color: '#fff', param: '__proto__', alpha: 'oops' }, { offset: 1, color: '#000' }] },
+      }] }],
+    } as unknown as Doc
+    expect(() => renderDoc(evil)).not.toThrow()
   })
 })

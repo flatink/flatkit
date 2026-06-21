@@ -558,7 +558,10 @@ function paintStyle(ctx: CanvasRenderingContext2D, paint: Paint, bbox: ReturnTyp
     const cy = b.minY + paint.cy * h
     g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(0.0001, paint.r * Math.max(w, h)))
   }
-  for (const s of paint.stops) g.addColorStop(clamp01(s.offset), resolveStopColor(s, colorParams))
+  // `addColorStop` THROWS on a non-finite offset (an untrusted `.flatpack` can carry `offset: "x"` -> NaN) or
+  // a color string it can't parse -> clamp the offset to a finite [0,1] and let `resolveStopColor` always
+  // yield a valid color, so a crafted gradient can't crash the render.
+  for (const s of paint.stops) g.addColorStop(Number.isFinite(s.offset) ? clamp01(s.offset) : 0, resolveStopColor(s, colorParams))
   return g
 }
 

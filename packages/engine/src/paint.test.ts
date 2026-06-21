@@ -97,6 +97,16 @@ describe('color refs (param + alpha) — fill/stop/tint unification', () => {
     expect(resolveTintColor({ color: '#ffe9a8', param: 'teinte', amount: 0.5 }, scope)).toBe('#7ec8ff')
   })
 
+  it('hardening: an untrusted param/alpha degrades to a VALID color, never throws', () => {
+    // A crafted `.flatpack` could carry `param: "__proto__"` (bracket read -> Object.prototype) or a
+    // non-finite alpha. Both must fall back to a valid color so the renderer can't be crashed by input.
+    expect(resolveColorRef('#ffe9a8', '__proto__', 0.8, {})).toBe('#ffe9a8cc') // not Object.prototype
+    expect(resolveColorRef('#ffe9a8', 'constructor', undefined, {})).toBe('#ffe9a8')
+    expect(resolveColorRef('#ffe9a8', 'teinte', Number.NaN, scope)).toBe('#7ec8ff') // NaN alpha ignored
+    expect(resolveColorRef('#ffe9a8', undefined, Infinity, undefined)).toBe('#ffe9a8')
+    expect(resolveStopColor({ offset: 0, color: '#fff', param: '__proto__', alpha: 0.5 }, {})).toBe('#ffffff80')
+  })
+
   it('a param stop does NOT merge with a literal stop or a different param (paintKey distinguishes)', () => {
     const base = defaultGradient('radial')
     if (base.type !== 'radial') throw new Error('radial')
