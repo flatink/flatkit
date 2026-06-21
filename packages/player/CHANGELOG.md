@@ -1,5 +1,17 @@
 # @flatkit/player
 
+## 0.19.2
+
+### Patch Changes
+
+- [`bcb9eed`](https://github.com/zwykstudio/flatkit/commit/bcb9eede3f20ee4cc2bda52e788013289bafb711) Thanks [@kaelhem](https://github.com/kaelhem)! - Harden the renderer against a crafted gradient in an untrusted `.flatpack` (security pass).
+
+  The player renders untrusted `.flatpack` JSON and `sanitizeDoc` does not validate paint stops, so a crafted gradient could CRASH the render: a stop `param: "__proto__"` made the per-instance color lookup return `Object.prototype`, which the color helpers (`splitAlpha`/`withAlpha`) then threw on; a non-string color or a non-finite `offset`/`alpha` (e.g. `offset: "x"` -> NaN) made `addColorStop` throw. `resolveColorRef` now uses an OWN string value only (a prototype hit or non-string falls back to the literal hex) and ignores a non-finite alpha; the stop loop clamps a non-finite offset. A malformed gradient now degrades to a valid color instead of throwing. No effect on well-formed gradients (literal or param).
+
+- Updated dependencies [[`bcb9eed`](https://github.com/zwykstudio/flatkit/commit/bcb9eede3f20ee4cc2bda52e788013289bafb711)]:
+  - @flatkit/types@0.19.2
+  - @flatkit/engine@0.19.2
+
 ## 0.19.1
 
 ### Patch Changes
