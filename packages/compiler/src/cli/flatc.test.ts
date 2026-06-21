@@ -92,6 +92,31 @@ describe('flatc — CLI', () => {
     }
   })
 
+  it('--check <library>.flat lints the asset lib per-symbol (not as a scene)', () => {
+    const ok = join(cli, '__lib_ok.flat')
+    const warn = join(cli, '__lib_warn.flat')
+    const err = join(cli, '__lib_err.flat')
+    writeFileSync(ok, 'symbol "Halo" { params { color teinte = #ffe9a8 } layer "c" { circle 0 0 60 fill radial(0.5,0.5,0.5, 0:teinte@0.8, 1:teinte@0) } }')
+    writeFileSync(warn, 'symbol "Halo" { params { color teinte = #ffe9a8 } layer "c" { circle 0 0 60 fill radial(0.5,0.5,0.5, 0:teint@0.8, 1:teinte@0) } }') // typo'd param
+    writeFileSync(err, 'symbol "S" { timeline 24 24 layer "c" { group "g" at 0,0 pivot 0,0 expr scaleX "nope" { layer "c" { circle 0 0 10 fill #fff } } } }')
+    const errs: string[] = []
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((s: string | Uint8Array) => { errs.push(String(s)); return true })
+    const outSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try {
+      expect(run(['node', 'flatc', ok, '--check'])).toBe(0) // healthy lib → exit 0
+      errs.length = 0
+      expect(run(['node', 'flatc', warn, '--check'])).toBe(0) // a warning does not block
+      expect(errs.join('')).toMatch(/\[Halo\].*unknown color param "teint"/)
+      expect(errs.join('')).not.toContain('[scene]') // parsed as a LIB, not a scene
+      errs.length = 0
+      expect(run(['node', 'flatc', err, '--check'])).toBe(1) // an expr error blocks
+      expect(errs.join('')).toMatch(/\[S\].*unknown variable "nope"/)
+    } finally {
+      spy.mockRestore(); outSpy.mockRestore()
+      for (const f of [ok, warn, err]) rmSync(f, { force: true })
+    }
+  })
+
   it('--play <program> --script <gestures> → prints { sends, vars } (JSON, headless)', () => {
     const script = join(cli, '__gestures.json')
     writeFileSync(script, JSON.stringify([{ type: 'down', x: 10, y: 10 }, { type: 'up', x: 10, y: 10 }]))

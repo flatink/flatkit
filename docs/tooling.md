@@ -25,7 +25,12 @@ flatc game.flatink hero.flat -o game.flatpack
 flatc <program.flatink> [-o out.flatpack]
 flatc <program.flatink> --check      # semantic lint only (exits ≠0 on ERROR; warnings don't block)
 flatc <program.flatink> --watch      # recompile on every change in the folder
+flatc <library.flat> [more.flat …] --check   # lint an asset LIB per-symbol (several .flat are merged)
 ```
+
+`--check` lints a program **or** an asset library (`.flat`): the same per-symbol checks (params-in-`expr`,
+undeclared color param in a paint, unknown functions/objects) run on a lib's symbols — no need to compile a
+preview first.
 
 `--check` also covers approximate **layout** warnings: text overflowing the canvas, clipped items,
 missing/overlapping drop zones, never-used variables, and a `color` param used as a paint (a `fill`/`stroke`,

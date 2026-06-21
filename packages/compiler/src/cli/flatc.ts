@@ -54,6 +54,7 @@ Usage:
   flatc --play <program.flatink | scene.flatpack> --script <gestures.json>
   flatc --render <program.flatink | scene.flatpack> -o out.png [--frame N] [--at k=v[,k2=v2]] [--scale S]
   flatc --preview <library.flat> [--symbol NAME] [-o out.flatpack | --render -o out.png]
+  flatc <library.flat> [more.flat …] --check
 
   program.flatink   the program (composition + logic, text DSL)
   assets.flat       visual asset libs (default: every .flat in the program's folder)
@@ -61,7 +62,8 @@ Usage:
   --assets MODE     media baking: 'inline' (default, base64 in the .flatpack) or 'external'
                     (sidecar <out>.assets/ folder; asset.data = relative key — serve the folder and
                     play with sameOriginAssetResolver(<flatpackUrl>))
-  --check           semantic lint only (no .flatpack); exits ≠0 on ERROR (warnings do not stop)
+  --check           semantic lint only (no .flatpack); exits ≠0 on ERROR (warnings do not stop). Lints a
+                    program .flatink OR an asset library .flat (per-symbol; several .flat are merged)
   --watch           recompile on every change in the folder (agent → player loop)
   --play            run the file WITHOUT a canvas, replay --script and print { sends, vars } (JSON)
   --trace           (with --play) HUMAN-READABLE log per gesture: emitted sends + variable diff (debug)
@@ -185,6 +187,30 @@ function compileOnce(programPath: string, explicitFlats: string[], out: string, 
   }
   const where = assetMode === 'external' ? ` (external → ${assetsDir}/)` : ''
   process.stdout.write(`flatc: ${basename(outPath)} ✓  ${doc.symbols.length} symbol(s) · ${built.flatLibs} lib(s) · ${built.packages} package(s) · ${built.media} media${where}\n`)
+  return 0
+}
+
+/**
+ * `--check` for a `.flat` asset LIBRARY (one or several): parse via `parseFlatLib` (NOT the program parser,
+ * which would choke on `symbol`/`params`/`layer`), merge the symbols into an empty-scene Doc, and run the SAME
+ * Doc lint as a program -> per-symbol diagnostics (`[<Symbol>] line:col: …`). Reuses `lintDocReport`/
+ * `docHasErrors`, so every existing check (params-in-expr, undeclared color param in a paint, unknown
+ * functions/objects…) applies for free, with the same `[scope] line:col: level: msg` format and exit code.
+ * No `behaviorDiagnostics` (those are scene-level — a pure lib has no scene).
+ */
+function checkFlatLibs(flatPaths: string[]): number {
+  const symbols: SymbolDef[] = []
+  for (const p of flatPaths) {
+    let src: string
+    try { src = readFileSync(p, 'utf8') } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
+    try { symbols.push(...parseFlatLib(src).symbols) } // ids are uid-unique across calls -> safe to merge libs
+    catch (e) { process.stderr.write(`flatc: ${basename(p)}: ${(e as Error).message}\n`); return 1 } // a malformed lib -> a clean parse error (not "[scene] …")
+  }
+  const doc: Doc = { width: 1, height: 1, timeline: { fps: 24, durationFrames: 1, tracks: [] }, variables: {}, layers: [], symbols }
+  const report = lintDocReport(doc) // scene scope is empty -> only per-symbol diagnostics
+  if (report) process.stderr.write(report + '\n')
+  if (docHasErrors(doc)) return 1
+  process.stdout.write(`flatc: no errors ✓  ${symbols.length} symbol(s)\n`)
   return 0
 }
 
@@ -428,17 +454,22 @@ export function run(argv: string[]): number | Promise<number> {
   if (doPreview) return previewOnce(filePath, symbolName, out, frame, vars, scale, steps, doRender, pad, bboxMode, setSpec, scaleAuto)
   if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps, scaleAuto)
   if (doPlay) return playOnce(filePath, scriptPath, doTrace)
+  // `--check <library>.flat`: a `.flat` first positional is an asset LIB, not a program → lint via parseFlatLib
+  // (the following positionals are more `.flat` libs to merge). Every other path is unchanged.
+  const action: () => number = checkOnly && filePath.endsWith('.flat')
+    ? () => checkFlatLibs([filePath, ...explicitFlats])
+    : () => compileOnce(filePath, explicitFlats, out, checkOnly, assetMode)
   if (doWatch) {
-    const code = compileOnce(filePath, explicitFlats, out, checkOnly, assetMode)
+    const code = action()
     const baseDir = dirname(filePath)
     let timer: ReturnType<typeof setTimeout> | undefined
     // We ignore changes to the OUTPUT (.flatpack) — otherwise writing it would re-trigger the compile in a loop.
     watch(baseDir, { recursive: false }, (_e, filename) => {
       if (filename && (filename.endsWith('.flatpack') || filename.endsWith('.flatpack.json'))) return
-      clearTimeout(timer); timer = setTimeout(() => compileOnce(filePath, explicitFlats, out, checkOnly, assetMode), 80)
+      clearTimeout(timer); timer = setTimeout(action, 80)
     })
     process.stdout.write(`flatc: watching ${baseDir} … (Ctrl+C to stop)\n`)
     return code
   }
-  return compileOnce(filePath, explicitFlats, out, checkOnly, assetMode)
+  return action()
 }
