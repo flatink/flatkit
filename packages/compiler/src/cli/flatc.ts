@@ -173,7 +173,11 @@ function compileOnce(programPath: string, explicitFlats: string[], out: string, 
   if (checkOnly) {
     if (report) process.stderr.write(report + '\n')
     if (hasErrors) return 1
-    process.stdout.write('flatc: no errors ✓\n')
+    // Success line deliberately avoids the word "error" (the report on a FAILURE already prints "error" to
+    // stderr + exits ≠0) so a `grep error` over the output can't false-positive — the real signal is the exit
+    // code; on success, only warnings remain (non-blocking), surfaced as a count.
+    const warnings = report ? report.split('\n').filter(Boolean).length : 0
+    process.stdout.write(`flatc: check passed ✓${warnings ? ` · ${warnings} warning(s)` : ''}\n`)
     return 0
   }
   if (report) process.stderr.write(report + '\n') // compile anyway: diagnostics as warnings
@@ -210,7 +214,10 @@ function checkFlatLibs(flatPaths: string[]): number {
   const report = lintDocReport(doc) // scene scope is empty -> only per-symbol diagnostics
   if (report) process.stderr.write(report + '\n')
   if (docHasErrors(doc)) return 1
-  process.stdout.write(`flatc: no errors ✓  ${symbols.length} symbol(s)\n`)
+  // "check passed", NOT "no errors" — the word "error" must not appear on success (a `grep error` trap); the
+  // exit code is the signal, and any remaining lines are warnings (non-blocking), reported as a count.
+  const warnings = report ? report.split('\n').filter(Boolean).length : 0
+  process.stdout.write(`flatc: check passed ✓  ${symbols.length} symbol(s)${warnings ? ` · ${warnings} warning(s)` : ''}\n`)
   return 0
 }
 

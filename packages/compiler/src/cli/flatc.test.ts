@@ -99,15 +99,18 @@ describe('flatc — CLI', () => {
     writeFileSync(ok, 'symbol "Halo" { params { color teinte = #ffe9a8 } layer "c" { circle 0 0 60 fill radial(0.5,0.5,0.5, 0:teinte@0.8, 1:teinte@0) } }')
     writeFileSync(warn, 'symbol "Halo" { params { color teinte = #ffe9a8 } layer "c" { circle 0 0 60 fill radial(0.5,0.5,0.5, 0:teint@0.8, 1:teinte@0) } }') // typo'd param
     writeFileSync(err, 'symbol "S" { timeline 24 24 layer "c" { group "g" at 0,0 pivot 0,0 expr scaleX "nope" { layer "c" { circle 0 0 10 fill #fff } } } }')
-    const errs: string[] = []
+    const errs: string[] = [], outs: string[] = []
     const spy = vi.spyOn(process.stderr, 'write').mockImplementation((s: string | Uint8Array) => { errs.push(String(s)); return true })
-    const outSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    const outSpy = vi.spyOn(process.stdout, 'write').mockImplementation((s: string | Uint8Array) => { outs.push(String(s)); return true })
     try {
       expect(run(['node', 'flatc', ok, '--check'])).toBe(0) // healthy lib → exit 0
-      errs.length = 0
+      expect(outs.join('')).toContain('check passed') // success line…
+      expect(outs.join('').toLowerCase()).not.toContain('error') // …with NO "error" word (a `grep error` trap)
+      errs.length = 0; outs.length = 0
       expect(run(['node', 'flatc', warn, '--check'])).toBe(0) // a warning does not block
       expect(errs.join('')).toMatch(/\[Halo\].*unknown color param "teint"/)
       expect(errs.join('')).not.toContain('[scene]') // parsed as a LIB, not a scene
+      expect(outs.join('')).toMatch(/check passed.*1 warning/) // warning count surfaced on success
       errs.length = 0
       expect(run(['node', 'flatc', err, '--check'])).toBe(1) // an expr error blocks
       expect(errs.join('')).toMatch(/\[S\].*unknown variable "nope"/)
