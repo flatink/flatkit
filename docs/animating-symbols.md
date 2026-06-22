@@ -125,6 +125,33 @@ group "Fan" pivot 0,0 expr rotation "turns(time)" { … }   ← one turn per sec
   - `turns(n)` → `n` full turns in radians, e.g. `expr rotation "turns(time)"` or `"turns(time * 0.5)"`
   - `deg(rad)` → the inverse, for readouts.
 
+## Stateful "feel": `spring` / `smooth`
+
+`expr` is **pure** — it recomputes from `time`/params each frame, with no memory. When you want a channel to
+*react over time* (lag behind a moving target, swing and settle), use a **modifier** instead. It carries
+per-instance state that **integrates** toward a target each frame — so an asset's physical "feel" lives **in
+the asset**, with no scene code:
+
+```
+group "Suspente" spring rotation "crochetX" stiffness 0.08 damping 0.86 { … }   # cable swings, then settles
+group "Aiguille" smooth rotationDeg "valeur * 270" k 0.18 { … }                 # needle eases to its value
+```
+
+- `smooth <channel> "<target>" k <0..1>` — 1st-order lag: each step `value += (target − value) * k`. Small
+  `k` = slow/heavy; `k = 1` = instant (no lag).
+- `spring <channel> "<target>" stiffness <0..1> damping <0..1>` — 2nd-order spring: overshoots then settles.
+  Lower `damping` = more bounce. (Both params are per fixed 60 Hz step; out-of-range values are clamped.)
+- `<target>` is an ordinary expression (params, `time`, `self.x`, …) — the resting value the channel chases.
+  Authoring sugar like `expr`: `rotate` = `rotation`; `rotationDeg` reads degrees (wraps the target in `rad()`).
+- A modifier **wins** over a plain `expr` / keyframes on the same channel.
+
+**Per instance.** State is keyed per instance, so two cranes side by side swing **independently** (even when
+the spring is on a group *inside* the symbol).
+
+**Live vs. static.** The spring animates during **playback** (gallery autoplay, an activity). On **random
+access** — a timeline scrub, `--render`, a contact sheet — there is no time to integrate, so the channel
+**snaps to its target** (the rest pose). So tune a spring by *playing* the preview, not by scrubbing.
+
 ## Looping & instancing
 
 The timeline loops over `[0, durationFrames)`. An `instance` of a symbol chooses **how its own timeline

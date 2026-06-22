@@ -40,6 +40,27 @@ describe('programDoc — lintDoc', () => {
     const d: Doc = { width: 100, height: 100, symbols: [], layers: [layer([group('hero', 'Hero')])], interactions: [click('hero', 'mouse.x')] }
     expect(lintDocReport(d)).toBe('')
   })
+
+  // Stateful channel modifiers: the target is a normal expression → lint it in the symbol's scope.
+  const grue = (target: string, damping = 0.86): Doc => ({
+    width: 100, height: 100,
+    symbols: [{ id: 'sym', name: 'Grue', params: [{ name: 'crochetX', type: 'number', default: '0' }],
+      layers: [layer([{ id: 'susp', kind: 'group', name: 'Suspente', transform: IDENTITY, layers: [], modifiers: { rotation: { kind: 'spring', target, stiffness: 0.08, damping } } }])] }],
+    layers: [layer([{ id: 'g1', kind: 'instance', name: 'g1', transform: IDENTITY, symbolId: 'sym' }])],
+  })
+
+  it('a modifier target referencing a symbol param passes (no diagnostic)', () => {
+    expect(lintDocReport(grue('crochetX'))).toBe('')
+  })
+
+  it('a typo in a modifier target surfaces as "unknown variable", scoped to the symbol', () => {
+    const report = lintDocReport(grue('crochetXX'))
+    expect(report).toMatch(/\[Grue\].*spring rotation: unknown variable "crochetXX"/)
+  })
+
+  it('out-of-range spring damping is flagged (warning, clamped at runtime)', () => {
+    expect(lintDocReport(grue('crochetX', 2))).toMatch(/spring rotation: damping 2 should be in \(0,1\)/)
+  })
   it('reference by name (Hero.x) accepted in the Doc', () => {
     const d: Doc = { width: 100, height: 100, symbols: [], layers: [layer([group('hero', 'Hero'), group('target', 'Target')])], interactions: [click('hero', 'Target.x')] }
     expect(lintDocReport(d)).toBe('')

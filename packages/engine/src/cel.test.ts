@@ -27,6 +27,34 @@ describe('cel — self interaction state in channel expressions (feedback)', () 
   })
 })
 
+describe('cel — stateful channel modifiers (smooth/spring) resolution', () => {
+  const withMod = (id: string): Group => ({ ...group(id), modifiers: { opacity: { kind: 'smooth', target: '0.7', k: 0.2 } } })
+
+  it('LIVE: uses the player-integrated value from channelValue (overrides the target)', () => {
+    const l = layer([withMod('X')])
+    const out = resolveLayerAt(l, 0, { channelValue: () => 0.2 })
+    expect(out[0].opacity).toBe(0.2) // integrated state, not the target 0.7
+  })
+
+  it('RANDOM ACCESS: no channelValue → snaps to the target (rest pose)', () => {
+    const l = layer([withMod('X')])
+    expect(resolveLayerAt(l, 0)[0].opacity).toBeCloseTo(0.7, 6) // target evaluated → snap
+  })
+
+  it('keys state by statePath + item id (the per-instance path)', () => {
+    let seen = ''
+    const l = layer([withMod('X')])
+    resolveLayerAt(l, 0, { statePath: 'gru1/', channelValue: (key) => { seen = key; return 0.3 } })
+    expect(seen).toBe('gru1/X') // composed key → two grues (gru1/X, gru2/X) are independent
+  })
+
+  it('a modifier WINS over an expression on the same channel', () => {
+    const both: Group = { ...group('X'), expressions: { opacity: '1' }, modifiers: { opacity: { kind: 'smooth', target: '0.4', k: 0.2 } } }
+    const out = resolveLayerAt(layer([both]), 0) // no channelValue → snap to the modifier target, ignoring "1"
+    expect(out[0].opacity).toBeCloseTo(0.4, 6)
+  })
+})
+
 describe('cel — channel expressions transform around the declared pivot', () => {
   const apply = (m: { a: number; b: number; c: number; d: number; e: number; f: number }, p: { x: number; y: number }) =>
     ({ x: m.a * p.x + m.c * p.y + m.e, y: m.b * p.x + m.d * p.y + m.f })

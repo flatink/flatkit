@@ -59,6 +59,29 @@ describe('compile — .flat + .flatink → .flatpack (Doc)', () => {
     }
   })
 
+  it('a stateful channel modifier (spring) survives .flat compile into the Doc', () => {
+    const asset = `
+symbol "Grue" {
+  params {
+    number crochetX = 0   range 0 1     "Hook position"
+  }
+  layer "body" {
+    group "Suspente" spring rotation "crochetX" stiffness 0.08 damping 0.86 {
+      layer "s" {
+        path "M0 0L10 0L10 20L0 20Z" fill #888888
+      }
+    }
+  }
+}`
+    const program = `
+size 200 200
+scene { layer "c" { instance "Grue" as "g1" at 100,100 } }`
+    const out = compileFlatpack(program, [asset])
+    const sym = out.symbols.find((s) => s.name === 'Grue')!
+    const susp = sym.layers[0].items.find((it) => it.name === 'Suspente') as { modifiers?: Record<string, unknown> }
+    expect(susp.modifiers?.rotation).toEqual({ kind: 'spring', target: 'crochetX', stiffness: 0.08, damping: 0.86 })
+  })
+
   it('statements crammed on one line compile exactly like one-per-line (if lint passes, compile works)', () => {
     const out = compileFlatpack(`
 size 400 300

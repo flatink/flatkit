@@ -20,7 +20,7 @@ import type { Filter } from './filters'
 import type { Transform } from './transform'
 import type { Cel, Pose } from './cel'
 import type { Interaction } from './actions'
-import type { BlendMode, Interactor } from '@flatkit/types'
+import type { BlendMode, ChannelModifier, Interactor } from '@flatkit/types'
 import { EXPR_CHANNELS, type Easing, type ExprChannel, type SoundClip, type Timeline } from './timeline'
 import { parsePathData, circlePath, ellipsePath, rectPath } from './svgPath'
 import { compileExpr, evalExpr, exprScope } from './expr'
@@ -99,6 +99,13 @@ function printTransform(t: Transform): string {
 // `withExpr`: include the expressions? YES for a `.flat` asset (internal animation); NO for a
 // `.flatink` program (there expressions are BEHAVIOR -> `object` block, not the composition).
 type Poseable = Group | Instance | Text | Image
+/** Normalize a modifier channel token: `rotate` = `rotation`; `rotationDeg` = `rotation` with the target
+ *  wrapped in `rad(...)` (author angles in degrees — mirrors the DSL's `rotationDeg` sugar). */
+function modChannel(raw: string): { ch: ExprChannel; deg: boolean } {
+  if (raw === 'rotate') return { ch: 'rotation', deg: false }
+  if (raw === 'rotationDeg') return { ch: 'rotation', deg: true }
+  return { ch: raw as ExprChannel, deg: false }
+}
 function printPoseAttrs(it: Poseable, withExpr: boolean): string {
   let s = ''
   if (it.opacity != null && it.opacity < 1) s += ` opacity ${n(it.opacity)}`
@@ -111,6 +118,12 @@ function printPoseAttrs(it: Poseable, withExpr: boolean): string {
   if (it.filters) for (const f of it.filters) s += ' ' + printFilter(f)
   // Inlined channel expressions (`.flat`) — on ALL poseable leaves (group/instance/text/image).
   if (withExpr && it.expressions) for (const ch of EXPR_CHANNELS) { const ex = it.expressions[ch]; if (ex) s += ` expr ${ch} ${q(ex)}` }
+  // Stateful channel modifiers (`.flat`): `spring <ch> "<target>" stiffness <s> damping <d>` / `smooth <ch> "<target>" k <k>`.
+  if (withExpr && it.modifiers) for (const ch of EXPR_CHANNELS) {
+    const m = it.modifiers[ch]
+    if (!m) continue
+    s += m.kind === 'spring' ? ` spring ${ch} ${q(m.target)} stiffness ${n(m.stiffness)} damping ${n(m.damping)}` : ` smooth ${ch} ${q(m.target)} k ${n(m.k)}`
+  }
   return s
 }
 
@@ -961,7 +974,7 @@ function tokenize(src: string): Tok[] {
   return out
 }
 
-type ParsedAttrs = { opacity?: number; pivot?: { x: number; y: number }; tint?: Tint; filters?: Filter[]; expressions?: Partial<Record<ExprChannel, string>>; noHit?: boolean; blend?: BlendMode; hitbox?: { w: number; h: number }; clip?: { x: number; y: number; w: number; h: number }; playback?: InstancePlayback }
+type ParsedAttrs = { opacity?: number; pivot?: { x: number; y: number }; tint?: Tint; filters?: Filter[]; expressions?: Partial<Record<ExprChannel, string>>; modifiers?: Partial<Record<ExprChannel, ChannelModifier>>; noHit?: boolean; blend?: BlendMode; hitbox?: { w: number; h: number }; clip?: { x: number; y: number; w: number; h: number }; playback?: InstancePlayback }
 
 /** An `align <point> of "target" [offset]` pending: `tf` is the SHARED ref with the item, mutated
  *  in place by resolveAligns once the scene is parsed (the bbox of `target` is then computable). */
@@ -1345,7 +1358,7 @@ class FlatParser {
     const layers: Layer[] = []
     while (!this.is('}')) layers.push(...this.layer())
     this.eat('}')
-    return { id: uid('g'), kind: 'group', name, transform, layers, ...leafAttrs(a), ...(a.hitbox ? { hitbox: a.hitbox } : {}), ...(a.clip ? { clip: a.clip } : {}), ...exprAttr(a), ...(timeline ? { timeline } : {}) }
+    return { id: uid('g'), kind: 'group', name, transform, layers, ...leafAttrs(a), ...(a.hitbox ? { hitbox: a.hitbox } : {}), ...(a.clip ? { clip: a.clip } : {}), ...exprAttr(a), ...modAttr(a), ...(timeline ? { timeline } : {}) }
   }
   private instance(): Instance {
     this.eat('instance')
@@ -1357,7 +1370,7 @@ class FlatParser {
     const params = this.is('{') ? this.callSiteParams() : undefined // `instance "X" { hull = #fff, wave = 1.5 }`
     // `synced` is the default → store a `playback` only for the non-default modes (keeps round-trips minimal).
     const playback = a.playback && a.playback.mode !== 'synced' ? a.playback : undefined
-    return { id: uid('i'), kind: 'instance', name, transform, symbolId: '@' + symName, ...leafAttrs(a), ...(a.clip ? { clip: a.clip } : {}), ...exprAttr(a), ...(playback ? { playback } : {}), ...(params ? { params } : {}) }
+    return { id: uid('i'), kind: 'instance', name, transform, symbolId: '@' + symName, ...leafAttrs(a), ...(a.clip ? { clip: a.clip } : {}), ...exprAttr(a), ...modAttr(a), ...(playback ? { playback } : {}), ...(params ? { params } : {}) }
   }
   /** Call-site values for a symbol's exposed params: `{ name = <literal> [, name2 = …] }` (single-token literals). */
   private callSiteParams(): Record<string, string> {
@@ -1426,7 +1439,7 @@ class FlatParser {
       else break
     }
     const a = this.poseAttrs()
-    const t: Text = { id: id ?? uid('t'), kind: 'text', name: content || 'Text', ...(id !== undefined ? { idExplicit: true } : {}), transform, content, font, size, align, lineHeight, color, ...(stroke ? { stroke } : {}), ...(weight ? { weight } : {}), ...(italic ? { italic } : {}), box, ...(wrap ? { wrap: true } : {}), ...(bind ? { bind } : {}), ...(decimals != null ? { decimals } : {}), ...leafAttrs(a), ...exprAttr(a) }
+    const t: Text = { id: id ?? uid('t'), kind: 'text', name: content || 'Text', ...(id !== undefined ? { idExplicit: true } : {}), transform, content, font, size, align, lineHeight, color, ...(stroke ? { stroke } : {}), ...(weight ? { weight } : {}), ...(italic ? { italic } : {}), box, ...(wrap ? { wrap: true } : {}), ...(bind ? { bind } : {}), ...(decimals != null ? { decimals } : {}), ...leafAttrs(a), ...exprAttr(a), ...modAttr(a) }
     // text-on-path: inline `along path "<d>"` is baked here (literal — author owns orientation); a named
     // `along "<id>"` defers to resolveTextPaths (forward refs allowed). `side over`/`spacing 0` = defaults → dropped.
     const tpAttrs = { ...(startFrac != null ? { start: startFrac } : {}), ...(side === 'under' ? { side } : {}), ...(spacing ? { spacing } : {}), ...(startExpr ? { startExpr } : {}), ...(spacingExpr ? { spacingExpr } : {}) }
@@ -1441,7 +1454,7 @@ class FlatParser {
     const name = this.is('as') ? (this.next(), this.str()) : 'Image'
     const transform = this.transform(name)
     const a = this.poseAttrs()
-    return { id: uid('im'), kind: 'image', name, transform, assetId, w, h, ...leafAttrs(a), ...exprAttr(a) }
+    return { id: uid('im'), kind: 'image', name, transform, assetId, w, h, ...leafAttrs(a), ...exprAttr(a), ...modAttr(a) }
   }
   /** Coordinate of an `at`: a number, or the `center` keyword (canvas center on the relevant axis). */
   private coord(isX: boolean): number {
@@ -1487,6 +1500,8 @@ class FlatParser {
       else if (this.is('tint')) { this.next(); a.tint = this.tintValue() }
       else if (this.is('filter')) { (a.filters ??= []).push(this.filter()) }
       else if (this.is('expr')) { this.next(); const ch = this.next().v as ExprChannel; const ex = this.str(); (a.expressions ??= {})[ch] = ex }
+      else if (this.is('spring')) { this.next(); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let stiffness = 0, damping = 0; for (;;) { if (this.is('stiffness')) { this.next(); stiffness = this.num() } else if (this.is('damping')) { this.next(); damping = this.num() } else break } (a.modifiers ??= {})[ch] = { kind: 'spring', target, stiffness, damping } }
+      else if (this.is('smooth')) { this.next(); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let k = 0; if (this.is('k')) { this.next(); k = this.num() } (a.modifiers ??= {})[ch] = { kind: 'smooth', target, k } }
       else if (this.is('nohit')) { this.next(); a.noHit = true }
       else if (this.is('blend')) { this.next(); a.blend = this.next().v as BlendMode }
       else if (this.is('hitbox')) { this.next(); const w = this.num(); const h = this.num(); a.hitbox = { w, h } }
@@ -1566,6 +1581,8 @@ const leafAttrs = (a: ParsedAttrs): LeafAttrs => ({
 })
 // Channel expressions: all poseable leaves (group/instance/text/image).
 const exprAttr = (a: ParsedAttrs) => (a.expressions ? { expressions: a.expressions } : {})
+// Stateful channel modifiers: same poseable leaves.
+const modAttr = (a: ParsedAttrs) => (a.modifiers ? { modifiers: a.modifiers } : {})
 
 /** Resolves the `symbolId: '@Name'` (references by name) into real ids, recursively. */
 function resolveInstanceNames(symbols: SymbolDef[]): void {

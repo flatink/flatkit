@@ -107,6 +107,14 @@ export type Keyframe = {
 /** Channels animatable by expression (= the decomposed components + opacity). */
 export type ExprChannel = 'x' | 'y' | 'scaleX' | 'scaleY' | 'rotation' | 'opacity'
 
+/** A STATEFUL channel modifier: instead of a pure expression, the channel INTEGRATES over time toward
+ *  `target` (a normal expression). State lives per (instance, channel) in the player, advanced at a fixed
+ *  step, independent of `onEnterFrame`/input; on random access (seek/render) it snaps to `target` (the rest
+ *  pose). Pure & bounded — cannot diverge. See docs/design-channel-modifiers-spike.md. */
+export type ChannelModifier =
+  | { kind: 'smooth'; target: string; k: number } //                       1st-order lag (exponential approach)
+  | { kind: 'spring'; target: string; stiffness: number; damping: number } // 2nd-order spring (overshoot/settle)
+
 export type TimelineTrack = {
   id: string
   targetId: string // id of an Item in the timeline's scope
@@ -263,8 +271,11 @@ export type Cel = {
 export type ItemInteractionState = { hovered: number; grabbed: number; pressed: number }
 
 /** Resolution context (container expressions + guide layer). `itemState` lets channel expressions read the
- *  object's own interaction state (`self.hovered`…); the PLAYER provides it, absent elsewhere (flags → 0). */
-export type ResolveOpts = { fps?: number; ctx?: ExprContext; guide?: Path; orient?: boolean; parent?: Transform; itemState?: (id: string) => ItemInteractionState | undefined }
+ *  object's own interaction state (`self.hovered`…); the PLAYER provides it, absent elsewhere (flags → 0).
+ *  `statePath` is the composed ancestor-instance path of the current scope (empty at the root) and
+ *  `channelValue` returns the PLAYER's integrated value for a stateful channel modifier (`smooth`/`spring`)
+ *  keyed by `statePath+itemId`; absent (random access: seek/render) → the channel snaps to its target. */
+export type ResolveOpts = { fps?: number; ctx?: ExprContext; guide?: Path; orient?: boolean; parent?: Transform; itemState?: (id: string) => ItemInteractionState | undefined; statePath?: string; channelValue?: (key: string, ch: ExprChannel) => number | undefined; onModifierTarget?: (key: string, ch: ExprChannel, mod: ChannelModifier, target: number) => void }
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Document model
@@ -310,6 +321,7 @@ export type Group = {
   blend?: BlendMode // blend mode (add/screen = additive light, multiply = shadow); absent = normal
   hitbox?: { w: number; h: number } // EXPLICIT drop zone (local rect centered on the origin, ±w/2 × ±h/2): used as the `when dropped on` target instead of the content bbox; avoids invisible paths
   expressions?: Partial<Record<ExprChannel, string>> // expression animation (cel model) — takes priority over the tween
+  modifiers?: Partial<Record<ExprChannel, ChannelModifier>> // STATEFUL channel modifier (smooth/spring); integrates over time, wins over expression/tween
   clip?: ClipRect // rectangular clip in LOCAL coords (`clip x y w h`); content outside is cut
 }
 
@@ -329,6 +341,7 @@ export type Instance = {
   filters?: Filter[] // filter stack (blur/shadow/glow/adjust) — animatable
   blend?: BlendMode // blend mode (add/screen = additive light, multiply = shadow); absent = normal
   expressions?: Partial<Record<ExprChannel, string>> // expression animation (cel model) — takes priority over the tween
+  modifiers?: Partial<Record<ExprChannel, ChannelModifier>> // STATEFUL channel modifier (smooth/spring); integrates over time, wins over expression/tween
   params?: Record<string, string> // call-site values for the symbol's exposed `params` (literal: #color / number / true|false / state name); resolved per the symbol's ParamDef
   clip?: ClipRect // rectangular clip in LOCAL coords (`clip x y w h`); content outside is cut
 }
@@ -442,6 +455,7 @@ export type Text = {
   filters?: Filter[] // filter stack — animatable
   blend?: BlendMode // blend mode (add/screen = additive light, multiply = shadow); absent = normal
   expressions?: Partial<Record<ExprChannel, string>> // expression (channel) animation — takes priority over the pose
+  modifiers?: Partial<Record<ExprChannel, ChannelModifier>> // STATEFUL channel modifier (smooth/spring); integrates over time, wins over expression/pose
 }
 
 /** Bitmap image: a leaf item animatable like text. References an asset; `w`/`h` = intrinsic size in px
@@ -462,6 +476,7 @@ export type Image = {
   filters?: Filter[] // filter stack — animatable
   blend?: BlendMode // blend mode (add/screen = additive light, multiply = shadow); absent = normal
   expressions?: Partial<Record<ExprChannel, string>> // expression (channel) animation — takes priority over the pose
+  modifiers?: Partial<Record<ExprChannel, ChannelModifier>> // STATEFUL channel modifier (smooth/spring); integrates over time, wins over expression/pose
 }
 
 /** Layer content: material, one-off group, symbol instance, text, or image. */

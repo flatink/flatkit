@@ -15,6 +15,7 @@ import { joinScopeProgram, scopeRegions } from './scopeProgram'
 import { functionsToUnits, importsToUnits, objectToUnits, timelineToUnits, variablesToUnits } from '@flatkit/engine/scriptDoc'
 import { contextLayers, getScopeTimeline, isContainer, isGroup, isText, isImage, isPoseable, isRegion } from '@flatkit/engine/layers'
 import { importedFunctions } from '@flatkit/engine/stdlib'
+import { EXPR_CHANNELS } from '@flatkit/engine/timeline'
 import { objectNames } from '@flatkit/engine/sceneRefs'
 import { itemBBox, dropZoneBounds } from '@flatkit/engine/groups'
 import { makePathSampler } from '@flatkit/engine/path'
@@ -265,6 +266,31 @@ export function lintDoc(doc: Doc): { scope: string; diag: Diagnostic }[] {
     for (const r of scopeRegions(scopeProgram(doc, editPath))) for (const d of lint(r.body, ctx)) out.push({ scope: label, diag: { ...d, line: d.line + r.line - 1 } })
   }
   out.push(...docStructureWarnings(doc))
+  out.push(...docModifierWarnings(doc))
+  return out
+}
+
+/** Lint each stateful channel modifier's TARGET expression with its scope's known names (a symbol's params
+ *  included) — so a typo'd `spring rotation "crochetXX"` surfaces as "unknown variable" at `--check` time,
+ *  not a silent NaN at runtime. Also flags out-of-range spring damping (clamped at runtime, but worth noting). */
+export function docModifierWarnings(doc: Doc): { scope: string; diag: Diagnostic }[] {
+  const out: { scope: string; diag: Diagnostic }[] = []
+  const allVars = allScopeVariables(doc)
+  for (const { label, editPath } of scopes(doc)) {
+    const ctx = docLintContext(doc, editPath, allVars)
+    const visit = (items: Item[]): void => {
+      for (const it of items) {
+        if (isPoseable(it) && it.modifiers) for (const ch of EXPR_CHANNELS) {
+          const m = it.modifiers[ch]
+          if (!m) continue
+          for (const d of lint(`${ch} = ${m.target}`, ctx)) out.push({ scope: label, diag: { ...d, line: 1, col: 1, message: `${m.kind} ${ch}: ${d.message}` } })
+          if (m.kind === 'spring' && !(m.damping > 0 && m.damping < 1)) out.push({ scope: label, diag: { line: 1, col: 1, severity: 'warning', message: `spring ${ch}: damping ${m.damping} should be in (0,1) — clamped at runtime` } })
+        }
+        if (isGroup(it)) for (const l of it.layers) visit(l.items) // a group shares the scope; instances are linted on their own symbol pass
+      }
+    }
+    visit(contextLayers(doc, editPath).flatMap((l) => l.items))
+  }
   return out
 }
 

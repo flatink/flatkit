@@ -11,11 +11,11 @@
 //  cel/transform). It NEVER imports `polygon-clipping`, React, or the store
 //  -> embeddable as-is in a lightweight standalone player.
 // -----------------------------------------------------------------------------
-import type { Doc, Group, Instance, Item, Layer, Region, SymbolDef, Text } from '@flatkit/types'
+import type { Doc, Group, Instance, Item, Layer, Region, SymbolDef, Text, ChannelModifier, ExprChannel } from '@flatkit/types'
 import { regionBBox, type BBox } from '@flatkit/engine/bbox'
 import { regionPaint, resolveStopColor, resolveTintColor, type Paint, type Tint } from '@flatkit/engine/paint'
 import { cssFilterString, type Filter } from '@flatkit/engine/filters'
-import { containerLayers, getSymbol, isContainer, isGroup, isInstance, isText, isImage, isRegion, layerStructure } from '@flatkit/engine/layers'
+import { containerLayers, getSymbol, isContainer, isGroup, isInstance, isPoseable, isText, isImage, isRegion, layerStructure } from '@flatkit/engine/layers'
 import { pathToBezier, transformPath, makePathSampler, pathBBox, type Path } from '@flatkit/engine/path'
 import { type BaseOf } from '@flatkit/engine/timeline'
 import { resolveInstanceParams, instanceFrames } from '@flatkit/engine/params'
@@ -50,6 +50,11 @@ export type RenderCtx = {
   monoTime?: number
   // Current instance's COLOR params (param name → hex) for `fill <param>` regions in its subtree.
   colorParams?: Record<string, string>
+  // STATEFUL channel modifiers (smooth/spring): `statePath` is the composed ancestor-INSTANCE path of this
+  // scope (empty at root; `gru1/` inside instance gru1) → the per-instance state key is `statePath+itemId`.
+  // `channelValue` returns the PLAYER's integrated value for that key+channel (absent → snap to target).
+  statePath?: string
+  channelValue?: (key: string, ch: ExprChannel) => number | undefined
   // EDITOR: preview of a transform/move applied IN PLACE (z-index preserved) to the items
   // whose id is in `ids` -- `m` (translation or affine) wraps their drawing.
   preview?: { ids: Set<string>; m: Transform }
@@ -452,17 +457,62 @@ function renderContainerChildren(
     // the subtree → nested loops play under a pinned state. `clockFrame: clock` carries that forward.
     const childFps = subFps(sym?.timeline?.fps, rctx)
     const { pose, clock } = instanceFrames(sym, it, clockOf(frame, rctx), rctx.freezeNested, subExpr, monoFrameOf(childFps, rctx))
-    renderLayers(ctx, doc, containerLayers(doc, it), pose, hidden, seen, { fps: childFps, expr: subExpr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, paramsFor: rctx.paramsFor, clockFrame: clock, monoTime: rctx.monoTime, colorParams: color }, parent, depth + 1)
+    renderLayers(ctx, doc, containerLayers(doc, it), pose, hidden, seen, { fps: childFps, expr: subExpr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, paramsFor: rctx.paramsFor, clockFrame: clock, monoTime: rctx.monoTime, colorParams: color, statePath: (rctx.statePath ?? '') + it.id + '/', channelValue: rctx.channelValue }, parent, depth + 1)
   } else if (isGroup(it) && it.timeline) {
     // Local symbol (group with its own timeline) = a nested timeline too → rides the advancing clock so it
     // keeps playing under a state-pinned ancestor (frozen only in the editor's freezeNested mode).
     const groupFrame = rctx.freezeNested ? 0 : clockOf(frame, rctx)
-    renderLayers(ctx, doc, it.layers, groupFrame, hidden, seen, { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, clockFrame: groupFrame, monoTime: rctx.monoTime }, parent, depth + 1)
+    renderLayers(ctx, doc, it.layers, groupFrame, hidden, seen, { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, clockFrame: groupFrame, monoTime: rctx.monoTime, statePath: rctx.statePath, channelValue: rctx.channelValue }, parent, depth + 1)
   } else {
     // Group without a timeline = same scope as the parent (not a sub-scope) -> follows the scope's frame.
     renderLayers(ctx, doc, containerLayers(doc, it), frame, hidden, seen, rctx, parent, depth + 1)
   }
   if (it.clip) ctx.restore()
+}
+
+// ── Stateful channel modifiers: collect their integration targets across the live scene ──────────
+/** One modifier's integration target this frame: the per-(instance,channel) state key, the channel, the
+ *  modifier spec, and the evaluated target value. The player integrates persistent state toward `target`. */
+export type ModTarget = { key: string; ch: ExprChannel; mod: ChannelModifier; target: number }
+
+/** Walk the scene (render-free) mirroring the render scope descent, resolving each layer so a stateful
+ *  channel modifier's target is evaluated in its instance's context; `statePath` accumulates ancestor
+ *  INSTANCE ids so two instances of the same symbol get independent state. Drives the player's advance. */
+function walkModifierScope(doc: Doc, layers: Layer[], frame: number, rctx: RenderCtx, sink: (t: ModTarget) => void): void {
+  const onModifierTarget = (key: string, ch: ExprChannel, mod: ChannelModifier, target: number) => sink({ key, ch, mod, target })
+  for (const layer of layers) {
+    if (!layer.visible) continue
+    const items = resolveLayerAt(layer, frame, { fps: rctx.fps, ctx: rctx.expr, itemState: rctx.itemState, statePath: rctx.statePath, onModifierTarget })
+    for (const it of items) {
+      if (isInstance(it)) {
+        const { sym, expr: subExpr } = instanceScope(doc, it, rctx)
+        const childFps = subFps(sym?.timeline?.fps, rctx)
+        const { pose, clock } = instanceFrames(sym, it, clockOf(frame, rctx), rctx.freezeNested, subExpr, monoFrameOf(childFps, rctx))
+        walkModifierScope(doc, containerLayers(doc, it), pose, { fps: childFps, expr: subExpr, freezeNested: rctx.freezeNested, itemState: rctx.itemState, paramsFor: rctx.paramsFor, clockFrame: clock, monoTime: rctx.monoTime, statePath: (rctx.statePath ?? '') + it.id + '/' }, sink)
+      } else if (isGroup(it) && it.timeline) {
+        const groupFrame = rctx.freezeNested ? 0 : clockOf(frame, rctx)
+        walkModifierScope(doc, it.layers, groupFrame, { ...rctx, fps: subFps(it.timeline.fps, rctx), clockFrame: groupFrame }, sink)
+      } else if (isGroup(it)) {
+        walkModifierScope(doc, containerLayers(doc, it), frame, rctx, sink)
+      }
+    }
+  }
+}
+
+/** All modifier integration targets in the scene at `frame` (one per driven instance×channel). */
+export function collectModifierTargets(doc: Doc, frame: number, rctx: RenderCtx): ModTarget[] {
+  const out: ModTarget[] = []
+  walkModifierScope(doc, doc.layers, frame, rctx, (t) => out.push(t))
+  return out
+}
+
+/** Does the document declare ANY stateful channel modifier (scene layers OR symbol definitions)? Lets the
+ *  player skip the whole advance pass for the common case (no modifiers → zero overhead). */
+export function docHasModifiers(doc: Doc): boolean {
+  const inItems = (items: Item[]): boolean => items.some((it) =>
+    (isPoseable(it) && !!it.modifiers && Object.keys(it.modifiers).length > 0) ||
+    (isGroup(it) && it.layers.some((l) => inItems(l.items))))
+  return doc.layers.some((l) => inItems(l.items)) || (doc.symbols ?? []).some((s) => s.layers.some((l) => inItems(l.items)))
 }
 
 /**
@@ -870,7 +920,7 @@ export function renderLayers(
       guidePath = guideCache.get(guideLayer.id)
       if (guidePath === undefined) { guidePath = guidePathOf(guideLayer, frame, rctx); guideCache.set(guideLayer.id, guidePath) }
     }
-    const items = resolveLayerAt(layer, frame, { fps: rctx.fps, ctx: rctx.expr, guide: guidePath ?? undefined, orient: layer.orientToGuide, parent, itemState: rctx.itemState })
+    const items = resolveLayerAt(layer, frame, { fps: rctx.fps, ctx: rctx.expr, guide: guidePath ?? undefined, orient: layer.orientToGuide, parent, itemState: rctx.itemState, statePath: rctx.statePath, channelValue: rctx.channelValue })
     const mask = masks.get(layer.id)
     if (mask) {
       let mi = maskCache.get(mask.id)

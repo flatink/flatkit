@@ -555,6 +555,43 @@ describe('flatFormat — inline expressions on text/image in a .flat', () => {
   })
 })
 
+describe('flatFormat — stateful channel modifiers (spring/smooth) in a .flat', () => {
+  it('round-trip: spring modifier on a group', () => {
+    const sym: SymbolDef = { id: 's', name: 'S', layers: [layer('L', 'c', [
+      { id: 'g', kind: 'group', name: 'Suspente', transform: T(0, 0), layers: [], modifiers: { rotation: { kind: 'spring', target: 'crochetX', stiffness: 0.08, damping: 0.86 } } } as Group,
+    ])] }
+    const text = printFlat([sym])
+    expect(text).toContain('spring rotation "crochetX" stiffness 0.08 damping 0.86')
+    const back = parseFlat(text)[0].layers[0].items[0] as Group
+    expect(back.modifiers?.rotation).toEqual({ kind: 'spring', target: 'crochetX', stiffness: 0.08, damping: 0.86 })
+  })
+
+  it('round-trip: smooth modifier on an image', () => {
+    const sym: SymbolDef = { id: 's', name: 'S', layers: [layer('L', 'c', [
+      { id: 'im', kind: 'image', name: 'i', transform: T(0, 0), assetId: 'a1', w: 20, h: 20, modifiers: { opacity: { kind: 'smooth', target: 'lit', k: 0.18 } } } as Image,
+    ])] }
+    const text = printFlat([sym])
+    expect(text).toContain('smooth opacity "lit" k 0.18')
+    expect((parseFlat(text)[0].layers[0].items[0] as Image).modifiers?.opacity).toEqual({ kind: 'smooth', target: 'lit', k: 0.18 })
+  })
+
+  it('authoring sugar: `rotate` aliases `rotation`; `rotationDeg` wraps the target in rad()', () => {
+    const text = [
+      'symbol "S" {',
+      '  layer "c" {',
+      '    group "A" spring rotate "crochetX" stiffness 0.08 damping 0.86 {',
+      '    }',
+      '    group "B" smooth rotationDeg "valeur * 270" k 0.18 {',
+      '    }',
+      '  }',
+      '}',
+    ].join('\n')
+    const items = parseFlat(text)[0].layers[0].items as Group[]
+    expect(items[0].modifiers?.rotation).toEqual({ kind: 'spring', target: 'crochetX', stiffness: 0.08, damping: 0.86 })
+    expect(items[1].modifiers?.rotation).toEqual({ kind: 'smooth', target: 'rad(valeur * 270)', k: 0.18 })
+  })
+})
+
 describe('flatFormat — shape primitives (sugar normalized to path)', () => {
   const sceneItem = (line: string): Region =>
     parseProgramFull(['size 100 100', 'scene {', '  layer "L" {', `    ${line}`, '  }', '}'].join('\n')).layers[0].items[0] as Region

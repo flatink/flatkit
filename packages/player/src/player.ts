@@ -12,7 +12,8 @@ import { stateValueOf, initialStateValue, stateMachineByParam } from '@flatkit/e
 import { compileCached, evalExpr, exprScope, type ExprContext, type Compiled } from '@flatkit/engine/expr'
 import { runActions, MAX_SEND_TEXT, SEND_EVENT_NAME, type Action, type ActionHost, type ItemEvent } from '@flatkit/engine/actions'
 import { containerLayers, getSymbol, isGroup, isInstance, isText } from '@flatkit/engine/layers'
-import { renderLayers, type FilterCacheEntry } from './drawScene'
+import { renderLayers, collectModifierTargets, docHasModifiers, type FilterCacheEntry, type RenderCtx } from './drawScene'
+import { restState, advanceModifier, type ModState } from '@flatkit/engine/channelModifiers'
 import { withCels } from '@flatkit/engine/migrateCel'
 import { sanitizeDoc } from '@flatkit/engine/validateDoc'
 import { applyInstanceBinds } from '@flatkit/engine/instanceBind'
@@ -247,6 +248,11 @@ export class FlatPlayer {
   // Per-instance exposed-param runtime (P3 states): instanceId → param → in-progress transition.
   // `value` is the current eased value; it drives the instance's local playhead (see drawScene.paramsFor).
   private readonly paramRt = new Map<string, Map<string, { value: number; from: number; target: number; elapsed: number; dur: number; ease?: Easing }>>()
+  // Stateful channel modifiers (smooth/spring): per-(instance,channel) integrator state, keyed
+  // `statePath+itemId|channel`. Persists across frames; cleared on seek/load → snap to rest on the target.
+  private readonly channelState = new Map<string, ModState>()
+  private modAcc = 0 // fixed-step accumulator for the modifier advance (independent of the onEnterFrame sim gate)
+  private hasModifiers = false // doc declares ≥1 modifier → run the advance pass (else zero overhead)
   private instNameCache?: Map<string, { id: string; symbolId: string }>
   private transRaf = 0 // lightweight rAF driving transitions while the playhead is NOT playing
   private longPressTimer: ReturnType<typeof setTimeout> | null = null
@@ -604,6 +610,7 @@ export class FlatPlayer {
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
     this.usesWheel = docUsesWheel(this.doc)
     this.usesMousePos = docReadsMousePos(this.doc)
+    this.hasModifiers = docHasModifiers(this.doc)
     this.loop = opts.loop ?? true
     this.pad = opts.padding ?? 0
     this.audioOn = opts.audio ?? true
@@ -915,6 +922,9 @@ export class FlatPlayer {
     this.revealStates.clear() // new document -> reveal coverage resets
     this.instNameCache = undefined // new document -> name→instance lookup stale
     this.paramRt.clear() // new document -> per-instance param transitions reset
+    this.channelState.clear() // new document -> modifier integrator state resets
+    this.modAcc = 0
+    this.hasModifiers = docHasModifiers(this.doc)
     if (this.transRaf) { cancelAnimationFrame(this.transRaf); this.transRaf = 0 }
     this.bustNamed()
     this.buildFunctions()
@@ -954,7 +964,7 @@ export class FlatPlayer {
     const expr = this.playing && this.simActive && this.prevSimVars && this.simAlpha < 1
       ? this.exprCtx(lerpVars(this.prevSimVars, this.vars, this.simAlpha))
       : this.exprCtx()
-    renderLayers(ctx, doc, doc.layers, this.frame, null, new Set(), { fps: this.fps, expr, image: (id) => this.imageFor(id), filterCache: this.filterCache, imageEpoch: this.imageEpoch, itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), monoTime: this.mono / this.fps })
+    renderLayers(ctx, doc, doc.layers, this.frame, null, new Set(), { fps: this.fps, expr, image: (id) => this.imageFor(id), filterCache: this.filterCache, imageEpoch: this.imageEpoch, itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), monoTime: this.mono / this.fps, statePath: '', channelValue: (key, ch) => this.channelValueFor(key, ch) })
     ctx.restore()
   }
 
@@ -964,6 +974,25 @@ export class FlatPlayer {
     const hovered = this.hoverIds.has(id) ? 1 : 0
     const grabbed = this.grabbed === id ? 1 : 0
     return hovered || grabbed ? { hovered, grabbed, pressed: grabbed } : undefined
+  }
+
+  /** Integrated value of a stateful channel modifier for `statePath+itemId` (key) + channel — read by the
+   *  render pass. Undefined (random access / no state yet) → the channel snaps to its target (rest pose). */
+  private channelValueFor(key: string, ch: string): number | undefined {
+    return this.channelState.get(key + '|' + ch)?.pos
+  }
+
+  /** Advance every stateful channel modifier by `steps` FIXED steps toward its current target (gathered by a
+   *  render-free scene walk that composes the per-instance state path). NOT gated by `onEnterFrame`/input —
+   *  an asset's own "feel" must animate even with no scene behavior (this is the whole point of the feature). */
+  private advanceChannelModifiers(steps: number): void {
+    if (!this.hasModifiers || steps <= 0) return
+    const rctx: RenderCtx = { fps: this.fps, expr: this.exprCtx(), itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), monoTime: this.mono / this.fps, statePath: '' }
+    for (const t of collectModifierTargets(this.doc, this.frame, rctx)) {
+      const k = t.key + '|' + t.ch
+      const cur = this.channelState.get(k) ?? restState(t.target)
+      this.channelState.set(k, advanceModifier(t.mod, cur, t.target, steps))
+    }
   }
 
   // ── Per-instance exposed params (P3 states) ───────────────────────────────────
@@ -1072,6 +1101,8 @@ export class FlatPlayer {
   seek(frame: number): void {
     this.frame = Math.max(0, Math.min(this.duration, frame))
     this.lastFrameInt = Math.floor(this.frame) // a seek does not trigger the frame-actions (anti-loop)
+    this.channelState.clear() // random access: modifiers re-init at rest on their target (snap, no transient)
+    this.modAcc = 0
     // While PLAYING, `mono` free-runs across loop wraps (kept monotone by the sim/rAF) → an `independent`
     // clip keeps its phase. A seek while NOT playing is a SCRUB / static render: anchor `mono` to the
     // scrubbed frame so MovieClip clips (independent/once) resolve deterministically (phase = frame mod dur)
@@ -1103,6 +1134,7 @@ export class FlatPlayer {
       this.mouse.wheel = 0
       this.fireFrameActions()
     }
+    this.advanceChannelModifiers(Math.max(0, Math.floor(steps))) // modifiers unfold in lockstep (headless determinism)
     this.render()
   }
 
@@ -1210,6 +1242,13 @@ export class FlatPlayer {
         this.simAcc = 0 // "pure tween" demo: no simulation, we do not hoard backlog
         this.simActive = false
         this.prevSimVars = null
+      }
+      // 2b) stateful channel modifiers (smooth/spring): advance at the SAME fixed step but UNGATED by
+      // onEnterFrame (its own accumulator) -> an asset's "feel" animates even with zero scene behavior.
+      if (this.hasModifiers) {
+        const m = simSteps(this.modAcc, dt, SIM_STEP, SIM_MAX_STEPS)
+        this.modAcc = m.acc
+        this.advanceChannelModifiers(m.steps)
       }
       this.mouse.dx = 0 // movement consumed by this frame (onEnterFrame) -> the "mouse at rest" hands control back to the keyboard
       this.mouse.dy = 0

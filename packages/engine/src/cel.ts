@@ -21,7 +21,7 @@ import { samplePathAt, projectToPath, lerpPath, type Path } from './path'
 import { applyEasing, rotDelta, EXPR_CHANNELS, type ExprChannel } from './timeline'
 import { compileCached, evalExpr, exprScope } from './expr'
 import { isPoseable, isText } from './layers'
-import type { Point, Region, Item, Layer, Pose, Cel, ResolveOpts, TextPath } from '@flatkit/types'
+import type { Point, Region, Item, Layer, Pose, Cel, ResolveOpts, TextPath, ChannelModifier } from '@flatkit/types'
 export type { Pose, Cel, ResolveOpts } from '@flatkit/types'
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
@@ -43,15 +43,19 @@ const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
 export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = {}): Item[] {
   const cels = layer.cels
   if (!cels || cels.length === 0) {
-    // STATIC layer: items as-is — but we still apply a container's channel expressions (a static object
-    // can be animated/driven by an expression, e.g. opacity:'lit').
-    const hasChannels = (it: Item) => 'expressions' in it && it.expressions && Object.keys(it.expressions).length > 0
+    // STATIC layer: items as-is — but we still apply a container's channel drivers (a static object can be
+    // animated/driven by an expression OR a stateful modifier, e.g. opacity:'lit' / spring rotation).
+    const hasChannels = (it: Item): boolean => {
+      if (!isPoseable(it)) return false
+      const e = it.expressions, m = it.modifiers
+      return (!!e && EXPR_CHANNELS.some((c) => e[c] != null)) || (!!m && EXPR_CHANNELS.some((c) => m[c] != null))
+    }
     if (!layer.items.some((it) => hasChannels(it) || isDynamicText(it))) return layer.items
     return layer.items.map((it) => {
       let out: Item = it
-      if (hasChannels(it) && isPoseable(it) && it.expressions) {
+      if (hasChannels(it) && isPoseable(it)) {
         const base: ResolvedPose = { transform: it.transform, opacity: it.opacity ?? 1, tint: it.tint, filters: it.filters }
-        const pose = applyExprChannels(it.expressions, base, frame, opts, it.id, it.pivot)
+        const pose = applyExprChannels(it.expressions ?? {}, base, frame, opts, it.id, it.pivot, it.modifiers)
         out = { ...it, transform: pose.transform, opacity: pose.opacity, ...(pose.tint ? { tint: pose.tint } : {}), ...(pose.filters ? { filters: pose.filters } : {}) }
       }
       return resolveDynamicText(out, frame, opts)
@@ -89,7 +93,7 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
     const body = byId ? byId.get(p.id) : layer.items.find((b) => b.id === p.id)
     if (!body || !isPoseable(body)) continue
     let pose = opts.guide ? guidedPose(p, A, B, frame, body, opts.guide, opts.orient) : poseAt(p, A, B, frame, body)
-    if ('expressions' in body && body.expressions) pose = applyExprChannels(body.expressions, pose, frame, opts, body.id, body.pivot)
+    if (body.expressions || body.modifiers) pose = applyExprChannels(body.expressions ?? {}, pose, frame, opts, body.id, body.pivot, body.modifiers)
     const item = { ...body, transform: pose.transform, opacity: pose.opacity, ...(pose.tint ? { tint: pose.tint } : { tint: undefined }), ...(pose.filters ? { filters: pose.filters } : { filters: undefined }) } as Item
     out.push(resolveDynamicText(item, frame, opts))
   }
@@ -332,8 +336,10 @@ function applyExprChannels(
   opts: ResolveOpts,
   id?: string,
   pivot: Point = ORIGIN,
+  mods?: Partial<Record<ExprChannel, ChannelModifier>>,
 ): ResolvedPose {
-  if (!EXPR_CHANNELS.some((ch) => ex[ch])) return pose
+  const hasMod = !!mods && EXPR_CHANNELS.some((ch) => mods[ch])
+  if (!EXPR_CHANNELS.some((ch) => ex[ch]) && !hasMod) return pose
   const dec = decompose(pose.transform)
   // Position channels track the PIVOT's parent-space position (kept fixed by scale/rotation), so
   // `scaleX`/`scaleY`/`rotation` turn around the declared `pivot` — consistent with cel poses
@@ -362,8 +368,23 @@ function applyExprChannels(
   // `self` is a live ref to `ch`, so later channels see earlier ones.
   const evalCtx = evalOverlayFor(opts, time, frame)
   evalCtx.self = self
+  const stateKey = (opts.statePath ?? '') + (id ?? '')
   let touchedT = false
   for (const c of EXPR_CHANNELS) {
+    const mod = mods?.[c]
+    if (mod) {
+      // A stateful modifier WINS over any expression on this channel. Its live value is the player's
+      // integrated state (channelValue); on random access (no callback / no state, e.g. seek/render) we
+      // evaluate the target → SNAP to the rest pose. id undefined = un-keyable scope → always snap.
+      const tc = compileCached(mod.target)
+      evalCtx.value = ch[c]
+      const target = tc.ok ? evalExpr(tc.node, evalCtx, ch[c], opts.ctx) : ch[c]
+      if (id !== undefined) opts.onModifierTarget?.(stateKey, c, mod, target) // PLAYER's advance pass collects targets to integrate
+      const live = id !== undefined ? opts.channelValue?.(stateKey, c) : undefined
+      ch[c] = live !== undefined && Number.isFinite(live) ? live : target
+      if (c !== 'opacity') touchedT = true
+      continue
+    }
     const src = ex[c]
     if (!src) continue
     const compiled = compileCached(src)
