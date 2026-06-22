@@ -1,5 +1,26 @@
 # @flatkit/engine
 
+## 0.19.8
+
+### Patch Changes
+
+- [`7569c6b`](https://github.com/zwykstudio/flatkit/commit/7569c6b1b406ad9a2b618fc1d89b9514580d6023) Thanks [@kaelhem](https://github.com/kaelhem)! - Scene-side authoring for stateful channel modifiers: a `.flatink` `object` block can now declare a
+  `spring` / `smooth` channel, not just a `.flat` symbol. The target is an ordinary (unquoted) FlatInk
+  expression; block form for the params:
+
+  object "Hero" {
+  spring rotation = crochetX { stiffness 0.08 damping 0.86 }
+  smooth opacity = lit { k 0.18 }
+  }
+
+  For a one-off spring on a scene object when the feel is not baked into a `.flat` symbol. Front-end only --
+  a new `modifier` DSL unit (parse, print round-trip, compile to the item's `modifiers`, `flatc --check`
+  lints the target and slots); the runtime (engine resolution, player advance, per-instance state) is the
+  same code that already drives the `.flat` form. `rotate`/`rotationDeg` sugar like the rest. Additive.
+
+- Updated dependencies [[`7569c6b`](https://github.com/zwykstudio/flatkit/commit/7569c6b1b406ad9a2b618fc1d89b9514580d6023)]:
+  - @flatkit/types@0.19.8
+
 ## 0.19.7
 
 ### Patch Changes

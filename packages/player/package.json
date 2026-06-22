@@ -1,6 +1,6 @@
 {
   "name": "@flatkit/player",
-  "version": "0.19.7",
+  "version": "0.19.8",
   "description": "The lightweight FlatInk player: load a .flatpack and play it in a <canvas>. No editor, no heavy deps.",
   "license": "MIT",
   "author": "Zwyk Studio",
