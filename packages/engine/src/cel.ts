@@ -329,6 +329,8 @@ function evalOverlayFor(opts: ResolveOpts, time: number, frame: number): ReturnT
   }
   return o
 }
+/** `velocity()` outside the player's advance pass (render/seek, or an un-keyable scope) → no movement. */
+const ZERO_VELOCITY = (_arg: number): number => 0
 function applyExprChannels(
   ex: Partial<Record<ExprChannel, string>>,
   pose: ResolvedPose,
@@ -378,12 +380,17 @@ function applyExprChannels(
       // evaluate the target → SNAP to the rest pose. id undefined = un-keyable scope → always snap.
       const tc = compileCached(mod.target)
       evalCtx.value = ch[c]
+      if (id !== undefined) stateKey ??= (opts.statePath ?? '') + id
+      // `velocity(arg)` inside the target reacts to the arg's per-tick CHANGE. NOT a pure stdlib fn: the PLAYER's
+      // advance pass supplies a stateful resolver (per instance+channel) via opts.velocityFor; at render/seek there
+      // is none -> velocity is 0 (so the channel snaps to its rest pose). Set on the shared overlay right before
+      // this target's eval, like `value`/`self`. (resolveName reads the ctx, so no change to the expression engine.)
+      evalCtx.velocity = (id !== undefined && opts.velocityFor ? opts.velocityFor(stateKey!, c) : undefined) ?? ZERO_VELOCITY
       const target = tc.ok ? evalExpr(tc.node, evalCtx, ch[c], opts.ctx) : ch[c]
       let live: number | undefined
       if (id !== undefined) {
-        stateKey ??= (opts.statePath ?? '') + id
-        opts.onModifierTarget?.(stateKey, c, mod, target) // PLAYER's advance pass collects targets to integrate
-        live = opts.channelValue?.(stateKey, c)
+        opts.onModifierTarget?.(stateKey!, c, mod, target) // PLAYER's advance pass collects targets to integrate
+        live = opts.channelValue?.(stateKey!, c)
       }
       ch[c] = live !== undefined && Number.isFinite(live) ? live : target
       if (c !== 'opacity') touchedT = true

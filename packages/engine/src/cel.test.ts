@@ -53,6 +53,16 @@ describe('cel — stateful channel modifiers (smooth/spring) resolution', () => 
     const out = resolveLayerAt(layer([both]), 0) // no channelValue → snap to the modifier target, ignoring "1"
     expect(out[0].opacity).toBeCloseTo(0.4, 6)
   })
+
+  it('velocity() in a modifier target resolves via opts.velocityFor (advance), and is 0 at render/seek', () => {
+    const g: Group = { ...group('X'), modifiers: { opacity: { kind: 'smooth', target: 'velocity(crochetX)', k: 1 } } }
+    const ctx = { crochetX: 5 } as never
+    // render/seek (no velocityFor) → velocity = 0 → target 0 → opacity 0 (snap to rest)
+    expect(resolveLayerAt(layer([g]), 0, { ctx })[0].opacity).toBe(0)
+    // advance (velocityFor present) → velocity resolves from the stateful resolver (stub: arg * 0.1)
+    const velocityFor = () => (arg: number) => arg * 0.1
+    expect(resolveLayerAt(layer([g]), 0, { ctx, velocityFor })[0].opacity).toBeCloseTo(0.5, 6) // velocity(5)=0.5
+  })
 })
 
 describe('cel — channel expressions transform around the declared pivot', () => {

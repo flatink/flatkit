@@ -91,6 +91,23 @@ describe('FlatPlayer — modifier advance wiring (headless, render mocked)', () 
     expect(lastChannelValue()('g', 'opacity')).toBeCloseTo(1, 3) // settles on the target
   })
 
+  it('velocity() in a target reacts to a CHANGING arg, returns to rest when it stops, snaps on seek', async () => {
+    const { FlatPlayer } = await import('./player')
+    // smooth k=1 so the integrated value equals the target (= velocity(tgt)) each step -> easy to read
+    const g: Group = { id: 'g', kind: 'group', name: 'g', transform: IDENTITY, layers: [], modifiers: { opacity: { kind: 'smooth', target: 'velocity(tgt)', k: 1 } } }
+    const doc: Doc = { width: 100, height: 100, symbols: [], layers: [layer([g])], variables: { tgt: 0 } }
+    const pl = new FlatPlayer(fakeCanvas(), doc, { audio: false })
+    pl.stepSim(1)
+    expect(lastChannelValue()('g', 'opacity')).toBe(0) //              arg constant -> velocity 0 (rest = vertical)
+    pl.setVar('tgt', 1)
+    pl.stepSim(1)
+    expect(lastChannelValue()('g', 'opacity')).toBeGreaterThan(0) //   arg moved -> velocity > 0 (the swing impulse)
+    pl.stepSim(1) //                                                   tgt unchanged now
+    expect(lastChannelValue()('g', 'opacity')).toBeCloseTo(0, 6) //    movement stopped -> velocity back to 0
+    pl.seek(3)
+    expect(lastChannelValue()('g', 'opacity')).toBeUndefined() //      state cleared -> snap to rest
+  })
+
   it('two instances integrate INDEPENDENTLY through the player (v2, end-to-end)', async () => {
     const { FlatPlayer } = await import('./player')
     const sym: SymbolDef = { id: 'sym', name: 'Grue', params: [{ name: 'crochetX', type: 'number', default: '0' }], layers: [layer([springGroup('suspente', 'crochetX')])] }

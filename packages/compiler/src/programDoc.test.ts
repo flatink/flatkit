@@ -71,6 +71,15 @@ describe('programDoc — lintDoc', () => {
     const d: Doc = { width: 100, height: 100, symbols: [], variables: { crochet: 0.6 }, layers: [layer([{ ...group('hero', 'Hero'), modifiers: { rotation: { kind: 'spring', target: 'crochet', stiffness: 0.08, damping: 0.86 } } } as Group])] }
     expect(lintDocReport(d)).toBe('') // crochet IS used (the spring target) → no "never used" warning
   })
+
+  it('velocity() inside a modifier target lints clean (known in that context)', () => {
+    expect(lintDocReport(grue('velocity(crochetX)'))).toBe('')
+  })
+
+  it('velocity() in a PLAIN expression is flagged as misuse', () => {
+    const d: Doc = { width: 100, height: 100, symbols: [], variables: { x: 0 }, layers: [layer([{ ...group('hero', 'Hero'), expressions: { rotation: 'velocity(x)' } } as Group])] }
+    expect(lintDocReport(d)).toMatch(/velocity\(\) is only valid inside a spring\/smooth target/)
+  })
   it('reference by name (Hero.x) accepted in the Doc', () => {
     const d: Doc = { width: 100, height: 100, symbols: [], layers: [layer([group('hero', 'Hero'), group('target', 'Target')])], interactions: [click('hero', 'Target.x')] }
     expect(lintDocReport(d)).toBe('')

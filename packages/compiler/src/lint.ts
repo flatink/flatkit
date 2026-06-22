@@ -71,6 +71,7 @@ export function lint(src: string, ctx: LintContext = {}): Diagnostic[] {
   for (const v of ctx.variables ?? []) variables.add(v)
   const knownIds = new Set<string>([...STD_IDS, ...STD_CONSTANTS, ...variables])
   const knownFns = new Set(STD_FUNCTIONS)
+  knownFns.add('velocity') // valid inside a spring/smooth target (resolved by the modifier advance); NOT a stdlib
   for (const u of units) {
     if (u.kind === 'func') knownFns.add(u.func.name) // user-defined functions
     else if (u.kind === 'use') for (const name of packageFunctionNames(u.name)) knownFns.add(name) // package functions (bare + qualified)

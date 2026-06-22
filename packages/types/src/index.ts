@@ -275,7 +275,7 @@ export type ItemInteractionState = { hovered: number; grabbed: number; pressed: 
  *  `statePath` is the composed ancestor-instance path of the current scope (empty at the root) and
  *  `channelValue` returns the PLAYER's integrated value for a stateful channel modifier (`smooth`/`spring`)
  *  keyed by `statePath+itemId`; absent (random access: seek/render) → the channel snaps to its target. */
-export type ResolveOpts = { fps?: number; ctx?: ExprContext; guide?: Path; orient?: boolean; parent?: Transform; itemState?: (id: string) => ItemInteractionState | undefined; statePath?: string; channelValue?: (key: string, ch: ExprChannel) => number | undefined; onModifierTarget?: (key: string, ch: ExprChannel, mod: ChannelModifier, target: number) => void }
+export type ResolveOpts = { fps?: number; ctx?: ExprContext; guide?: Path; orient?: boolean; parent?: Transform; itemState?: (id: string) => ItemInteractionState | undefined; statePath?: string; channelValue?: (key: string, ch: ExprChannel) => number | undefined; onModifierTarget?: (key: string, ch: ExprChannel, mod: ChannelModifier, target: number) => void; velocityFor?: (key: string, ch: ExprChannel) => (arg: number) => number }
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Document model

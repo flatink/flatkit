@@ -494,6 +494,12 @@ describe('dsl — stateful channel modifiers (spring/smooth), block form', () =>
     expect(parseUnits('spring wobble = x { stiffness 1 damping 1 }').diagnostics.some((d) => /unknown channel "wobble"/.test(d.message))).toBe(true)
     expect(parseUnits('spring rotation = x { bounce 1 }').diagnostics.some((d) => /unknown slot "bounce"/.test(d.message))).toBe(true)
   })
+  it('a velocity() target parses cleanly (the parens before the "{" are fine) and round-trips', () => {
+    roundtrip([{ kind: 'modifier', channel: 'rotation', modifier: { kind: 'spring', target: '-velocity(crochetX) * 40', stiffness: 0.06, damping: 0.22 } }])
+    const r = parseUnits('spring rotation = -velocity(crochetX) * 40 { stiffness 0.06 damping 0.22 }')
+    expect(r.diagnostics).toEqual([])
+    expect((r.units[0] as { modifier: { target: string } }).modifier.target).toBe('-velocity(crochetX) * 40')
+  })
 })
 
 describe('dsl — send (event channel to the host)', () => {

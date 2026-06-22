@@ -145,6 +145,19 @@ group "Aiguille" smooth rotationDeg "valeur * 270" k 0.18 { … }               
   Authoring sugar like `expr`: `rotate` = `rotation`; `rotationDeg` reads degrees (wraps the target in `rad()`).
 - A modifier **wins** over a plain `expr` / keyframes on the same channel.
 
+**React to MOVEMENT, not value — `velocity(expr)`.** Inside a modifier target (only there), `velocity(x)` is
+the per-second rate of change of `x`. It's **0 at rest** and while scrubbing/rendering, non-zero only while `x`
+is actually moving — perfect for a pendulum on a moving pivot (a crane cable that swings when the trolley moves,
+then hangs vertical again, with no scene code):
+
+```
+group "Suspente" spring rotation "rad(-velocity(crochetX) * 40)" stiffness 0.06 damping 0.22 { … }
+```
+
+At rest `velocity = 0` → target `0` → vertical, automatically; on a scrub/`--render` it's also `0` → snaps to
+rest. Composable in any target (`rad(-velocity(crochetX)*40 + 2*sin(time))`). `velocity()` is **only** valid in a
+modifier target — `flatc --check` flags it elsewhere.
+
 **Per instance.** State is keyed per instance, so two cranes side by side swing **independently** (even when
 the spring is on a group *inside* the symbol).
 

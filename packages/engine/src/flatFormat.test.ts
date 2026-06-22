@@ -592,6 +592,15 @@ describe('flatFormat — stateful channel modifiers (spring/smooth) in a .flat',
     expect((parseFlat(text)[0].layers[0].items[0] as Image).modifiers?.opacity).toEqual({ kind: 'smooth', target: 'lit', k: 0.18 })
   })
 
+  it('round-trip: a spring target containing velocity() (opaque to the format)', () => {
+    const sym: SymbolDef = { id: 's', name: 'S', layers: [layer('L', 'c', [
+      { id: 'g', kind: 'group', name: 'Suspente', transform: T(0, 0), layers: [], modifiers: { rotation: { kind: 'spring', target: 'rad(-velocity(crochetX) * 40)', stiffness: 0.06, damping: 0.22 } } } as Group,
+    ])] }
+    const text = printFlat([sym])
+    expect(text).toContain('spring rotation "rad(-velocity(crochetX) * 40)" stiffness 0.06 damping 0.22')
+    expect((parseFlat(text)[0].layers[0].items[0] as Group).modifiers?.rotation).toEqual({ kind: 'spring', target: 'rad(-velocity(crochetX) * 40)', stiffness: 0.06, damping: 0.22 })
+  })
+
   it('authoring sugar: `rotate` aliases `rotation`; `rotationDeg` wraps the target in rad()', () => {
     const text = [
       'symbol "S" {',

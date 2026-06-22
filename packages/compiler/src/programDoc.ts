@@ -301,6 +301,10 @@ export function docModifierWarnings(doc: Doc): { scope: string; diag: Diagnostic
       }
     }
     visit(contextLayers(doc, editPath).flatMap((l) => l.items))
+    // `velocity()` is valid ONLY in a modifier target (resolved by the player's stateful advance). scopeProgram
+    // emits the scope's REGULAR expressions but NOT modifier targets, so any velocity() here is a misuse.
+    if (/\bvelocity\s*\(/.test(scopeProgram(doc, editPath)))
+      out.push({ scope: label, diag: { line: 1, col: 1, message: 'velocity() is only valid inside a spring/smooth target, not a plain expression' } })
   }
   return out
 }

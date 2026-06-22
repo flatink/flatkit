@@ -478,32 +478,35 @@ export type ModTarget = { key: string; ch: ExprChannel; mod: ChannelModifier; ta
 /** Walk the scene (render-free) mirroring the render scope descent, resolving each layer so a stateful
  *  channel modifier's target is evaluated in its instance's context; `statePath` accumulates ancestor
  *  INSTANCE ids so two instances of the same symbol get independent state. Drives the player's advance. */
-function walkModifierScope(doc: Doc, layers: Layer[], frame: number, rctx: RenderCtx, sink: (t: ModTarget) => void, seen: Set<string>): void {
+type VelocityFor = (key: string, ch: ExprChannel) => (arg: number) => number
+
+function walkModifierScope(doc: Doc, layers: Layer[], frame: number, rctx: RenderCtx, sink: (t: ModTarget) => void, seen: Set<string>, velocityFor?: VelocityFor): void {
   const onModifierTarget = (key: string, ch: ExprChannel, mod: ChannelModifier, target: number) => sink({ key, ch, mod, target })
   for (const layer of layers) {
     if (!layer.visible) continue
-    const items = resolveLayerAt(layer, frame, { fps: rctx.fps, ctx: rctx.expr, itemState: rctx.itemState, statePath: rctx.statePath, onModifierTarget })
+    const items = resolveLayerAt(layer, frame, { fps: rctx.fps, ctx: rctx.expr, itemState: rctx.itemState, statePath: rctx.statePath, onModifierTarget, velocityFor })
     for (const it of items) {
       if (isInstance(it)) {
         if (seen.has(it.symbolId)) continue // anti-cycle guard (mirrors the render walk) — a recursive symbol must not loop
         const { sym, expr: subExpr } = instanceScope(doc, it, rctx)
         const childFps = subFps(sym?.timeline?.fps, rctx)
         const { pose, clock } = instanceFrames(sym, it, clockOf(frame, rctx), rctx.freezeNested, subExpr, monoFrameOf(childFps, rctx))
-        walkModifierScope(doc, containerLayers(doc, it), pose, { fps: childFps, expr: subExpr, freezeNested: rctx.freezeNested, itemState: rctx.itemState, paramsFor: rctx.paramsFor, clockFrame: clock, monoTime: rctx.monoTime, statePath: (rctx.statePath ?? '') + it.id + '/' }, sink, new Set([...seen, it.symbolId]))
+        walkModifierScope(doc, containerLayers(doc, it), pose, { fps: childFps, expr: subExpr, freezeNested: rctx.freezeNested, itemState: rctx.itemState, paramsFor: rctx.paramsFor, clockFrame: clock, monoTime: rctx.monoTime, statePath: (rctx.statePath ?? '') + it.id + '/' }, sink, new Set([...seen, it.symbolId]), velocityFor)
       } else if (isGroup(it) && it.timeline) {
         const groupFrame = rctx.freezeNested ? 0 : clockOf(frame, rctx)
-        walkModifierScope(doc, it.layers, groupFrame, { ...rctx, fps: subFps(it.timeline.fps, rctx), clockFrame: groupFrame }, sink, seen)
+        walkModifierScope(doc, it.layers, groupFrame, { ...rctx, fps: subFps(it.timeline.fps, rctx), clockFrame: groupFrame }, sink, seen, velocityFor)
       } else if (isGroup(it)) {
-        walkModifierScope(doc, containerLayers(doc, it), frame, rctx, sink, seen)
+        walkModifierScope(doc, containerLayers(doc, it), frame, rctx, sink, seen, velocityFor)
       }
     }
   }
 }
 
-/** All modifier integration targets in the scene at `frame` (one per driven instance×channel). */
-export function collectModifierTargets(doc: Doc, frame: number, rctx: RenderCtx): ModTarget[] {
+/** All modifier integration targets in the scene at `frame` (one per driven instance×channel). `velocityFor`
+ *  (from the player's advance) lets `velocity()` in a target read its per-(instance,channel) previous value. */
+export function collectModifierTargets(doc: Doc, frame: number, rctx: RenderCtx, velocityFor?: VelocityFor): ModTarget[] {
   const out: ModTarget[] = []
-  walkModifierScope(doc, doc.layers, frame, rctx, (t) => out.push(t), new Set())
+  walkModifierScope(doc, doc.layers, frame, rctx, (t) => out.push(t), new Set(), velocityFor)
   return out
 }
 

@@ -251,6 +251,10 @@ export class FlatPlayer {
   // Stateful channel modifiers (smooth/spring): per-(instance,channel) integrator state, keyed
   // `statePath+itemId|channel`. Persists across frames; cleared on seek/load → snap to rest on the target.
   private readonly channelState = new Map<string, ModState>()
+  // `velocity(arg)` inside a modifier target: previous value(s) of arg per `key|channel` (one slot per
+  // velocity() occurrence in the target). Separate from channelState (pos/vel) so the spring's first-frame
+  // rest-init never clobbers it. Advanced once per tick by the advance pass; cleared on seek/load.
+  private readonly velocityState = new Map<string, number[]>()
   private modAcc = 0 // fixed-step accumulator for the modifier advance (independent of the onEnterFrame sim gate)
   private hasModifiers = false // doc declares ≥1 modifier → run the advance pass (else zero overhead)
   private instNameCache?: Map<string, { id: string; symbolId: string }>
@@ -923,6 +927,7 @@ export class FlatPlayer {
     this.instNameCache = undefined // new document -> name→instance lookup stale
     this.paramRt.clear() // new document -> per-instance param transitions reset
     this.channelState.clear() // new document -> modifier integrator state resets
+    this.velocityState.clear()
     this.modAcc = 0
     this.hasModifiers = docHasModifiers(this.doc)
     if (this.transRaf) { cancelAnimationFrame(this.transRaf); this.transRaf = 0 }
@@ -988,7 +993,18 @@ export class FlatPlayer {
   private advanceChannelModifiers(steps: number): void {
     if (!this.hasModifiers || steps <= 0) return
     const rctx: RenderCtx = { fps: this.fps, expr: this.exprCtx(), itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), monoTime: this.mono / this.fps, statePath: '' }
-    for (const t of collectModifierTargets(this.doc, this.frame, rctx)) {
+    // `velocity(arg)` resolver for this tick: per-(key,channel) prev values, delta PER SECOND (dt = real time
+    // advanced this tick). A fresh closure per target carries its own occurrence index → one slot per velocity().
+    const dt = steps * SIM_STEP
+    const velocityFor = (key: string, ch: string) => {
+      const k = key + '|' + ch
+      let prev = this.velocityState.get(k)
+      if (!prev) { prev = []; this.velocityState.set(k, prev) }
+      const slots = prev
+      let i = 0
+      return (arg: number): number => { const last = slots[i]; slots[i] = arg; i++; return last === undefined || dt <= 0 ? 0 : (arg - last) / dt }
+    }
+    for (const t of collectModifierTargets(this.doc, this.frame, rctx, velocityFor)) {
       const k = t.key + '|' + t.ch
       const cur = this.channelState.get(k) ?? restState(t.target)
       this.channelState.set(k, advanceModifier(t.mod, cur, t.target, steps))
@@ -1102,6 +1118,7 @@ export class FlatPlayer {
     this.frame = Math.max(0, Math.min(this.duration, frame))
     this.lastFrameInt = Math.floor(this.frame) // a seek does not trigger the frame-actions (anti-loop)
     this.channelState.clear() // random access: modifiers re-init at rest on their target (snap, no transient)
+    this.velocityState.clear() // velocity() re-inits → 0 (no spurious jolt from a stale delta)
     this.modAcc = 0
     // While PLAYING, `mono` free-runs across loop wraps (kept monotone by the sim/rAF) → an `independent`
     // clip keeps its phase. A seek while NOT playing is a SCRUB / static render: anchor `mono` to the
