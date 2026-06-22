@@ -792,9 +792,9 @@ const itemsByName = (layers: Layer[]): Map<string, Item> => {
   walk(layers)
   return m
 }
-const namedInfo = (layers: Layer[]): { id: string; name: string; expr?: Partial<Record<ExprChannel, string>> }[] => {
-  const out: { id: string; name: string; expr?: Partial<Record<ExprChannel, string>> }[] = []
-  const walk = (ls: Layer[]) => { for (const l of ls) for (const it of l.items) { const nm = itemName(it); if (nm) out.push({ id: it.id, name: nm, expr: isPoseable(it) ? it.expressions : undefined }); if (isGroup(it)) walk(it.layers) } }
+const namedInfo = (layers: Layer[]): { id: string; name: string; expr?: Partial<Record<ExprChannel, string>>; modifiers?: Partial<Record<ExprChannel, ChannelModifier>> }[] => {
+  const out: { id: string; name: string; expr?: Partial<Record<ExprChannel, string>>; modifiers?: Partial<Record<ExprChannel, ChannelModifier>> }[] = []
+  const walk = (ls: Layer[]) => { for (const l of ls) for (const it of l.items) { const nm = itemName(it); if (nm) out.push({ id: it.id, name: nm, expr: isPoseable(it) ? it.expressions : undefined, modifiers: isPoseable(it) ? it.modifiers : undefined }); if (isGroup(it)) walk(it.layers) } }
   walk(layers)
   return out
 }
@@ -821,7 +821,7 @@ export function printProgramFull(doc: Program): string {
   const sceneUnits = timelineToUnits(doc.timeline)
   if (sceneUnits.length) out += '\n' + printUnits(sceneUnits)
   for (const o of namedInfo(doc.layers)) {
-    const units = objectToUnits(o.id, doc.interactions, o.expr, doc.interactors)
+    const units = objectToUnits(o.id, doc.interactions, o.expr, doc.interactors, o.modifiers)
     if (units.length) out += `\nobject ${q(o.name)} {\n${indentBlock(printUnits(units))}}\n`
   }
   return out
@@ -929,8 +929,9 @@ export function parseProgramFull(src: string): Program {
   for (const ob of objects) {
     const item = byName.get(ob.name)
     const targetId = item?.id ?? '@' + ob.name
-    const { events, drops, interactor, expressions } = unitsToObject(parseUnits(ob.body).units)
+    const { events, drops, interactor, expressions, modifiers } = unitsToObject(parseUnits(ob.body).units)
     if (item && isPoseable(item) && Object.keys(expressions).length) item.expressions = expressions
+    if (item && isPoseable(item) && Object.keys(modifiers).length) item.modifiers = modifiers
     for (const ev of events) interactions.push({ id: uid('int'), targetId, event: ev.event, actions: ev.actions })
     for (const d of drops) interactions.push({ id: uid('int'), targetId, event: 'drop', over: d.over, ...(d.atPointer ? { atPointer: true } : {}), actions: d.actions })
     if (interactor) interactors.push({ targetId, ...interactor })

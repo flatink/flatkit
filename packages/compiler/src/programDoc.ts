@@ -112,7 +112,18 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
   // (b) global variable never referenced (declared but not found in any scope) -> probably dead.
   const names0 = Object.keys(doc.variables ?? {})
   if (names0.length) {
-    const allText = scopes(doc).map(({ editPath }) => scopeProgram(doc, editPath)).join('\n')
+    // Modifier targets are NOT emitted into scopeProgram (to avoid double-linting them, cf. docModifierWarnings),
+    // so collect them here too — else a global used ONLY by a `spring`/`smooth` target reads as "never used".
+    const modTargets: string[] = []
+    const collectMods = (items: Item[]): void => {
+      for (const it of items) {
+        if (isPoseable(it) && it.modifiers) for (const ch of EXPR_CHANNELS) { const mm = it.modifiers[ch]; if (mm) modTargets.push(mm.target) }
+        if (isGroup(it)) for (const l of it.layers) collectMods(l.items)
+      }
+    }
+    for (const l of doc.layers) collectMods(l.items)
+    for (const s of doc.symbols ?? []) for (const l of s.layers) collectMods(l.items)
+    const allText = [...scopes(doc).map(({ editPath }) => scopeProgram(doc, editPath)), ...modTargets].join('\n')
     for (const name of names0) {
       const m = allText.match(new RegExp(`(?<![\\w-])${escapeRe(name)}(?![\\w-])`, 'g'))
       if ((m?.length ?? 0) <= 1) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `global variable "${name}" never used (declared, but neither read nor written)` } })

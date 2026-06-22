@@ -5,7 +5,8 @@
 > (snap en accès aléatoire), avance player non gardée par `onEnterFrame` (tick + `stepSim`, vidée au seek),
 > et lint `flatc --check` du `target`. Le keying par chemin (§6) a été fait d'emblée → deux instances d'un
 > symbole à modificateur interne sont indépendantes, sans refactor du hot path. Doc auteur :
-> `animating-symbols.md`. La forme de binding `.flatink` (scène) reste à faire si un besoin scène-side surgit.
+> `animating-symbols.md`. **La forme `.flatink` scène-side est aussi livrée** : `object "X" { spring rotation =
+> <expr> { stiffness <n> damping <n> } }` (unité DSL `modifier`, round-trip + compile + lint), runtime inchangé.
 
 > Réponse de conception à `rfc-stateful-spring-smooth-channels.md`. Compare-toi à la RFC : même
 > résultat utilisateur (un asset qui porte son « feel » réactif), mais l'état est **explicite** (un

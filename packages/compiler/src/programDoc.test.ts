@@ -61,6 +61,16 @@ describe('programDoc — lintDoc', () => {
   it('out-of-range spring damping is flagged (warning, clamped at runtime)', () => {
     expect(lintDocReport(grue('crochetX', 2))).toMatch(/spring rotation: damping 2 should be in \(0,1\)/)
   })
+
+  it('a SCENE-object modifier target (.flatink form) is linted too: a typo surfaces', () => {
+    const d: Doc = { width: 100, height: 100, symbols: [], layers: [layer([{ ...group('hero', 'Hero'), modifiers: { rotation: { kind: 'spring', target: 'nope', stiffness: 0.08, damping: 0.86 } } } as Group])] }
+    expect(lintDocReport(d)).toMatch(/\[scene\].*spring rotation: unknown variable "nope"/)
+  })
+
+  it('a global used ONLY by a modifier target is not flagged as dead (no false positive)', () => {
+    const d: Doc = { width: 100, height: 100, symbols: [], variables: { crochet: 0.6 }, layers: [layer([{ ...group('hero', 'Hero'), modifiers: { rotation: { kind: 'spring', target: 'crochet', stiffness: 0.08, damping: 0.86 } } } as Group])] }
+    expect(lintDocReport(d)).toBe('') // crochet IS used (the spring target) → no "never used" warning
+  })
   it('reference by name (Hero.x) accepted in the Doc', () => {
     const d: Doc = { width: 100, height: 100, symbols: [], layers: [layer([group('hero', 'Hero'), group('target', 'Target')])], interactions: [click('hero', 'Target.x')] }
     expect(lintDocReport(d)).toBe('')

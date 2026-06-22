@@ -470,6 +470,32 @@ describe('dsl — multi-statement split: no silent miscompile', () => {
   })
 })
 
+describe('dsl — stateful channel modifiers (spring/smooth), block form', () => {
+  it('round-trips a spring modifier unit', () => {
+    roundtrip([{ kind: 'modifier', channel: 'rotation', modifier: { kind: 'spring', target: 'crochetX', stiffness: 0.08, damping: 0.86 } }])
+  })
+  it('round-trips a smooth modifier unit', () => {
+    roundtrip([{ kind: 'modifier', channel: 'opacity', modifier: { kind: 'smooth', target: 'lit', k: 0.18 } }])
+  })
+  it('parses the block form with rotate / rotationDeg sugar', () => {
+    const r = parseUnits('spring rotate = crochetX { stiffness 0.08 damping 0.86 }\nsmooth rotationDeg = valeur * 270 { k 0.18 }')
+    expect(r.diagnostics).toEqual([])
+    expect(r.units).toEqual([
+      { kind: 'modifier', channel: 'rotation', modifier: { kind: 'spring', target: 'crochetX', stiffness: 0.08, damping: 0.86 } },
+      { kind: 'modifier', channel: 'rotation', modifier: { kind: 'smooth', target: 'rad(valeur * 270)', k: 0.18 } },
+    ])
+  })
+  it('records the target as an expression site (so the linter validates it)', () => {
+    const r = parseUnits('spring rotation = crochetX { stiffness 0.08 damping 0.86 }')
+    expect(r.diagnostics).toEqual([])
+    expect(r.sites.some((s) => s.kind === 'expr' && s.text === 'crochetX')).toBe(true)
+  })
+  it('an unknown channel or slot is reported', () => {
+    expect(parseUnits('spring wobble = x { stiffness 1 damping 1 }').diagnostics.some((d) => /unknown channel "wobble"/.test(d.message))).toBe(true)
+    expect(parseUnits('spring rotation = x { bounce 1 }').diagnostics.some((d) => /unknown slot "bounce"/.test(d.message))).toBe(true)
+  })
+})
+
 describe('dsl — send (event channel to the host)', () => {
   // MODEL round-trip of the three payload forms: none, numeric, text("…").
   it('round-trip: bare form', () => {

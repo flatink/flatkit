@@ -82,6 +82,19 @@ scene { layer "c" { instance "Grue" as "g1" at 100,100 } }`
     expect(susp.modifiers?.rotation).toEqual({ kind: 'spring', target: 'crochetX', stiffness: 0.08, damping: 0.86 })
   })
 
+  it('a .flatink object block carries a stateful modifier (scene-side), compiled onto the item', () => {
+    const asset = `symbol "Hook" { layer "l" { path "M0 0L10 0L10 10Z" fill #888888 } }`
+    const program = `
+size 200 200
+scene { layer "c" { instance "Hook" as "h" at 100,100 } }
+object "h" {
+  spring rotation = 0.5 { stiffness 0.08 damping 0.86 }
+}`
+    const out = compileFlatpack(program, [asset])
+    const h = out.layers[0].items[0] as { modifiers?: Record<string, unknown> }
+    expect(h.modifiers?.rotation).toEqual({ kind: 'spring', target: '0.5', stiffness: 0.08, damping: 0.86 })
+  })
+
   it('statements crammed on one line compile exactly like one-per-line (if lint passes, compile works)', () => {
     const out = compileFlatpack(`
 size 400 300

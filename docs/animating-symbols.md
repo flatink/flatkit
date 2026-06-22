@@ -152,6 +152,16 @@ the spring is on a group *inside* the symbol).
 access** — a timeline scrub, `--render`, a contact sheet — there is no time to integrate, so the channel
 **snaps to its target** (the rest pose). So tune a spring by *playing* the preview, not by scrubbing.
 
+**Also scene-side.** The same modifier works in a `.flatink` `object` block — the target is then an ordinary
+(unquoted) FlatInk expression — for a one-off spring on a scene object, when the feel isn't baked into a `.flat`:
+
+```
+object "Hero" {
+  spring rotation = crochetX { stiffness 0.08 damping 0.86 }
+  smooth opacity = lit { k 0.18 }
+}
+```
+
 ## Looping & instancing
 
 The timeline loops over `[0, durationFrames)`. An `instance` of a symbol chooses **how its own timeline

@@ -10,7 +10,7 @@
 //  Text serialization happens via printUnits/parseUnits (dsl.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Action, FrameAction, FrameLabel, Interaction, ItemEvent, FuncDef } from './actions'
-import type { Interactor } from '@flatkit/types'
+import type { Interactor, ChannelModifier } from '@flatkit/types'
 import { EXPR_CHANNELS, type ExprChannel, type Timeline, type InstanceBind } from './timeline'
 import type { ScriptUnit } from './dsl'
 
@@ -30,6 +30,7 @@ export function objectToUnits(
   interactions: Interaction[] | undefined,
   expressions: Partial<Record<ExprChannel, string>> | undefined,
   interactors?: Interactor[],
+  modifiers?: Partial<Record<ExprChannel, ChannelModifier>>,
 ): ScriptUnit[] {
   const units: ScriptUnit[] = []
   const drag = interactors?.find((i) => i.targetId === targetId)
@@ -40,6 +41,7 @@ export function objectToUnits(
   }
   for (const it of interactions ?? []) if (it.targetId === targetId && it.event === 'drop' && it.over) units.push({ kind: 'drop', over: it.over, ...(it.atPointer ? { atPointer: true } : {}), body: it.actions })
   if (expressions) for (const ch of EXPR_CHANNELS) if (expressions[ch]) units.push({ kind: 'binding', channel: ch, expr: expressions[ch]! })
+  if (modifiers) for (const ch of EXPR_CHANNELS) if (modifiers[ch]) units.push({ kind: 'modifier', channel: ch, modifier: modifiers[ch]! })
   return units
 }
 
@@ -48,6 +50,7 @@ export type ObjectScript = {
   drops: { over: string; atPointer?: boolean; actions: Action[] }[]
   interactor?: ObjectInteractor
   expressions: Partial<Record<ExprChannel, string>>
+  modifiers: Partial<Record<ExprChannel, ChannelModifier>>
 }
 
 /** Units → object fragment (interactor + events + drops + channel expressions). */
@@ -55,14 +58,16 @@ export function unitsToObject(units: ScriptUnit[]): ObjectScript {
   const events: { event: ItemEvent; actions: Action[] }[] = []
   const drops: { over: string; actions: Action[] }[] = []
   const expressions: Partial<Record<ExprChannel, string>> = {}
+  const modifiers: Partial<Record<ExprChannel, ChannelModifier>> = {}
   let interactor: ObjectInteractor | undefined
   for (const u of units) {
     if (u.kind === 'event' && u.event !== 'load' && u.event !== 'enterFrame' && ITEM_EVENT_SET.has(u.event)) events.push({ event: u.event as ItemEvent, actions: u.body })
     else if (u.kind === 'drop') drops.push({ over: u.over, ...(u.atPointer ? { atPointer: true } : {}), actions: u.body })
     else if (u.kind === 'interactor') interactor = { axis: u.axis, varX: u.varX, varY: u.varY, confine: u.confine, grid: u.grid, ...(u.varT ? { varT: u.varT } : {}), ...(u.enabled ? { enabled: u.enabled } : {}), ...(u.pivot ? { pivot: u.pivot } : {}) }
     else if (u.kind === 'binding') expressions[u.channel] = u.expr
+    else if (u.kind === 'modifier') modifiers[u.channel] = u.modifier
   }
-  return { events, drops, interactor, expressions }
+  return { events, drops, interactor, expressions, modifiers }
 }
 
 // ── SCENE: scripts of a timeline (onLoad/onEnterFrame/frameActions/labels) ────

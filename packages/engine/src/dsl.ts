@@ -18,6 +18,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { SEND_EVENT_NAME, type Action, type FuncDef } from './actions'
 import { EXPR_CHANNELS, type ExprChannel } from './timeline'
+import type { ChannelModifier } from '@flatkit/types'
 
 // ── Intermediate representation (independent of the Doc) ──────────────────────
 /** Trigger event (hat). `enter`/`leave` = hover enter/leave. */
@@ -29,6 +30,7 @@ export type ScriptUnit =
   | { kind: 'frameActions'; frame: number; body: Action[] } // at frame 30 { … }
   | { kind: 'label'; frame: number; name: string } // label 30 "checkpoint"
   | { kind: 'binding'; channel: ExprChannel; expr: string } // rotation = time * 2
+  | { kind: 'modifier'; channel: ExprChannel; modifier: ChannelModifier } // spring rotation = crochetX { stiffness .08 damping .86 }
   | { kind: 'declare'; name: string; value: number | number[] } // let score = 0 · let grid = fill(9,1)
   | { kind: 'each'; symbol: string; as: string; bindings: { channel: ExprChannel; expr: string }[] } // each "Brick" as i { opacity = bricks[i] }
   | { kind: 'func'; func: FuncDef } // fn dist(a,b) = … · fn launch() { … }
@@ -133,6 +135,11 @@ function printUnit(u: ScriptUnit): string {
       return `label ${u.frame} ${quote(u.name)}`
     case 'binding':
       return `${u.channel} = ${u.expr}`
+    case 'modifier': {
+      const md = u.modifier
+      const slots = md.kind === 'spring' ? `stiffness ${md.stiffness} damping ${md.damping}` : `k ${md.k}`
+      return `${md.kind} ${u.channel} = ${md.target} { ${slots} }`
+    }
     case 'declare':
       return `let ${u.name} = ${printValue(u.value)}`
     case 'each': {
@@ -1107,6 +1114,39 @@ class Parser {
           else bindings.push(deg ? { channel: 'rotation', expr: `rad(${expr})` } : { channel: ch as ExprChannel, expr })
         }
         return { kind: 'each', symbol, as: asVar, bindings }
+      }
+      case 'spring':
+      case 'smooth': {
+        // Stateful channel modifier: `spring <ch> = <target> { stiffness <n> damping <n> }` / `smooth … { k <n> }`.
+        const mkind = w as 'spring' | 'smooth'
+        const raw = this.word()
+        if (!raw) { this.err(`channel expected after "${w}"`, m); this.recoverBlockOrLine(); return null }
+        const deg = raw === 'rotationDeg' // authoring sugar (degrees → radians), like `expr`/bindings
+        const channel = raw === 'rotate' || raw === 'rotationDeg' ? 'rotation' : raw
+        if (!isChannel(channel)) { this.err(`unknown channel "${raw}" (expected: ${EXPR_CHANNELS.join(', ')}, rotationDeg, rotate)`, m); this.recoverBlockOrLine(); return null }
+        if (!this.eat('=')) { this.err(`"=" expected: ${w} ${raw} = <target> { … }`, m); this.recoverBlockOrLine(); return null }
+        this.skipSpace()
+        const tpos = this.mark()
+        const tgt = this.header() // the target expression, up to the `{`
+        if (tgt === null) return null // header already reported the missing "{"
+        if (!tgt) { this.err(`target expression expected: ${w} ${raw} = <target> { … }`, m); this.recoverBlockOrLine(); return null }
+        this.exprSite(tgt, tpos) // the (raw) target is linted like any channel expression
+        if (!this.expectBrace()) return null
+        let stiffness = 0, damping = 0, k = 0
+        for (;;) { // slots — separated by whitespace OR newline (no endStatement → `{ a 1 b 2 }` on one line is fine)
+          this.skipWs()
+          if (this.eof()) { this.err('missing "}"', m); break }
+          if (this.peek() === '}') { this.next(); break }
+          const sm = this.mark()
+          const slot = this.word()
+          if (slot === 'stiffness') { const n = this.number(); if (n === null) { this.err('value expected after "stiffness"', sm); this.skipLine(); continue } stiffness = n }
+          else if (slot === 'damping') { const n = this.number(); if (n === null) { this.err('value expected after "damping"', sm); this.skipLine(); continue } damping = n }
+          else if (slot === 'k') { const n = this.number(); if (n === null) { this.err('value expected after "k"', sm); this.skipLine(); continue } k = n }
+          else { this.err(`unknown slot "${slot}" (expected: ${mkind === 'spring' ? 'stiffness, damping' : 'k'})`, sm); this.skipLine(); continue }
+        }
+        const target = deg ? `rad(${tgt})` : tgt
+        const modifier: ChannelModifier = mkind === 'spring' ? { kind: 'spring', target, stiffness, damping } : { kind: 'smooth', target, k }
+        return { kind: 'modifier', channel: channel as ExprChannel, modifier }
       }
       case 'label': {
         const n = this.number()

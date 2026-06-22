@@ -37,6 +37,17 @@ describe('drawScene — docHasModifiers', () => {
     expect(docHasModifiers(withMod)).toBe(true)
     expect(docHasModifiers(none)).toBe(false)
   })
+
+  it('a RECURSIVE symbol does not hang the modifier walk (anti-cycle guard)', () => {
+    // symbol "A" instances itself and carries a modifier → without the guard, collectModifierTargets loops forever
+    const sym: SymbolDef = { id: 'A', name: 'A', layers: [layer([
+      springGroup('s', '1'),
+      { id: 'self', kind: 'instance', name: 'self', transform: IDENTITY, symbolId: 'A' } as Instance,
+    ])] }
+    const doc: Doc = { width: 10, height: 10, symbols: [sym], layers: [layer([{ id: 'root', kind: 'instance', name: 'root', transform: IDENTITY, symbolId: 'A' } as Instance])], variables: {} }
+    const targets = collectModifierTargets(doc, 0, { fps: 24, statePath: '' })
+    expect(targets.length).toBeGreaterThan(0) // terminated (the self-instance is cut by the seen-set), collected the modifier(s)
+  })
 })
 
 const fakeCtx = () => new Proxy({}, { get: (_t, p) => (p === 'measureText' ? () => ({ width: 0 }) : p === 'getTransform' ? () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }) : () => {}), set: () => true }) as unknown as CanvasRenderingContext2D

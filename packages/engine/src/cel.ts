@@ -368,8 +368,8 @@ function applyExprChannels(
   // `self` is a live ref to `ch`, so later channels see earlier ones.
   const evalCtx = evalOverlayFor(opts, time, frame)
   evalCtx.self = self
-  const stateKey = (opts.statePath ?? '') + (id ?? '')
   let touchedT = false
+  let stateKey: string | undefined // computed lazily — only when this item actually carries a modifier (hot path stays free otherwise)
   for (const c of EXPR_CHANNELS) {
     const mod = mods?.[c]
     if (mod) {
@@ -379,8 +379,12 @@ function applyExprChannels(
       const tc = compileCached(mod.target)
       evalCtx.value = ch[c]
       const target = tc.ok ? evalExpr(tc.node, evalCtx, ch[c], opts.ctx) : ch[c]
-      if (id !== undefined) opts.onModifierTarget?.(stateKey, c, mod, target) // PLAYER's advance pass collects targets to integrate
-      const live = id !== undefined ? opts.channelValue?.(stateKey, c) : undefined
+      let live: number | undefined
+      if (id !== undefined) {
+        stateKey ??= (opts.statePath ?? '') + id
+        opts.onModifierTarget?.(stateKey, c, mod, target) // PLAYER's advance pass collects targets to integrate
+        live = opts.channelValue?.(stateKey, c)
+      }
       ch[c] = live !== undefined && Number.isFinite(live) ? live : target
       if (c !== 'opacity') touchedT = true
       continue

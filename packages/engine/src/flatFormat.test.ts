@@ -333,6 +333,23 @@ describe('flatFormat — .flatink program', () => {
     expect(parsed.interactions?.[0].targetId).toBe(player.id)
   })
 
+  it('full program: a scene-object stateful modifier (spring) round-trips into the object block', () => {
+    const hero = lib()[0]
+    const doc: Program = {
+      width: 200, height: 200, symbols: [hero],
+      layers: [layer('L0', 'c', [
+        { id: 'p', kind: 'instance', name: 'player', symbolId: hero.id, transform: T(100, 100), modifiers: { rotation: { kind: 'spring', target: 'crochetX', stiffness: 0.08, damping: 0.86 } } } as Instance,
+      ])],
+    }
+    const text = printProgramFull(doc)
+    expect(text).toContain('object "player" {')
+    expect(text).toContain('spring rotation = crochetX { stiffness 0.08 damping 0.86 }')
+    expect(text).not.toContain('at 100,100 spring') // not duplicated in the composition (behavior lives in the object block)
+    expect(printProgramFull(parseProgramFull(text))).toBe(text) // stable round-trip
+    const back = parseProgramFull(text).layers[0].items[0] as Instance & { modifiers?: Record<string, unknown> }
+    expect(back.modifiers?.rotation).toEqual({ kind: 'spring', target: 'crochetX', stiffness: 0.08, damping: 0.86 })
+  })
+
   it('channel expression binding on a TEXT (not only group/instance)', () => {
     const src = [
       'size 400 300',
