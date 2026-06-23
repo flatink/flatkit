@@ -1,12 +1,16 @@
 name: Release
 
-# On every push to main: run THE GATE (gate.yml, same as CI), then either STAGE a version bump or PUBLISH.
-#  - changesets pending  → `changeset version` bumps + writes CHANGELOGs, pushed to `changeset-release/main`
-#    with NO pull request (the org blocks Actions from opening PRs — that failing PR step was the
-#    systematic red ✗). The maintainer fast-forwards main onto that branch to trigger the publish run.
-#  - no changesets pending → versions are final (main was fast-forwarded) → publish to npm.
-# The publish job `needs:` the gate, so a red build never reaches npm — which a separate ci.yml run could not
-# enforce on the publish job.
+# On every push to main: run THE GATE (gate.yml, same as CI), then hand off to the changesets action.
+#  - changesets pending  → it runs `version-packages` (bumps + writes CHANGELOGs) and opens/updates the
+#    "Version Packages" PR. Review + merge that PR to cut the release.
+#  - no changesets pending (the Version Packages PR was just merged) → it PUBLISHES to npm (idempotent),
+#    tags the versions, and creates the GitHub releases with npm provenance.
+# The release job `needs:` the gate, so a red build never reaches npm — which a separate ci.yml run could
+# not enforce on the publish job.
+#
+# NOTE: the "Version Packages" PR is opened with GITHUB_TOKEN, so it does NOT itself trigger CI (GitHub's
+# anti-recursion rule). That's fine: the gate already ran on the push that created/updated it, and runs
+# again on the merge commit before publish — so the green-gate-before-npm guarantee holds either way.
 on:
   push:
     branches: [main]
@@ -24,15 +28,15 @@ jobs:
     uses: ./.github/workflows/gate.yml
 
   release:
-    needs: gate # never stage or publish unless the gate is green
+    needs: gate # never open the version PR or publish unless the gate is green
     runs-on: ubuntu-24.04
     permissions:
-      contents: write # push the staged bump branch + publish tags / GitHub releases
+      contents: write # push the version branch, create tags / GitHub releases
+      pull-requests: write # open/update the "Version Packages" PR
       id-token: write # npm provenance (OIDC)
     # Third-party actions pinned to a commit SHA (see gate.yml); Dependabot keeps them current.
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        # credentials persisted (default) so the "Stage version bump" step can push changeset-release/main
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
 
@@ -45,40 +49,16 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Pending changesets?
-        id: cs
-        run: |
-          if find .changeset -name '*.md' ! -name 'README.md' | grep -q .; then
-            echo "pending=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "pending=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      # PENDING → stage the bump on `changeset-release/main` WITHOUT a PR. `check:english` re-runs because the
-      # CHANGELOGs are generated HERE (the gate ran before they existed) — a non-ASCII changeset summary is
-      # caught now instead of after publish.
-      - name: Stage version bump (no PR)
-        if: steps.cs.outputs.pending == 'true'
-        run: |
-          pnpm changeset version
-          pnpm run check:english
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B changeset-release/main
-          git add -A
-          git commit -m "Version Packages"
-          git push -f origin changeset-release/main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # NO pending changesets → publish. In publish mode the changesets action does NOT open a PR (so it
-      # succeeds cleanly); it publishes only versions not already on npm (idempotent), tags them, and creates
-      # the GitHub releases with npm provenance.
-      - name: Publish to npm
-        if: steps.cs.outputs.pending == 'false'
+      # Pending changesets → open/update the "Version Packages" PR (runs `changeset version`, which
+      # generates the CHANGELOGs — so a non-ASCII summary surfaces here / at merge, caught by the gate
+      # before publish). None pending → `pnpm release` builds and publishes only versions not yet on npm.
+      - name: Version PR / Publish
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
         with:
+          version: pnpm run version-packages
           publish: pnpm release
+          title: "Version Packages"
+          commit: "Version Packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
