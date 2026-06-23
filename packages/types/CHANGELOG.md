@@ -4,7 +4,7 @@
 
 ### Patch Changes
 
-- [`d257d17`](https://github.com/zwykstudio/flatkit/commit/d257d172db96c10659b19a9d0e66f086f917fd7b) Thanks [@kaelhem](https://github.com/kaelhem)! - compiler: a `font` asset declared without an explicit family (`asset "Archivo" "a.woff2" font`) now bakes
+- [`d257d17`](https://github.com/flatink/flatkit/commit/d257d172db96c10659b19a9d0e66f086f917fd7b) Thanks [@kaelhem](https://github.com/kaelhem)! - compiler: a `font` asset declared without an explicit family (`asset "Archivo" "a.woff2" font`) now bakes
   an explicit `family` equal to its declared id. That id is exactly what the text targets via `font "<id>"`,
   so registration is now consistent everywhere instead of relying on a `family || id` fallback:
 
@@ -20,7 +20,7 @@
 
 ### Patch Changes
 
-- [`01b2d05`](https://github.com/zwykstudio/flatkit/commit/01b2d05f70187043b6218cb4ef80ab18accd5c7e) Thanks [@kaelhem](https://github.com/kaelhem)! - player: `loadEmbeddedFonts(doc)` -- register a doc's embedded fonts in the browser before mounting, so text
+- [`01b2d05`](https://github.com/flatink/flatkit/commit/01b2d05f70187043b6218cb4ef80ab18accd5c7e) Thanks [@kaelhem](https://github.com/kaelhem)! - player: `loadEmbeddedFonts(doc)` -- register a doc's embedded fonts in the browser before mounting, so text
   uses the AUTHORED faces instead of a system fallback. Previously every consumer reimplemented the same
   `FontFace` glue; now it ships as a tiny tree-shakeable export:
 
@@ -43,7 +43,7 @@
 
 ### Patch Changes
 
-- [`1911179`](https://github.com/zwykstudio/flatkit/commit/19111798c155c2c9a2d479eeedd6c2046c16202c) Thanks [@kaelhem](https://github.com/kaelhem)! - `velocity()` in a modifier target: react to a value's MOVEMENT, not just its value. Inside a `spring`/`smooth`
+- [`1911179`](https://github.com/flatink/flatkit/commit/19111798c155c2c9a2d479eeedd6c2046c16202c) Thanks [@kaelhem](https://github.com/kaelhem)! - `velocity()` in a modifier target: react to a value's MOVEMENT, not just its value. Inside a `spring`/`smooth`
   target, `velocity(x)` is the per-second rate of change of `x` -- 0 at rest, non-zero only while x moves -- so a
   pendulum on a moving pivot (a crane cable that swings when the trolley moves, then hangs vertical) needs no scene
   code:
@@ -63,7 +63,7 @@
 
 ### Patch Changes
 
-- [`7569c6b`](https://github.com/zwykstudio/flatkit/commit/7569c6b1b406ad9a2b618fc1d89b9514580d6023) Thanks [@kaelhem](https://github.com/kaelhem)! - Scene-side authoring for stateful channel modifiers: a `.flatink` `object` block can now declare a
+- [`7569c6b`](https://github.com/flatink/flatkit/commit/7569c6b1b406ad9a2b618fc1d89b9514580d6023) Thanks [@kaelhem](https://github.com/kaelhem)! - Scene-side authoring for stateful channel modifiers: a `.flatink` `object` block can now declare a
   `spring` / `smooth` channel, not just a `.flat` symbol. The target is an ordinary (unquoted) FlatInk
   expression; block form for the params:
 
@@ -81,7 +81,7 @@
 
 ### Patch Changes
 
-- [`a4f4b8d`](https://github.com/zwykstudio/flatkit/commit/a4f4b8d468b8e92d87f87c1ca8980ecc9ecab480) Thanks [@kaelhem](https://github.com/kaelhem)! - Stateful channel modifiers (`spring` / `smooth`): a `.flat` symbol channel can now INTEGRATE over time
+- [`a4f4b8d`](https://github.com/flatink/flatkit/commit/a4f4b8d468b8e92d87f87c1ca8980ecc9ecab480) Thanks [@kaelhem](https://github.com/kaelhem)! - Stateful channel modifiers (`spring` / `smooth`): a `.flat` symbol channel can now INTEGRATE over time
   toward a target instead of recomputing purely each frame, so an asset carries its own reactive "feel"
   (a crane cable that swings and settles, a needle that eases to its value) with no scene code.
 
@@ -101,9 +101,9 @@
 
 ### Patch Changes
 
-- [`e1b06e2`](https://github.com/zwykstudio/flatkit/commit/e1b06e2cc328be30b932b5b3d725c068bde89eff) Thanks [@kaelhem](https://github.com/kaelhem)! - FlatInk now tolerates several statements on one line: `a = 1  b = 2` parses as two
+- [`e1b06e2`](https://github.com/flatink/flatkit/commit/e1b06e2cc328be30b932b5b3d725c068bde89eff) Thanks [@kaelhem](https://github.com/kaelhem)! - FlatInk now tolerates several statements on one line: `a = 1  b = 2` parses as two
   statements instead of erroring with "two statements on one line". The parser splits
-  at the boundary of a second assignment/binding (the [#1](https://github.com/zwykstudio/flatkit/issues/1) LLM footgun) in action bodies
+  at the boundary of a second assignment/binding (the [#1](https://github.com/flatink/flatkit/issues/1) LLM footgun) in action bodies
   and channel bindings, so lint and compile both accept it. Single-expression slots
   (e.g. a `send` payload) still reject a stray `=`. The language card now states the
   one-statement-per-line rule explicitly to steer generators toward the canonical form.
@@ -112,7 +112,7 @@
 
 ### Patch Changes
 
-- [`48d96ae`](https://github.com/zwykstudio/flatkit/commit/48d96ae1ca00de5f05cad2f29a4cd9d290ea1983) Thanks [@kaelhem](https://github.com/kaelhem)! - `flatc --check` success message no longer contains the word "error".
+- [`48d96ae`](https://github.com/flatink/flatkit/commit/48d96ae1ca00de5f05cad2f29a4cd9d290ea1983) Thanks [@kaelhem](https://github.com/kaelhem)! - `flatc --check` success message no longer contains the word "error".
 
   The success line was `flatc: no errors` -- which contains "errors", so a tool or agent that greps the output for "error" to detect a failure gets a false positive (it reads success as failure). The line is now `flatc: check passed` (and surfaces a `N warning(s)` count when there are non-blocking warnings). The real failure signal stays the exit code (non-zero on error); on a failure the per-line report still prints "error" to stderr, so grepping for "error" now matches only genuine failures.
 
@@ -120,7 +120,7 @@
 
 ### Patch Changes
 
-- [`3481147`](https://github.com/zwykstudio/flatkit/commit/34811472904012c35136957681d41c12ac5540d8) Thanks [@kaelhem](https://github.com/kaelhem)! - `flatc --check <library>.flat` now lints an asset library (per-symbol), instead of choking on it as a scene.
+- [`3481147`](https://github.com/flatink/flatkit/commit/34811472904012c35136957681d41c12ac5540d8) Thanks [@kaelhem](https://github.com/kaelhem)! - `flatc --check <library>.flat` now lints an asset library (per-symbol), instead of choking on it as a scene.
 
   `--check` always routed through the program parser, so a `.flat` lib (symbols/params/layers, not a scene) failed with a cascade of `[scene] unexpected statement "symbol"`; the only way to lint an asset was to compile a preview and call the API by hand. A `.flat` first positional is now detected (like `--preview` does) and parsed with `parseFlatLib`, its symbols merged into an empty-scene Doc, and run through the SAME `lintDoc`, so every existing check (params-in-`expr`, undeclared color param in a paint, unknown functions/objects) applies for free, with the identical `[scope] line:col: level: msg` format and exit code (non-zero on error, warnings non-blocking). Several `.flat` can be passed and are merged (`flatc a.flat b.flat --check`), and `--watch` works. The program path (`flatc x.flatink --check`, with `.flat` libs as args) is unchanged.
 
@@ -128,7 +128,7 @@
 
 ### Patch Changes
 
-- [`1d13505`](https://github.com/zwykstudio/flatkit/commit/1d13505b4e9c9354136fb188d493e23af24957bb) Thanks [@kaelhem](https://github.com/kaelhem)! - `flatc --check` now flags a `color` param used as a paint that the symbol doesn't declare.
+- [`1d13505`](https://github.com/flatink/flatkit/commit/1d13505b4e9c9354136fb188d493e23af24957bb) Thanks [@kaelhem](https://github.com/kaelhem)! - `flatc --check` now flags a `color` param used as a paint that the symbol doesn't declare.
 
   A gradient stop (`0:teinte@0.8`), a `tint <param> <amount>`, or a `fill`/`stroke <param>` that references an undeclared (or mistyped) color param silently falls back to the literal hex at render -- a "dead recolor": the asset looks fine but the picker does nothing. The lint now walks each symbol's paints and warns on a color-param reference the owning symbol doesn't declare, scoped to that symbol (a `teinte` declared in symbol A doesn't silence the same name in symbol B). Non-blocking (a warning), so it can only surface a latent bug, never break a build. Complements the earlier "the lint knows a symbol's params in its expr" fix.
 
@@ -136,7 +136,7 @@
 
 ### Patch Changes
 
-- [`bcb9eed`](https://github.com/zwykstudio/flatkit/commit/bcb9eede3f20ee4cc2bda52e788013289bafb711) Thanks [@kaelhem](https://github.com/kaelhem)! - Harden the renderer against a crafted gradient in an untrusted `.flatpack` (security pass).
+- [`bcb9eed`](https://github.com/flatink/flatkit/commit/bcb9eede3f20ee4cc2bda52e788013289bafb711) Thanks [@kaelhem](https://github.com/kaelhem)! - Harden the renderer against a crafted gradient in an untrusted `.flatpack` (security pass).
 
   The player renders untrusted `.flatpack` JSON and `sanitizeDoc` does not validate paint stops, so a crafted gradient could CRASH the render: a stop `param: "__proto__"` made the per-instance color lookup return `Object.prototype`, which the color helpers (`splitAlpha`/`withAlpha`) then threw on; a non-string color or a non-finite `offset`/`alpha` (e.g. `offset: "x"` -> NaN) made `addColorStop` throw. `resolveColorRef` now uses an OWN string value only (a prototype hit or non-string falls back to the literal hex) and ignores a non-finite alpha; the stop loop clamps a non-finite offset. A malformed gradient now degrades to a valid color instead of throwing. No effect on well-formed gradients (literal or param).
 
@@ -144,7 +144,7 @@
 
 ### Patch Changes
 
-- [`d4e9590`](https://github.com/zwykstudio/flatkit/commit/d4e9590e8b06fc7268c4930940ff86e892469ffc) Thanks [@kaelhem](https://github.com/kaelhem)! - Fix a `flatc --check` false positive: a symbol's own `params` are now known variables in its `expr`.
+- [`d4e9590`](https://github.com/flatink/flatkit/commit/d4e9590e8b06fc7268c4930940ff86e892469ffc) Thanks [@kaelhem](https://github.com/kaelhem)! - Fix a `flatc --check` false positive: a symbol's own `params` are now known variables in its `expr`.
 
   A symbol can read an exposed `param` (or state param) inside a channel expression -- `expr scaleX "1 - stationnaire"` -- and the runtime and `flatc --preview` resolve it (the param is injected into the instance scope). But the semantic linter did not put those params in the scope's known ids, so it wrongly reported `unknown variable "stationnaire"`. `docLintContext` now adds the current scope's symbol params + state params, resolved from the scope's `editPath` so they are added ONLY to that symbol (a param named in symbol A can't mask a real typo of the same name in symbol B). Monotone-safe: it only adds valid names, so it can only remove false positives -- a genuinely undeclared id is still flagged.
 
@@ -152,7 +152,7 @@
 
 ### Minor Changes
 
-- [`c53a7b3`](https://github.com/zwykstudio/flatkit/commit/c53a7b3471dae0e1bfef923cdab861cc0cef5284) Thanks [@kaelhem](https://github.com/kaelhem)! - Symbol COLOR params can now drive gradient STOPS and a TINT, not only a solid `fill <param>`.
+- [`c53a7b3`](https://github.com/flatink/flatkit/commit/c53a7b3471dae0e1bfef923cdab861cc0cef5284) Thanks [@kaelhem](https://github.com/kaelhem)! - Symbol COLOR params can now drive gradient STOPS and a TINT, not only a solid `fill <param>`.
 
   Recolorable generic effects (halos, glows, gradients) live in gradients and tints, but a `param color` could only feed a solid fill -- inside a `radial(...)`/`linear(...)` stop or a `tint`, the color was a baked hex and the param was dead. This generalizes the existing `fill <param>` to every place a color is accepted.
 
@@ -167,7 +167,7 @@
 
 ### Minor Changes
 
-- [`9772d59`](https://github.com/zwykstudio/flatkit/commit/9772d592750f27dd482de0776464e64287dae552) Thanks [@kaelhem](https://github.com/kaelhem)! - Independent (MovieClip-style) playback per nested instance: `loop` / `once`.
+- [`9772d59`](https://github.com/flatink/flatkit/commit/9772d592750f27dd482de0776464e64287dae552) Thanks [@kaelhem](https://github.com/kaelhem)! - Independent (MovieClip-style) playback per nested instance: `loop` / `once`.
 
   A nested instance used to be a Flash "graphic symbol" only -- its local frame DERIVED from the ancestor's, so a sub-loop was truncated and snapped back to mid-cycle whenever an ancestor's timeline was shorter than (or not a multiple of) the sub-loop. The only way to keep a state-loop or idle clean was to pad every parent to the LCM of its sub-loops, which broke again the moment the asset was composed into a host with a different root length.
 
@@ -184,25 +184,25 @@
 
 ### Patch Changes
 
-- [`a8af28a`](https://github.com/zwykstudio/flatkit/commit/a8af28a5825cacf5e72acbe81cf8e01b49dd2140) Thanks [@kaelhem](https://github.com/kaelhem)! - Warm the hit-test path cache so the FIRST interaction isn't a cold-start jolt. The 0.17.2 cache removed the recurring mouse lag, but on an empty cache the very first pointermove/pointerdown still flattened every hittable Bezier path in the scene at once (~one-time stall). The player now pre-flattens all hittable region/cel-material paths on `requestIdleCallback` after the first paint (when input is enabled), so that one-time cost lands during load instead of on the user's first gesture. Also exposes `FlatPlayer.warmHitCache()` and a standalone `warmHitCache(doc)` export for hosts that want to trigger it explicitly (or run in a browser without `requestIdleCallback`).
+- [`a8af28a`](https://github.com/flatink/flatkit/commit/a8af28a5825cacf5e72acbe81cf8e01b49dd2140) Thanks [@kaelhem](https://github.com/kaelhem)! - Warm the hit-test path cache so the FIRST interaction isn't a cold-start jolt. The 0.17.2 cache removed the recurring mouse lag, but on an empty cache the very first pointermove/pointerdown still flattened every hittable Bezier path in the scene at once (~one-time stall). The player now pre-flattens all hittable region/cel-material paths on `requestIdleCallback` after the first paint (when input is enabled), so that one-time cost lands during load instead of on the user's first gesture. Also exposes `FlatPlayer.warmHitCache()` and a standalone `warmHitCache(doc)` export for hosts that want to trigger it explicitly (or run in a browser without `requestIdleCallback`).
 
 ## 0.17.2
 
 ### Patch Changes
 
-- [`0955eec`](https://github.com/zwykstudio/flatkit/commit/0955eecfc05743b2fb30fb5a4fcea6fa12c0ea10) Thanks [@kaelhem](https://github.com/kaelhem)! - Fix the remaining pointer lag: memoize `pathToPolygons`. Hit-testing flattened every region's Bezier curves into polygons on every item on every `pointermove`, re-subdividing identical paths and allocating fresh rings each time — heavy CPU plus massive GC churn (the dominant cost in the browser profile). A path's geometry is invariant (dynamic geometry produces new path objects, never in-place mutation), so the default-tolerance flatten is now cached in a `WeakMap<Path, Polygon[]>` keyed by path identity. The hot hit callers (`hitRegion`, `pointInMask`, `regionHit`) reuse the same path reference across moves → cache hits, no re-flatten, no per-move allocation. Hit results are identical (pure memoization). The returned rings are now shared — treat them as read-only.
+- [`0955eec`](https://github.com/flatink/flatkit/commit/0955eecfc05743b2fb30fb5a4fcea6fa12c0ea10) Thanks [@kaelhem](https://github.com/kaelhem)! - Fix the remaining pointer lag: memoize `pathToPolygons`. Hit-testing flattened every region's Bezier curves into polygons on every item on every `pointermove`, re-subdividing identical paths and allocating fresh rings each time — heavy CPU plus massive GC churn (the dominant cost in the browser profile). A path's geometry is invariant (dynamic geometry produces new path objects, never in-place mutation), so the default-tolerance flatten is now cached in a `WeakMap<Path, Polygon[]>` keyed by path identity. The hot hit callers (`hitRegion`, `pointInMask`, `regionHit`) reuse the same path reference across moves → cache hits, no re-flatten, no per-move allocation. Hit results are identical (pure memoization). The returned rings are now shared — treat them as read-only.
 
 ## 0.17.1
 
 ### Patch Changes
 
-- [`468c15d`](https://github.com/zwykstudio/flatkit/commit/468c15d3d69c5b4da621701ca861213a1b91dbe5) Thanks [@kaelhem](https://github.com/kaelhem)! - Fix pointer-move lag: the player rendered a full frame synchronously on every `pointermove` (which fire at 125–1000 Hz), on top of the 60 fps playback loop, saturating the main thread. Now the move render is coalesced — while a render loop (playback or a transition) is already running it repaints the next frame instead of per-event, and a static scene still renders synchronously so the cursor follows immediately. Also skip the per-move expression-cache invalidation when nothing reads `mouse.x`/`mouse.y` (a drag self-invalidates, so this is safe). Active-drag latency is unchanged (still synchronous).
+- [`468c15d`](https://github.com/flatink/flatkit/commit/468c15d3d69c5b4da621701ca861213a1b91dbe5) Thanks [@kaelhem](https://github.com/kaelhem)! - Fix pointer-move lag: the player rendered a full frame synchronously on every `pointermove` (which fire at 125–1000 Hz), on top of the 60 fps playback loop, saturating the main thread. Now the move render is coalesced — while a render loop (playback or a transition) is already running it repaints the next frame instead of per-event, and a static scene still renders synchronously so the cursor follows immediately. Also skip the per-move expression-cache invalidation when nothing reads `mouse.x`/`mouse.y` (a drag self-invalidates, so this is safe). Active-drag latency is unchanged (still synchronous).
 
 ## 0.17.0
 
 ### Minor Changes
 
-- [`3de508a`](https://github.com/zwykstudio/flatkit/commit/3de508a13fd44e39a2f92c7f0b60d1886928d097) Thanks [@kaelhem](https://github.com/kaelhem)! - States no longer freeze nested timelines. A symbol's `states` block used to pin its whole subtree's frame, so any timeline nested inside a state (a sub-loop, an idle) froze. The pinned POSE frame is now decoupled from the playback CLOCK handed to children: a state pins the symbol's own pose while the timelines nested inside it keep playing. This lets a state host a running loop (e.g. a `marche`/`panique` cycle selector) or an idle that runs during a state — authored entirely in keyframes, no `expr` scripting. Looping is opt-in: a frozen pose with no nested loop stays frozen, so existing state assets render unchanged.
+- [`3de508a`](https://github.com/flatink/flatkit/commit/3de508a13fd44e39a2f92c7f0b60d1886928d097) Thanks [@kaelhem](https://github.com/kaelhem)! - States no longer freeze nested timelines. A symbol's `states` block used to pin its whole subtree's frame, so any timeline nested inside a state (a sub-loop, an idle) froze. The pinned POSE frame is now decoupled from the playback CLOCK handed to children: a state pins the symbol's own pose while the timelines nested inside it keep playing. This lets a state host a running loop (e.g. a `marche`/`panique` cycle selector) or an idle that runs during a state — authored entirely in keyframes, no `expr` scripting. Looping is opt-in: a frozen pose with no nested loop stays frozen, so existing state assets render unchanged.
 
 ## 0.16.3
 
@@ -220,7 +220,7 @@
 
 ### Minor Changes
 
-- [`fc226cc`](https://github.com/zwykstudio/flatkit/commit/fc226ccaa2853fb1e6441a1943eabf9ba1abd009) Thanks [@kaelhem](https://github.com/kaelhem)! - feat: text on a path (`text … along …`)
+- [`fc226cc`](https://github.com/flatink/flatkit/commit/fc226ccaa2853fb1e6441a1943eabf9ba1abd009) Thanks [@kaelhem](https://github.com/kaelhem)! - feat: text on a path (`text … along …`)
 
   Lay text along a curve — banners, badges, ribbons, dials (the FlatInk analogue of SVG `textPath`).
 
