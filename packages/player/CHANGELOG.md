@@ -1,5 +1,18 @@
 # @flatkit/player
 
+## 0.19.12
+
+### Patch Changes
+
+- [`05e9ce9`](https://github.com/flatink/flatkit/commit/05e9ce9e91c1edbfef37cb123854bb6b1710e0fd) Thanks [@kaelhem](https://github.com/kaelhem)! - docs: each published package now ships a README, so its npm page is no longer blank -- a short pitch,
+  install line, and a minimal usage snippet (player: FlatPlayer + loadEmbeddedFonts; compiler: flatc + the
+  compileFlatpack programmatic entry; engine: the per-module subpath imports; types: typing a Doc). This
+  release also publishes the package metadata that moved to the flatink GitHub org (the `repository` link on
+  the npm page), which had only been committed, not yet published.
+- Updated dependencies [[`05e9ce9`](https://github.com/flatink/flatkit/commit/05e9ce9e91c1edbfef37cb123854bb6b1710e0fd)]:
+  - @flatkit/types@0.19.12
+  - @flatkit/engine@0.19.12
+
 ## 0.19.11
 
 ### Patch Changes

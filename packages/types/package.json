@@ -1,6 +1,6 @@
 {
   "name": "@flatkit/types",
-  "version": "0.19.11",
+  "version": "0.19.12",
   "description": "Shared types for the FlatInk format (Doc, Layer, Item, …). The leaf of the dependency graph.",
   "license": "MIT",
   "author": "Zwyk Studio",
