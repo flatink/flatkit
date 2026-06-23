@@ -1,5 +1,33 @@
 # @flatkit/compiler
 
+## 0.19.10
+
+### Patch Changes
+
+- [`01b2d05`](https://github.com/zwykstudio/flatkit/commit/01b2d05f70187043b6218cb4ef80ab18accd5c7e) Thanks [@kaelhem](https://github.com/kaelhem)! - player: `loadEmbeddedFonts(doc)` -- register a doc's embedded fonts in the browser before mounting, so text
+  uses the AUTHORED faces instead of a system fallback. Previously every consumer reimplemented the same
+  `FontFace` glue; now it ships as a tiny tree-shakeable export:
+
+  import { FlatPlayer, loadEmbeddedFonts } from '@flatkit/player'
+  await loadEmbeddedFonts(doc) // BEFORE new FlatPlayer
+  const player = new FlatPlayer(canvas, doc)
+
+  It registers each `asset kind:'font'` under `family || id`, no-ops outside a DOM (SSR / Node), skips a
+  corrupt face (graceful fallback, never throws), and is idempotent across remounts (a family already on
+  `document.fonts` is not re-registered).
+
+  Security: only embedded `data:` URIs are honored, and the bytes are decoded and handed to `FontFace`
+  directly -- `asset.data` is never spliced into a CSS `src` string. So an untrusted doc can neither point a
+  face at a remote origin (no network fetch / SSRF) nor inject extra CSS `src` descriptors via
+  `url()`/`local()`. This is the same "no arbitrary fetch" contract the player's image/audio paths enforce.
+
+  Docs: new `docs/embedding-fonts.md` covers the browser helper and the skia/Node (`FontLibrary`) snippet.
+
+- Updated dependencies [[`01b2d05`](https://github.com/zwykstudio/flatkit/commit/01b2d05f70187043b6218cb4ef80ab18accd5c7e)]:
+  - @flatkit/types@0.19.10
+  - @flatkit/engine@0.19.10
+  - @flatkit/player@0.19.10
+
 ## 0.19.9
 
 ### Patch Changes
