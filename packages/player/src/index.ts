@@ -7,6 +7,7 @@ export { FlatPlayer, sameOriginAssetResolver, type PlayerOptions } from './playe
 // (playHeadless, trace) live under `@flatkit/player/debug` — not needed for plain playback.
 export type { Gesture } from './player'
 export { renderLayers, renderItems, regionPath, applyTransform } from './drawScene'
+export { loadEmbeddedFonts } from './fonts' // browser: register a doc's embedded fonts before mounting (text uses authored faces)
 export { warmHitCache } from './hit' // pre-flatten hittable paths so the first hit-test isn't a cold-start jolt
 export { evaluateTimeline, resolveInstanceFrame } from '@flatkit/engine/timeline'
 export { resolveLayerAt } from '@flatkit/engine/cel'
