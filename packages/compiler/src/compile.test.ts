@@ -161,3 +161,23 @@ describe('capstone — Doc → export → compile (generator ⇄ compiler loop)'
     expect(round.media).toEqual(src.media)
   })
 })
+
+// A font asset gets an explicit `family` (defaults to its declared id) so consumers don't rely on a fallback.
+describe('font assets: family defaults to id', () => {
+  const media: MediaMap = {
+    'a.woff2': { mime: 'font/woff2', data: 'data:font/woff2;base64,AAAA' },
+    'b.woff2': { mime: 'font/woff2', data: 'data:font/woff2;base64,AAAA' },
+  }
+
+  it('a font without an explicit family inherits its declared id', () => {
+    const doc = compileFlatpack('size 10 10\nasset "Archivo" "a.woff2" font\nscene { layer "L" {} }', [], media)
+    const font = doc.assets?.find((a) => a.id === 'Archivo')
+    expect(font?.kind).toBe('font')
+    expect(font?.family).toBe('Archivo')
+  })
+
+  it('an explicit family is preserved (not overwritten by the id)', () => {
+    const doc = compileFlatpack('size 10 10\nasset "slug" "b.woff2" font "Real Family"\nscene { layer "L" {} }', [], media)
+    expect(doc.assets?.find((a) => a.id === 'slug')?.family).toBe('Real Family')
+  })
+})

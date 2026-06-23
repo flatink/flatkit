@@ -44,7 +44,13 @@ export function compileFlatpack(programSrc: string, assetSrcs: string[] = [], me
   resolveRefs(prog.layers, byName) // program refs
 
   // Embed declared media (data = path → provided data-URI). Missing = left as is.
-  const assets = (prog.assets ?? []).map((a) => { const m = media[a.data]; return m ? { ...a, mime: m.mime, data: m.data } : a })
+  const assets = (prog.assets ?? []).map((a) => {
+    const m = media[a.data]
+    const r = m ? { ...a, mime: m.mime, data: m.data } : a
+    // A font without an explicit family defaults to its declared id — which is exactly what text targets via
+    // `font "<id>"`. Gives consumers an explicit `family` instead of relying on a `family || id` fallback.
+    return r.kind === 'font' && !r.family ? { ...r, family: r.id } : r
+  })
 
   return {
     width: prog.width,
