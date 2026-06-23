@@ -55,5 +55,5 @@ The `dist/` build is only produced for publishing.
 
 ## Reporting bugs & ideas
 
-Open an [issue](https://github.com/zwykstudio/flatkit/issues) (templates provided). For **security**
+Open an [issue](https://github.com/flatink/flatkit/issues) (templates provided). For **security**
 issues, follow [SECURITY.md](SECURITY.md) instead of a public issue.

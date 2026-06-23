@@ -2,7 +2,7 @@ name: Release
 
 # On every push to main: run THE GATE (gate.yml, same as CI), then either STAGE a version bump or PUBLISH.
 #  - changesets pending  → `changeset version` bumps + writes CHANGELOGs, pushed to `changeset-release/main`
-#    with NO pull request (the zwykstudio org blocks Actions from opening PRs — that failing PR step was the
+#    with NO pull request (the org blocks Actions from opening PRs — that failing PR step was the
 #    systematic red ✗). The maintainer fast-forwards main onto that branch to trigger the publish run.
 #  - no changesets pending → versions are final (main was fast-forwarded) → publish to npm.
 # The publish job `needs:` the gate, so a red build never reaches npm — which a separate ci.yml run could not

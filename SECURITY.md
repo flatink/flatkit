@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report security issues privately to **security@zwyk.studio** (or open a [GitHub security
-advisory](https://github.com/zwykstudio/flatkit/security/advisories/new)). Do not file a public issue
+advisory](https://github.com/flatink/flatkit/security/advisories/new)). Do not file a public issue
 for an unpatched vulnerability. We aim to acknowledge within a few business days.
 
 ## Threat model

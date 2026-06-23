@@ -7,10 +7,10 @@
   "homepage": "http://flatink.zwyk-studio.com/",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zwykstudio/flatkit.git",
+    "url": "git+https://github.com/flatink/flatkit.git",
     "directory": "packages/compiler"
   },
-  "bugs": "https://github.com/zwykstudio/flatkit/issues",
+  "bugs": "https://github.com/flatink/flatkit/issues",
   "keywords": [
     "flatink",
     "flatpack",
