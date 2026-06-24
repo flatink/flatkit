@@ -1,0 +1,43 @@
+{
+  "name": "@flatkit/mcp",
+  "version": "0.1.0",
+  "description": "FlatInk MCP server: exposes the asset library + the forge's compile/preview/publish as tools for LLM agents.",
+  "license": "MIT",
+  "author": "Zwyk Studio",
+  "homepage": "http://flatink.zwyk-studio.com/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flatink/flatkit.git",
+    "directory": "packages/mcp"
+  },
+  "bugs": "https://github.com/flatink/flatkit/issues",
+  "keywords": [
+    "flatink",
+    "mcp",
+    "model-context-protocol",
+    "llm",
+    "claude",
+    "animation"
+  ],
+  "type": "module",
+  "bin": {
+    "flatink-mcp": "./dist/server.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "start": "node dist/server.js",
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json",
+    "prepublishOnly": "pnpm build"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
