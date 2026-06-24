@@ -18,7 +18,7 @@ import { lerpTint, lerpPaint, lerpStroke, type Tint } from './paint'
 import { lerpFilters, type Filter } from './filters'
 import { lerpColor } from './color'
 import { samplePathAt, projectToPath, lerpPath, type Path } from './path'
-import { applyEasing, rotDelta, EXPR_CHANNELS, type ExprChannel } from './timeline'
+import { applyEasing, rotDelta, EXPR_CHANNELS, OFFSET_CHANNELS, type ExprChannel, type BindChannel } from './timeline'
 import { compileCached, evalExpr, exprScope } from './expr'
 import { isPoseable, isText } from './layers'
 import type { Point, Region, Item, Layer, Pose, Cel, ResolveOpts, TextPath, ChannelModifier } from '@flatkit/types'
@@ -48,7 +48,7 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
     const hasChannels = (it: Item): boolean => {
       if (!isPoseable(it)) return false
       const e = it.expressions, m = it.modifiers
-      return (!!e && EXPR_CHANNELS.some((c) => e[c] != null)) || (!!m && EXPR_CHANNELS.some((c) => m[c] != null))
+      return (!!e && (EXPR_CHANNELS.some((c) => e[c] != null) || OFFSET_CHANNELS.some((c) => e[c] != null))) || (!!m && EXPR_CHANNELS.some((c) => m[c] != null))
     }
     if (!layer.items.some((it) => hasChannels(it) || isDynamicText(it))) return layer.items
     return layer.items.map((it) => {
@@ -332,7 +332,7 @@ function evalOverlayFor(opts: ResolveOpts, time: number, frame: number): ReturnT
 /** `velocity()` outside the player's advance pass (render/seek, or an un-keyable scope) → no movement. */
 const ZERO_VELOCITY = (_arg: number): number => 0
 function applyExprChannels(
-  ex: Partial<Record<ExprChannel, string>>,
+  ex: Partial<Record<BindChannel, string>>,
   pose: ResolvedPose,
   frame: number,
   opts: ResolveOpts,
@@ -341,7 +341,8 @@ function applyExprChannels(
   mods?: Partial<Record<ExprChannel, ChannelModifier>>,
 ): ResolvedPose {
   const hasMod = !!mods && EXPR_CHANNELS.some((ch) => mods[ch])
-  if (!EXPR_CHANNELS.some((ch) => ex[ch]) && !hasMod) return pose
+  const hasOffset = OFFSET_CHANNELS.some((ch) => ex[ch])
+  if (!EXPR_CHANNELS.some((ch) => ex[ch]) && !hasOffset && !hasMod) return pose
   const dec = decompose(pose.transform)
   // Position channels track the PIVOT's parent-space position (kept fixed by scale/rotation), so
   // `scaleX`/`scaleY`/`rotation` turn around the declared `pivot` — consistent with cel poses
@@ -403,6 +404,23 @@ function applyExprChannels(
     evalCtx.value = ch[c]
     ch[c] = evalExpr(compiled.node, evalCtx, ch[c], opts.ctx) // base = scene ctx, by reference (no copy)
     if (c !== 'opacity') touchedT = true
+  }
+  // ADDITIVE offsets (dx/dy): shift the resolved position in PARENT space, ON TOP of the base `at` and any
+  // absolute x/y channel above — `pos = (at | x) + d`. The natural offset idiom `dx = 30*sin(time)` then
+  // oscillates AROUND the anchor with no need to re-inject the base. Stateless (base 0), no modifier path;
+  // `self.x/y` stay the absolute position so an expression may still reference it.
+  if (hasOffset) {
+    for (const c of OFFSET_CHANNELS) {
+      const src = ex[c]
+      if (!src) continue
+      const compiled = compileCached(src)
+      if (!compiled.ok) continue // invalid expression -> ignored (the UI reports the error)
+      evalCtx.value = 0 // an offset has no base value; `value` = 0 so `dx = e` and `dx = value + e` agree
+      const d = evalExpr(compiled.node, evalCtx, 0, opts.ctx)
+      if (c === 'dx') ch.x += d
+      else ch.y += d
+      touchedT = true
+    }
   }
   return {
     transform: touchedT ? geomToMatrix({ px: ch.x, py: ch.y, rot: ch.rotation, sx: ch.scaleX, sy: ch.scaleY, explicitRot: false }, pivot) : pose.transform,

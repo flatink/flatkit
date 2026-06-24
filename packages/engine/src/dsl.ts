@@ -17,7 +17,7 @@
 //  Round-trip guaranteed at the MODEL level: parseUnits(printUnits(u)).units ≡ u.
 // ─────────────────────────────────────────────────────────────────────────────
 import { SEND_EVENT_NAME, type Action, type FuncDef } from './actions'
-import { EXPR_CHANNELS, type ExprChannel } from './timeline'
+import { EXPR_CHANNELS, BIND_CHANNELS, type ExprChannel, type BindChannel } from './timeline'
 import type { ChannelModifier } from '@flatkit/types'
 
 // ── Intermediate representation (independent of the Doc) ──────────────────────
@@ -29,10 +29,10 @@ export type ScriptUnit =
   | { kind: 'event'; event: ScriptEvent; body: Action[] } // when clicked { … }
   | { kind: 'frameActions'; frame: number; body: Action[] } // at frame 30 { … }
   | { kind: 'label'; frame: number; name: string } // label 30 "checkpoint"
-  | { kind: 'binding'; channel: ExprChannel; expr: string } // rotation = time * 2
+  | { kind: 'binding'; channel: BindChannel; expr: string } // rotation = time * 2 · dx = 30*sin(time)
   | { kind: 'modifier'; channel: ExprChannel; modifier: ChannelModifier } // spring rotation = crochetX { stiffness .08 damping .86 }
   | { kind: 'declare'; name: string; value: number | number[] } // let score = 0 · let grid = fill(9,1)
-  | { kind: 'each'; symbol: string; as: string; bindings: { channel: ExprChannel; expr: string }[] } // each "Brick" as i { opacity = bricks[i] }
+  | { kind: 'each'; symbol: string; as: string; bindings: { channel: BindChannel; expr: string }[] } // each "Brick" as i { opacity = bricks[i] }
   | { kind: 'func'; func: FuncDef } // fn dist(a,b) = … · fn launch() { … }
   | { kind: 'use'; name: string } // use "collision" — imports a package
   // "move" interactor (cf. RFC interactors): moves the object to the mouse, writes the position into explicit
@@ -195,6 +195,7 @@ export function printUnits(units: ScriptUnit[]): string {
 const ID = /[A-Za-z0-9_]/
 const MAX_FILL = 100_000 // bound for `fill(n, v)` → no giant array
 const isChannel = (s: string): s is ExprChannel => (EXPR_CHANNELS as string[]).includes(s)
+const isBindChannel = (s: string): s is BindChannel => (BIND_CHANNELS as string[]).includes(s) // absolute channels + additive dx/dy offsets
 const stripComment = (s: string) => {
   const i = s.indexOf('//')
   return i >= 0 ? s.slice(0, i) : s
@@ -1093,7 +1094,7 @@ class Parser {
         const asVar = this.word()
         if (!asVar) { this.err('index name expected after "as"', m); this.recoverBlockOrLine(); return null }
         if (!this.expectBrace()) return null
-        const bindings: { channel: ExprChannel; expr: string }[] = []
+        const bindings: { channel: BindChannel; expr: string }[] = []
         for (;;) {
           this.skipWs()
           if (this.eof()) { this.err('missing "}"', m); break }
@@ -1106,12 +1107,12 @@ class Parser {
           const { expr, split } = this.splitRhs()
           const deg = ch === 'rotationDeg' // authoring sugar: `rotationDeg = e` → `rotation = rad(e)`
           const scale = ch === 'scale' // authoring sugar: `scale = e` → `scaleX = e` + `scaleY = e`
-          if (!deg && !scale && !isChannel(ch)) { this.err(`unknown channel "${ch}" (expected: ${EXPR_CHANNELS.join(', ')}, rotationDeg, scale)`, bm); continue }
+          if (!deg && !scale && !isBindChannel(ch)) { this.err(`unknown channel "${ch}" (expected: ${BIND_CHANNELS.join(', ')}, rotationDeg, scale)`, bm); continue }
           if (!expr) { this.err('expression expected after "="', bm); continue }
           this.exprSite(expr, pos)
           if (!split) this.endStatement()
           if (scale) bindings.push({ channel: 'scaleX', expr }, { channel: 'scaleY', expr })
-          else bindings.push(deg ? { channel: 'rotation', expr: `rad(${expr})` } : { channel: ch as ExprChannel, expr })
+          else bindings.push(deg ? { channel: 'rotation', expr: `rad(${expr})` } : { channel: ch as BindChannel, expr })
         }
         return { kind: 'each', symbol, as: asVar, bindings }
       }
@@ -1200,8 +1201,8 @@ class Parser {
         const { expr, split } = this.splitRhs()
         const deg = w === 'rotationDeg' // authoring sugar: `rotationDeg = e` → `rotation = rad(e)` (degrees → radians)
         const scale = w === 'scale' // authoring sugar: `scale = e` → `scaleX = e` + `scaleY = e` (uniform scale)
-        if (!deg && !scale && !isChannel(w)) {
-          this.err(`unknown channel "${w}" (expected: ${EXPR_CHANNELS.join(', ')}, rotationDeg, scale)`, m)
+        if (!deg && !scale && !isBindChannel(w)) {
+          this.err(`unknown channel "${w}" (expected: ${BIND_CHANNELS.join(', ')}, rotationDeg, scale)`, m)
           return null
         }
         if (!expr) {
@@ -1211,7 +1212,7 @@ class Parser {
         this.exprSite(expr, pos)
         if (!split) this.endStatement()
         if (scale) return [{ kind: 'binding', channel: 'scaleX', expr }, { kind: 'binding', channel: 'scaleY', expr }]
-        return { kind: 'binding', channel: deg ? 'rotation' : (w as ExprChannel), expr: deg ? `rad(${expr})` : expr }
+        return { kind: 'binding', channel: deg ? 'rotation' : (w as BindChannel), expr: deg ? `rad(${expr})` : expr }
       }
     }
   }

@@ -75,6 +75,25 @@ describe('dsl — interactors (drag / drop)', () => {
     expect(r.diagnostics[0].message).toContain('unknown channel "scaleZ"')
     expect(r.units).toEqual([])
   })
+  it('dx / dy are accepted as additive-offset channel bindings', () => {
+    const r = parseUnits('dx = 58 * sin(time)\ndy = 0\n')
+    expect(r.diagnostics).toEqual([])
+    expect(r.units).toEqual([
+      { kind: 'binding', channel: 'dx', expr: '58 * sin(time)' },
+      { kind: 'binding', channel: 'dy', expr: '0' },
+    ])
+  })
+  it('dx / dy round-trip (print → parse) and work inside an each block', () => {
+    roundtrip([{ kind: 'binding', channel: 'dx', expr: '58 * sin(time)' }])
+    const r = parseUnits('each "Dot" as i {\n  dx = wobble[i]\n}\n')
+    expect(r.diagnostics).toEqual([])
+    expect(r.units).toEqual([{ kind: 'each', symbol: 'Dot', as: 'i', bindings: [{ channel: 'dx', expr: 'wobble[i]' }] }])
+  })
+  it('the unknown-channel error lists dx/dy among the valid channels', () => {
+    const r = parseUnits('scaleZ = 1\n')
+    expect(r.diagnostics[0].message).toContain('dx')
+    expect(r.diagnostics[0].message).toContain('dy')
+  })
   it('trace (follow a path): printing + round-trip', () => {
     expect(printUnits([{ kind: 'interactor', axis: 'trace', varX: 'prog', confine: 'Path' }]))
       .toBe('trace prog along Path\n')

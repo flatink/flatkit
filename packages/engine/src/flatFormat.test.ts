@@ -119,6 +119,22 @@ describe('flatFormat — .flat serializer', () => {
     expect(text).toContain('instance "Hero" as "enemy"')
   })
 
+  it('additive offset channels: `expr dx`/`expr dy` serialize and round-trip', () => {
+    const sym: SymbolDef = {
+      id: 'o', name: 'Off', layers: [layer('ol', 'c', [
+        { id: 'p', kind: 'group', name: 'p', transform: T(620, 150),
+          expressions: { dx: '58 * sin(time)', dy: '0' },
+          layers: [layer('pl', 'c', [{ id: 'pr', color: '#fff', path: parsePathData('M0 0L2 0L2 2Z') }])] } as Group,
+      ])],
+    }
+    const text = printFlat([sym])
+    expect(text).toContain('expr dx "58 * sin(time)"')
+    expect(text).toContain('expr dy "0"')
+    expect(printFlat(parseFlat(text))).toBe(text) // stable round-trip
+    const back = parseFlat(text)[0].layers[0].items[0] as Group
+    expect(back.expressions).toEqual({ dx: '58 * sin(time)', dy: '0' })
+  })
+
   it('reconstructs the structure (items, paints, resolved instances)', () => {
     const parsed = parseFlat(printFlat(lib()))
     expect(parsed.map((s) => s.name)).toEqual(['Hero', 'Scene', 'Robot'])

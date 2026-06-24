@@ -38,6 +38,12 @@ describe('sceneRefs — namedChannels', () => {
     expect(namedChannels(d, 0, undefined, 24).Dup).toMatchObject({ x: 1, y: 1 })
   })
 
+  it('Name.x reflects an additive dx offset (read side sees at + dx)', () => {
+    const g = { ...group('Mover', 620, 200), expressions: { dx: '80', dy: '-20' } } as Group
+    const n = namedChannels(doc([layer([g])]), 0, undefined, 24)
+    expect(n.Mover).toMatchObject({ x: 700, y: 180 }) // 620+80, 200-20 — so `Other.x = Mover.x` follows the offset
+  })
+
   it('evaluates via member access in an expression (Hero.x + 10)', () => {
     const d = doc([layer([group('Hero', 100, 50)])])
     const ctx = namedChannels(d, 0, undefined, 24)

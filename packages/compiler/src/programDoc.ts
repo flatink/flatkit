@@ -208,7 +208,7 @@ export function docLayoutWarnings(doc: Doc): { scope: string; diag: Diagnostic }
   // (c) TEXT/IMAGE clipped at the canvas edge. Precise to avoid noise: we ignore `path`/groups
   //     (decor that "bleeds" on purpose), objects driven by an expression (dynamic position ->
   //     misleading static bbox), and items PARKED entirely off-screen ("hidden" pattern).
-  const dynamicPos = (it: Item) => 'expressions' in it && it.expressions && (it.expressions.x != null || it.expressions.y != null)
+  const dynamicPos = (it: Item) => 'expressions' in it && it.expressions && (it.expressions.x != null || it.expressions.y != null || it.expressions.dx != null || it.expressions.dy != null)
   for (const layer of doc.layers) {
     for (const it of layer.items) {
       if (!(isText(it) || isImage(it)) || dynamicPos(it) || (isText(it) && it.textPath)) continue // path-laid text → §(f), not a box

@@ -13,7 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Doc, Item, Layer } from '@flatkit/types'
 import { isGroup, isInstance, getSymbol } from './layers'
-import { EXPR_CHANNELS, type InstanceBind } from './timeline'
+import { BIND_CHANNELS, type InstanceBind } from './timeline'
 
 const subst = (expr: string, asVar: string, idx: number): string => expr.replace(new RegExp(`\\b${asVar}\\b`, 'g'), String(idx))
 
@@ -30,7 +30,7 @@ function bindLayers(doc: Doc, layers: Layer[], binds: InstanceBind[] | undefined
           const idx = counter.get(name) ?? 0
           counter.set(name, idx + 1)
           const expressions = { ...it.expressions }
-          for (const ch of EXPR_CHANNELS) if (rule.expr[ch]) expressions[ch] = subst(rule.expr[ch]!, rule.as, idx)
+          for (const ch of BIND_CHANNELS) if (rule.expr[ch]) expressions[ch] = subst(rule.expr[ch]!, rule.as, idx)
           return { ...it, expressions }
         }
         return it

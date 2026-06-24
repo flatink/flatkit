@@ -95,6 +95,22 @@ object "h" {
     expect(h.modifiers?.rotation).toEqual({ kind: 'spring', target: '0.5', stiffness: 0.08, damping: 0.86 })
   })
 
+  it('a .flatink object block with an additive dx offset compiles AND resolves as at + dx', () => {
+    const asset = `symbol "Dot" { layer "l" { path "M0 0L4 0L4 4Z" fill #3a6df0 } }`
+    const program = `
+size 1280 400
+scene { layer "c" { group "p" at 620,200 pivot 0,0 { layer "g" { instance "Dot" as "d" } } } }
+object "p" { dx = 80 }`
+    const out = compileFlatpack(program, [asset])
+    const p = out.layers[0].items[0] as { expressions?: Record<string, string> }
+    expect(p.expressions?.dx).toBe('80') // carried onto the compiled item
+    // resolved pose: the group sits at 620 + 80 = 700 (additive), not at 80 (absolute would desert it)
+    const resolved = resolveLayerAt(out.layers[0], 0, { fps: 24 })
+    const e = (resolved[0] as { transform: { e: number; f: number } }).transform
+    expect(e.e).toBeCloseTo(700, 5)
+    expect(e.f).toBeCloseTo(200, 5)
+  })
+
   it('statements crammed on one line compile exactly like one-per-line (if lint passes, compile works)', () => {
     const out = compileFlatpack(`
 size 400 300

@@ -107,6 +107,15 @@ export type Keyframe = {
 /** Channels animatable by expression (= the decomposed components + opacity). */
 export type ExprChannel = 'x' | 'y' | 'scaleX' | 'scaleY' | 'rotation' | 'opacity'
 
+/** ADDITIVE position offsets: a binding `dx = …` shifts the resolved position by `dx` in PARENT space,
+ *  on top of the body's `at` (and any absolute `x`/`y` channel) — `pos = (at.x + dx, at.y + dy)`. Solves
+ *  the recurring "absolute `x` deserts the anchor" trap for offset-style motion (`dx = 30*sin(time)`
+ *  oscillates AROUND `at`, no need to re-inject the base). Bindings only — not a keyframe/modifier channel. */
+export type OffsetChannel = 'dx' | 'dy'
+
+/** Any channel that an expression BINDING can target: the absolute channels + the additive offsets. */
+export type BindChannel = ExprChannel | OffsetChannel
+
 /** A STATEFUL channel modifier: instead of a pure expression, the channel INTEGRATES over time toward
  *  `target` (a normal expression). State lives per (instance, channel) in the player, advanced at a fixed
  *  step, independent of `onEnterFrame`/input; on random access (seek/render) it snaps to `target` (the rest
@@ -153,7 +162,7 @@ export type Timeline = {
 export type InstanceBind = {
   symbol: string // name of the targeted symbol
   as: string // name of the index variable (per instance, document order)
-  expr: Partial<Record<ExprChannel, string>> // bound channels
+  expr: Partial<Record<BindChannel, string>> // bound channels (absolute + additive offsets)
 }
 
 /**
@@ -320,7 +329,7 @@ export type Group = {
   filters?: Filter[] // filter stack (blur/shadow/glow/adjust) — animatable
   blend?: BlendMode // blend mode (add/screen = additive light, multiply = shadow); absent = normal
   hitbox?: { w: number; h: number } // EXPLICIT drop zone (local rect centered on the origin, ±w/2 × ±h/2): used as the `when dropped on` target instead of the content bbox; avoids invisible paths
-  expressions?: Partial<Record<ExprChannel, string>> // expression animation (cel model) — takes priority over the tween
+  expressions?: Partial<Record<BindChannel, string>> // expression animation (cel model) — takes priority over the tween (incl. additive dx/dy offsets)
   modifiers?: Partial<Record<ExprChannel, ChannelModifier>> // STATEFUL channel modifier (smooth/spring); integrates over time, wins over expression/tween
   clip?: ClipRect // rectangular clip in LOCAL coords (`clip x y w h`); content outside is cut
 }
@@ -340,7 +349,7 @@ export type Instance = {
   playback?: InstancePlayback // playback mode of the symbol's timeline (absent = synced)
   filters?: Filter[] // filter stack (blur/shadow/glow/adjust) — animatable
   blend?: BlendMode // blend mode (add/screen = additive light, multiply = shadow); absent = normal
-  expressions?: Partial<Record<ExprChannel, string>> // expression animation (cel model) — takes priority over the tween
+  expressions?: Partial<Record<BindChannel, string>> // expression animation (cel model) — takes priority over the tween (incl. additive dx/dy offsets)
   modifiers?: Partial<Record<ExprChannel, ChannelModifier>> // STATEFUL channel modifier (smooth/spring); integrates over time, wins over expression/tween
   params?: Record<string, string> // call-site values for the symbol's exposed `params` (literal: #color / number / true|false / state name); resolved per the symbol's ParamDef
   clip?: ClipRect // rectangular clip in LOCAL coords (`clip x y w h`); content outside is cut
@@ -454,7 +463,7 @@ export type Text = {
   pivot?: Point
   filters?: Filter[] // filter stack — animatable
   blend?: BlendMode // blend mode (add/screen = additive light, multiply = shadow); absent = normal
-  expressions?: Partial<Record<ExprChannel, string>> // expression (channel) animation — takes priority over the pose
+  expressions?: Partial<Record<BindChannel, string>> // expression (channel) animation — takes priority over the pose (incl. additive dx/dy offsets)
   modifiers?: Partial<Record<ExprChannel, ChannelModifier>> // STATEFUL channel modifier (smooth/spring); integrates over time, wins over expression/pose
 }
 
@@ -475,7 +484,7 @@ export type Image = {
   pivot?: Point
   filters?: Filter[] // filter stack — animatable
   blend?: BlendMode // blend mode (add/screen = additive light, multiply = shadow); absent = normal
-  expressions?: Partial<Record<ExprChannel, string>> // expression (channel) animation — takes priority over the pose
+  expressions?: Partial<Record<BindChannel, string>> // expression (channel) animation — takes priority over the pose (incl. additive dx/dy offsets)
   modifiers?: Partial<Record<ExprChannel, ChannelModifier>> // STATEFUL channel modifier (smooth/spring); integrates over time, wins over expression/pose
 }
 

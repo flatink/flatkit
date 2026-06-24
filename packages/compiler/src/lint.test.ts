@@ -40,6 +40,12 @@ describe('lint — expressions', () => {
     expect(d.every((x) => !/two statements on one line/.test(x.message))).toBe(true)
   })
 
+  it('dx/dy are valid offset channels, but their expressions are still linted', () => {
+    expect(lint('dx = 58 * sin(time)  dy = 0')).toEqual([]) // valid offset bindings → nothing to report
+    const d = lint('dx = speed') // unknown variable inside the offset expression is still caught
+    expect(d.some((x) => /unknown variable "speed"/.test(x.message))).toBe(true)
+  })
+
   it('comparisons are NOT mistaken for a second statement (regex excludes ==/<=/>=/!=)', () => {
     expect(lint('rotation = a <= b', { variables: ['a', 'b'] })).toEqual([]) // valid comparison → no diagnostic
     const d = lint('rotation = a <=', { variables: ['a'] }) // invalid (incomplete) but NOT a 2nd statement

@@ -77,11 +77,15 @@
   the jump is frequent. For free-running ambiance use **`clock`** (monotone, never wraps): `sin(clock * f)`.
   Alternatively drive it by the loop phase `frame / <durationFrames>` (reboucles cleanly) or set a long
   `timeline`. `--check` warns when a channel expression uses `time` under a short looping timeline.
-- **A channel binding REPLACES the base transform — it is NOT a delta.** `object "G" { x = bump }` sets
+- **`x`/`y` channels REPLACE the base transform — they are NOT a delta.** `object "G" { x = bump }` sets
   G's local x to `bump`, **overwriting** the group's declared `at X,Y` (x snaps to `bump` ≈ 0 → the element
-  jumps to the left edge whenever the expression is small). Re-inject the base position:
-  `x = $(X) + bump`. Same for `y`/`rotation`/`scaleX`/… — the channel value is absolute, not added to `at`.
-  Classic cause of "the animation appears in the wrong place."
+  jumps to the left edge whenever the expression is small). The channel value is absolute, not added to `at` —
+  classic cause of "the animation appears in the wrong place." Two ways to keep it on the anchor:
+  - **Preferred — additive offsets `dx`/`dy`** (binding-only): `object "G" { dx = bump }` resolves to
+    `pos = at + (dx, dy)`, so `dx = 58*sin(time)` oscillates **around** `at X,Y` with no base to re-type.
+    This is the natural "offset from the anchor" idiom (mirror of CSS `translate` / pivot). `dx`/`dy` compose
+    with an absolute `x`/`y` if both are bound (`pos = x + dx`); they have no keyframe/`spring`/`smooth` form.
+  - **Or re-inject the base** with the absolute channel: `x = $(X) + bump` (same for `y`/`rotation`/`scaleX`/…).
 - **Channel `scaleX`/`scaleY`/`rotation` turn around the group's `pivot`** (like cel poses), so a panel
   with `pivot <center>` driven by `object "P" { scaleX = s }` grows/spins **in place** — it no longer
   shrinks toward the top-left corner. With no `pivot` (default `{0,0}`) it scales/rotates around the origin

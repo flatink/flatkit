@@ -31,6 +31,7 @@ myProc() · send "event"[, expr] · sound "assetId"
 
 ## Expressions (drive a channel, or compute in an action)
 channel = expr         channels: ${EXPR_CHANNELS.join(' ')}   (expression wins over keyframes)
+dx = expr · dy = expr  // ADDITIVE offset: final pos = at + (dx, dy) — oscillate AROUND the anchor (dx = 30*sin(time)); absolute x/y REPLACE at
 rotationDeg = expr     // sugar for rotation = rad(expr) — author angles in DEGREES (rotation & sin/cos/atan2 are RADIANS)
 operators: + - * / %   < > <= >= == !=   && || !   cond ? a : b
 context: time frame value · mouse.x mouse.y mouse.dx mouse.dy · keys.Space keys.ArrowLeft … (keys are 1/0, use directly: keys.Space ? … : …)

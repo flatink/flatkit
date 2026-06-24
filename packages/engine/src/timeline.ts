@@ -15,11 +15,11 @@ import { lerpPaint, lerpTint, type Paint, type Tint } from './paint'
 import { compileExpr, evalExpr, exprScope, type Compiled, type ExprContext } from './expr'
 import type {
   Point, Region,
-  Easing, SpinDir, Keyframe, ExprChannel, TimelineTrack, SoundClip,
+  Easing, SpinDir, Keyframe, ExprChannel, OffsetChannel, BindChannel, TimelineTrack, SoundClip,
   ContentKey, Timeline, InstancePlayback,
 } from '@flatkit/types'
 export type {
-  Easing, SpinDir, Keyframe, ExprChannel, TimelineTrack, SoundClip,
+  Easing, SpinDir, Keyframe, ExprChannel, OffsetChannel, BindChannel, TimelineTrack, SoundClip,
   ContentKey, ContentTrack, Timeline, InstanceBind, PlaybackMode, InstancePlayback,
 } from '@flatkit/types'
 
@@ -27,6 +27,12 @@ export type {
 // InstancePlayback, SoundClip, ContentKey/Track) are defined in @flatkit/types; this module ANIMATES
 // them (pure per-frame resolution).
 export const EXPR_CHANNELS: ExprChannel[] = ['x', 'y', 'scaleX', 'scaleY', 'rotation', 'opacity']
+/** ADDITIVE position offsets (binding-only): added to the resolved position in parent space. Kept SEPARATE
+ *  from EXPR_CHANNELS so the keyframe-interpolation / scene-ref / modifier machinery (which maps each channel
+ *  to a decomposed matrix component) stays untouched — offsets have no matrix component, base 0. */
+export const OFFSET_CHANNELS: OffsetChannel[] = ['dx', 'dy']
+/** All channels an expression binding can target (absolute + additive). */
+export const BIND_CHANNELS: BindChannel[] = [...EXPR_CHANNELS, ...OFFSET_CHANNELS]
 
 // ── Evaluation result ────────────────────────────────────────────────────────
 /** Overrides applied to ONE item at render. Any absent key = base value. */

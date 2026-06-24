@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Action, FrameAction, FrameLabel, Interaction, ItemEvent, FuncDef } from './actions'
 import type { Interactor, ChannelModifier } from '@flatkit/types'
-import { EXPR_CHANNELS, type ExprChannel, type Timeline, type InstanceBind } from './timeline'
+import { EXPR_CHANNELS, BIND_CHANNELS, type ExprChannel, type BindChannel, type Timeline, type InstanceBind } from './timeline'
 import type { ScriptUnit } from './dsl'
 
 const byFrame = <T extends { frame: number }>(xs: readonly T[]) => [...xs].sort((a, b) => a.frame - b.frame)
@@ -28,7 +28,7 @@ export type ObjectInteractor = Omit<Interactor, 'targetId'>
 export function objectToUnits(
   targetId: string,
   interactions: Interaction[] | undefined,
-  expressions: Partial<Record<ExprChannel, string>> | undefined,
+  expressions: Partial<Record<BindChannel, string>> | undefined,
   interactors?: Interactor[],
   modifiers?: Partial<Record<ExprChannel, ChannelModifier>>,
 ): ScriptUnit[] {
@@ -40,7 +40,7 @@ export function objectToUnits(
     if (it) units.push({ kind: 'event', event: ev, body: it.actions })
   }
   for (const it of interactions ?? []) if (it.targetId === targetId && it.event === 'drop' && it.over) units.push({ kind: 'drop', over: it.over, ...(it.atPointer ? { atPointer: true } : {}), body: it.actions })
-  if (expressions) for (const ch of EXPR_CHANNELS) if (expressions[ch]) units.push({ kind: 'binding', channel: ch, expr: expressions[ch]! })
+  if (expressions) for (const ch of BIND_CHANNELS) if (expressions[ch]) units.push({ kind: 'binding', channel: ch, expr: expressions[ch]! })
   if (modifiers) for (const ch of EXPR_CHANNELS) if (modifiers[ch]) units.push({ kind: 'modifier', channel: ch, modifier: modifiers[ch]! })
   return units
 }
@@ -49,7 +49,7 @@ export type ObjectScript = {
   events: { event: ItemEvent; actions: Action[] }[]
   drops: { over: string; atPointer?: boolean; actions: Action[] }[]
   interactor?: ObjectInteractor
-  expressions: Partial<Record<ExprChannel, string>>
+  expressions: Partial<Record<BindChannel, string>>
   modifiers: Partial<Record<ExprChannel, ChannelModifier>>
 }
 
@@ -57,7 +57,7 @@ export type ObjectScript = {
 export function unitsToObject(units: ScriptUnit[]): ObjectScript {
   const events: { event: ItemEvent; actions: Action[] }[] = []
   const drops: { over: string; actions: Action[] }[] = []
-  const expressions: Partial<Record<ExprChannel, string>> = {}
+  const expressions: Partial<Record<BindChannel, string>> = {}
   const modifiers: Partial<Record<ExprChannel, ChannelModifier>> = {}
   let interactor: ObjectInteractor | undefined
   for (const u of units) {
@@ -75,7 +75,7 @@ export function unitsToObject(units: ScriptUnit[]): ObjectScript {
 export function timelineToUnits(tl: Timeline | undefined): ScriptUnit[] {
   const units: ScriptUnit[] = []
   for (const b of tl?.binds ?? []) // collective bindings up front: each "Symbol" as i { … }
-    units.push({ kind: 'each', symbol: b.symbol, as: b.as, bindings: EXPR_CHANNELS.filter((ch) => b.expr[ch]).map((ch) => ({ channel: ch, expr: b.expr[ch]! })) })
+    units.push({ kind: 'each', symbol: b.symbol, as: b.as, bindings: BIND_CHANNELS.filter((ch) => b.expr[ch]).map((ch) => ({ channel: ch, expr: b.expr[ch]! })) })
   if (tl?.onLoad?.length) units.push({ kind: 'event', event: 'load', body: tl.onLoad })
   if (tl?.onEnterFrame?.length) units.push({ kind: 'event', event: 'enterFrame', body: tl.onEnterFrame })
   for (const l of byFrame(tl?.labels ?? [])) units.push({ kind: 'label', frame: l.frame, name: l.name })

@@ -43,6 +43,19 @@ describe('scriptDoc — object', () => {
     expect(back.units).toEqual(units)
   })
 
+  it('emits + reconstructs additive dx/dy offset bindings (model <-> units bridge)', () => {
+    const units = objectToUnits('P', [], { x: '100', dx: '58 * sin(time)', dy: 'wobble' })
+    expect(units).toEqual([
+      { kind: 'binding', channel: 'x', expr: '100' },
+      { kind: 'binding', channel: 'dx', expr: '58 * sin(time)' },
+      { kind: 'binding', channel: 'dy', expr: 'wobble' },
+    ])
+    expect(unitsToObject(units).expressions).toEqual({ x: '100', dx: '58 * sin(time)', dy: 'wobble' })
+    const back = parseUnits(printUnits(units)) // round-trip through text
+    expect(back.diagnostics).toEqual([])
+    expect(back.units).toEqual(units)
+  })
+
   it('interactor + drop: objectToUnits / unitsToObject', () => {
     const inter: Interaction[] = [{ id: 'd', targetId: 'P', event: 'drop', over: 'TargetA', actions: [{ do: 'setVar', name: 'ax', value: 'TargetA.x' }] }]
     const interactors = [{ targetId: 'P', axis: 'xy' as const, varX: 'ax', varY: 'ay', confine: 'Field', grid: 20 }]

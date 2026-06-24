@@ -97,4 +97,18 @@ describe('language — arrays + indexed loop', () => {
     // the binds come back as `each` via the timeline
     expect(printUnits(timelineToUnits(doc.timeline)).startsWith('each "Brick" as i')).toBe(true)
   })
+
+  it('each "Sym" as i: additive dx offset binding expands per-instance too', () => {
+    const layer = { id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items:
+      [0, 1, 2].map((k) => ({ id: 'b' + k, kind: 'instance' as const, name: 'Dot ' + k, symbolId: 'sym', transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 } })) }
+    const doc: Doc = {
+      width: 100, height: 100,
+      symbols: [{ id: 'sym', name: 'Dot', layers: [{ id: 's', name: 'c', visible: true, locked: false, opacity: 1, items: [] }] }],
+      layers: [layer],
+      timeline: { fps: 24, durationFrames: 1, tracks: [], binds: [{ symbol: 'Dot', as: 'i', expr: { dx: 'wobble[i] * 4' } }] },
+    }
+    const out = applyInstanceBinds(doc)
+    expect(out.layers[0].items.map((it) => (isInstance(it) ? it.expressions?.dx : null)))
+      .toEqual(['wobble[0] * 4', 'wobble[1] * 4', 'wobble[2] * 4'])
+  })
 })

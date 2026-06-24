@@ -21,7 +21,7 @@ import type { Transform } from './transform'
 import type { Cel, Pose } from './cel'
 import type { Interaction } from './actions'
 import type { BlendMode, ChannelModifier, Interactor } from '@flatkit/types'
-import { EXPR_CHANNELS, type Easing, type ExprChannel, type SoundClip, type Timeline } from './timeline'
+import { EXPR_CHANNELS, BIND_CHANNELS, type Easing, type ExprChannel, type BindChannel, type SoundClip, type Timeline } from './timeline'
 import { parsePathData, circlePath, ellipsePath, rectPath } from './svgPath'
 import { compileExpr, evalExpr, exprScope } from './expr'
 import { isGroup, isInstance, isText, isImage, isPoseable, folderPath } from './layers'
@@ -117,7 +117,7 @@ function printPoseAttrs(it: Poseable, withExpr: boolean): string {
   if ('clip' in it && it.clip) s += ` clip ${n(it.clip.x)} ${n(it.clip.y)} ${n(it.clip.w)} ${n(it.clip.h)}`
   if (it.filters) for (const f of it.filters) s += ' ' + printFilter(f)
   // Inlined channel expressions (`.flat`) — on ALL poseable leaves (group/instance/text/image).
-  if (withExpr && it.expressions) for (const ch of EXPR_CHANNELS) { const ex = it.expressions[ch]; if (ex) s += ` expr ${ch} ${q(ex)}` }
+  if (withExpr && it.expressions) for (const ch of BIND_CHANNELS) { const ex = it.expressions[ch]; if (ex) s += ` expr ${ch} ${q(ex)}` }
   // Stateful channel modifiers (`.flat`): `spring <ch> "<target>" stiffness <s> damping <d>` / `smooth <ch> "<target>" k <k>`.
   if (withExpr && it.modifiers) for (const ch of EXPR_CHANNELS) {
     const m = it.modifiers[ch]
@@ -792,8 +792,8 @@ const itemsByName = (layers: Layer[]): Map<string, Item> => {
   walk(layers)
   return m
 }
-const namedInfo = (layers: Layer[]): { id: string; name: string; expr?: Partial<Record<ExprChannel, string>>; modifiers?: Partial<Record<ExprChannel, ChannelModifier>> }[] => {
-  const out: { id: string; name: string; expr?: Partial<Record<ExprChannel, string>>; modifiers?: Partial<Record<ExprChannel, ChannelModifier>> }[] = []
+const namedInfo = (layers: Layer[]): { id: string; name: string; expr?: Partial<Record<BindChannel, string>>; modifiers?: Partial<Record<ExprChannel, ChannelModifier>> }[] => {
+  const out: { id: string; name: string; expr?: Partial<Record<BindChannel, string>>; modifiers?: Partial<Record<ExprChannel, ChannelModifier>> }[] = []
   const walk = (ls: Layer[]) => { for (const l of ls) for (const it of l.items) { const nm = itemName(it); if (nm) out.push({ id: it.id, name: nm, expr: isPoseable(it) ? it.expressions : undefined, modifiers: isPoseable(it) ? it.modifiers : undefined }); if (isGroup(it)) walk(it.layers) } }
   walk(layers)
   return out
@@ -975,7 +975,7 @@ function tokenize(src: string): Tok[] {
   return out
 }
 
-type ParsedAttrs = { opacity?: number; pivot?: { x: number; y: number }; tint?: Tint; filters?: Filter[]; expressions?: Partial<Record<ExprChannel, string>>; modifiers?: Partial<Record<ExprChannel, ChannelModifier>>; noHit?: boolean; blend?: BlendMode; hitbox?: { w: number; h: number }; clip?: { x: number; y: number; w: number; h: number }; playback?: InstancePlayback }
+type ParsedAttrs = { opacity?: number; pivot?: { x: number; y: number }; tint?: Tint; filters?: Filter[]; expressions?: Partial<Record<BindChannel, string>>; modifiers?: Partial<Record<ExprChannel, ChannelModifier>>; noHit?: boolean; blend?: BlendMode; hitbox?: { w: number; h: number }; clip?: { x: number; y: number; w: number; h: number }; playback?: InstancePlayback }
 
 /** An `align <point> of "target" [offset]` pending: `tf` is the SHARED ref with the item, mutated
  *  in place by resolveAligns once the scene is parsed (the bbox of `target` is then computable). */
@@ -1500,7 +1500,7 @@ class FlatParser {
       else if (this.is('pivot')) { this.next(); const x = this.num(); this.eat(','); const y = this.num(); a.pivot = { x, y } }
       else if (this.is('tint')) { this.next(); a.tint = this.tintValue() }
       else if (this.is('filter')) { (a.filters ??= []).push(this.filter()) }
-      else if (this.is('expr')) { this.next(); const ch = this.next().v as ExprChannel; const ex = this.str(); (a.expressions ??= {})[ch] = ex }
+      else if (this.is('expr')) { this.next(); const ch = this.next().v as BindChannel; const ex = this.str(); (a.expressions ??= {})[ch] = ex }
       else if (this.is('spring')) { this.next(); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let stiffness = 0, damping = 0; for (;;) { if (this.is('stiffness')) { this.next(); stiffness = this.num() } else if (this.is('damping')) { this.next(); damping = this.num() } else break } (a.modifiers ??= {})[ch] = { kind: 'spring', target, stiffness, damping } }
       else if (this.is('smooth')) { this.next(); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let k = 0; if (this.is('k')) { this.next(); k = this.num() } (a.modifiers ??= {})[ch] = { kind: 'smooth', target, k } }
       else if (this.is('nohit')) { this.next(); a.noHit = true }

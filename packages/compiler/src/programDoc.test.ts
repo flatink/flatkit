@@ -192,6 +192,10 @@ describe('programDoc — layout warnings', () => {
     const ok: Text = mkText('short', 40, 300, true)
     expect(docLayoutWarnings(doc([ok]))).toEqual([])
   })
+  it('an item driven by an additive dx offset is treated as dynamic (no spurious clip warning)', () => {
+    const img: Image = { id: 'im', kind: 'image', name: 'Slider', transform: translation(700, -150), assetId: 'x', w: 200, h: 200, expressions: { dx: '200*sin(time)' } }
+    expect(docLayoutWarnings(doc([img])).filter((w) => /clipped at the canvas edge/.test(w.diag.message))).toEqual([]) // dx moves it -> static bbox is misleading, skip
+  })
 
   // Text laid along a path: overflow is measured against the PATH length, not the canvas/box.
   const line = (len: number) => ({ subpaths: [{ closed: false, segments: [{ anchor: { x: 0, y: 0 } }, { anchor: { x: len, y: 0 } }] }] })

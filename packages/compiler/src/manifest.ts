@@ -9,7 +9,7 @@
 //  Pure, derived (never stored). ~a few hundred tokens for a real scene.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Doc, Group, Image, Instance, Layer, Text } from '@flatkit/types'
-import { EXPR_CHANNELS } from '@flatkit/engine/timeline'
+import { EXPR_CHANNELS, OFFSET_CHANNELS } from '@flatkit/engine/timeline'
 import { getSymbol, isGroup, isImage, isInstance, isPoseable, isText } from '@flatkit/engine/layers'
 import { languageCard } from './languageCard'
 
@@ -57,7 +57,7 @@ export function docToManifest(doc: Doc): string {
   if (vars.length) lines.push(`vars: ${vars.join(', ')}`)
   if (funcs.length) lines.push(`funcs: ${funcs.join(', ')}`)
   if (doc.imports?.length) lines.push(`packages: ${doc.imports.join(', ')}`)
-  lines.push(`channels: ${EXPR_CHANNELS.join(' ')}`)
+  lines.push(`channels: ${EXPR_CHANNELS.join(' ')}  (additive offsets: ${OFFSET_CHANNELS.join(' ')} -> pos = at + d)`)
   return lines.join('\n')
 }
 

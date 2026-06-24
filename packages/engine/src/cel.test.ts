@@ -94,6 +94,64 @@ describe('cel — channel expressions transform around the declared pivot', () =
   })
 })
 
+// Additive position offsets: `dx`/`dy` add to the RESOLVED position in parent space — `pos = at + (dx, dy)`
+// — so the natural offset idiom oscillates AROUND the anchor, instead of `x`/`y` which REPLACE it (the
+// "absolute x deserts the anchor" friction). Bindings only (no keyframe/modifier path).
+describe('cel — additive dx/dy offsets (pos = at + d, not absolute)', () => {
+  const at = (id: string, x: number, y: number, ex?: Record<string, string>): Group =>
+    ({ ...group(id), transform: translation(x, y), ...(ex ? { expressions: ex as never } : {}) })
+  const pos = (g: Group) => decompose((resolveLayerAt(layer([g]), 0)[0] as Group).transform)
+
+  it('dx/dy shift the position relative to the anchor (additive)', () => {
+    const p = pos(at('P', 620, 150, { dx: '58', dy: '-20' }))
+    expect(p.x).toBeCloseTo(678, 5) // 620 + 58 — NOT 58
+    expect(p.y).toBeCloseTo(130, 5) // 150 - 20
+  })
+
+  it('dx alone oscillates around the anchor (the friction idiom)', () => {
+    expect(pos(at('P', 620, 150, { dx: '0' })).x).toBeCloseTo(620, 5) // no offset → exactly on the anchor
+    expect(pos(at('P', 620, 150, { dx: '58' })).x).toBeCloseTo(678, 5)
+    expect(pos(at('P', 620, 150, { dx: '-58' })).x).toBeCloseTo(562, 5) // symmetric around 620
+  })
+
+  it('absolute x REPLACES the anchor; dx then ADDS on top (composable)', () => {
+    const p = pos(at('P', 620, 150, { x: '100', dx: '58' }))
+    expect(p.x).toBeCloseTo(158, 5) // x=100 replaces 620, then +58
+    expect(p.y).toBeCloseTo(150, 5) // untouched
+  })
+
+  it('dx reads the scene ctx like any binding', () => {
+    const ctx = { k: 30 } as never
+    const p = decompose((resolveLayerAt(layer([at('P', 620, 150, { dx: 'k' })]), 0, { ctx })[0] as Group).transform)
+    expect(p.x).toBeCloseTo(650, 5) // 620 + 30
+  })
+
+  it('an object with ONLY a dx binding is still resolved (poseable gate)', () => {
+    const p = pos(at('P', 10, 20, { dx: '5' })) // no x/y/rotate/scale, no modifier
+    expect(p.x).toBeCloseTo(15, 5)
+    expect(p.y).toBeCloseTo(20, 5)
+  })
+
+  it('dx adds in PARENT space, independent of the object rotation', () => {
+    const p = pos(at('P', 0, 0, { rotation: '1', dx: '40' }))
+    expect(p.x).toBeCloseTo(40, 5) // offset is parent-space, not rotated into local
+    expect(p.y).toBeCloseTo(0, 5)
+    expect(p.rotation).toBeCloseTo(1, 5) // rotation preserved
+  })
+
+  it('dx is a pure parent-space shift even with a non-zero pivot', () => {
+    const g: Group = { ...group('P'), transform: translation(620, 200), pivot: { x: 30, y: 30 }, expressions: { dx: '50' } as never }
+    const t = (resolveLayerAt(layer([g]), 0)[0] as Group).transform
+    expect(t.e).toBeCloseTo(670, 5) // 620 + 50 in parent space (pivot does not rotate the offset)
+    expect(t.f).toBeCloseTo(200, 5)
+  })
+
+  it('a non-finite dx degrades gracefully to NO offset (stays on the anchor)', () => {
+    expect(pos(at('P', 620, 150, { dx: '0/0' })).x).toBeCloseTo(620, 5) // NaN -> fallback 0 -> on the anchor
+    expect(pos(at('P', 620, 150, { dx: '1/0' })).x).toBeCloseTo(620, 5) // Infinity -> fallback 0
+  })
+})
+
 // Image-by-image ("stepped") playback: cels WITHOUT `tween` are HELD (last cel ≤ frame) and SNAP to the
 // next — a legitimate authoring style, NOT a freeze. `tween` only adds interpolation. (RFC: a no-`tween`,
 // no-`states` symbol must animate stepped, not gel on cel 0 — confirmed already supported here.)

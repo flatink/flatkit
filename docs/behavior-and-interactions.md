@@ -62,7 +62,7 @@ compile-time constant, see [factoring](#reuse--factoring)).
 ## Channel bindings
 
 Drive an item's pose every frame with an expression. Channels: `x`, `y`, `scaleX`, `scaleY`,
-`rotation`, `opacity`.
+`rotation`, `opacity` (absolute), plus the additive position offsets `dx`, `dy` (`pos = at + (dx, dy)`).
 
 ```
 object "Needle" {
@@ -73,6 +73,12 @@ object "Needle" {
 
 `rotation` is in **radians** (like `sin`/`cos`/`atan2`). To author in **degrees**, bind **`rotationDeg`**
 instead — sugar for `rotation = rad(<expr>)`: `rotationDeg = 45`, `rotationDeg = handAngle`.
+
+`x`/`y` are **absolute** — they REPLACE the item's declared `at X,Y`. For motion **around** the anchor,
+bind the additive offsets **`dx`/`dy`** instead: `pos = at + (dx, dy)`, so `dx = 30*sin(time)` wobbles a
+group `at 620,150` around 620 with no base to re-inject (and `dx`/`dy` add on top of `x`/`y` if both are
+bound). Offsets are binding-only — no keyframe/`spring`/`smooth` form. See the
+[absolute-vs-offset gotcha](dsl-gotchas.md).
 
 `self.x`/`self.y`/… is the item's own current pose; `mouse.x`/`mouse.y` (and `mouse.wheel`, the per-frame
 scroll delta), `time`, `frame`, variables and named objects (`Target.x`) are all available — see
