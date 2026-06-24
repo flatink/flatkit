@@ -1,5 +1,26 @@
 # @flatkit/player
 
+## 0.20.0
+
+### Minor Changes
+
+- [`fb31814`](https://github.com/flatink/flatkit/commit/fb31814f34ad26f45e0a5c7780f5baecc7ddabed) Thanks [@kaelhem](https://github.com/kaelhem)! - feat: additive position offsets `dx`/`dy` (`pos = at + (dx, dy)`)
+
+  New binding-only channels `dx` and `dy` shift an object's resolved position in parent space,
+  on top of its declared `at X,Y` (and any absolute `x`/`y` channel). The natural offset idiom
+  `object "G" { dx = 30*sin(time) }` now oscillates AROUND the anchor instead of deserting to the
+  origin -- no need to re-inject the base (`x = 620 + ...`). Absolute `x`/`y` still REPLACE `at`
+  (unchanged); `dx`/`dy` add on top when both are bound (`pos = x + dx`). Offsets are stateless and
+  binding-only: no keyframe, `spring`, or `smooth` form. Zero change for any scene that does not use
+  them. Discoverable in the `flatc` manifest/language card and documented in dsl-gotchas /
+  behavior-and-interactions.
+
+### Patch Changes
+
+- Updated dependencies [[`fb31814`](https://github.com/flatink/flatkit/commit/fb31814f34ad26f45e0a5c7780f5baecc7ddabed)]:
+  - @flatkit/types@0.20.0
+  - @flatkit/engine@0.20.0
+
 ## 0.19.12
 
 ### Patch Changes
