@@ -26,9 +26,11 @@ export function createForgeClient(forgeUrl: string, apiKey: string) {
   return {
     base,
     hasKey: apiKey.length > 0,
-    searchAssets(query: string, opts: { category?: string; limit?: number } = {}): Promise<Json> {
+    searchAssets(query: string, opts: { category?: string; view?: string; style?: string; limit?: number } = {}): Promise<Json> {
       const p = new URLSearchParams({ q: query })
       if (opts.category) p.set('category', opts.category)
+      if (opts.view) p.set('view', opts.view)
+      if (opts.style) p.set('style', opts.style)
       if (opts.limit) p.set('limit', String(opts.limit))
       return req('/v1/library/search?' + p.toString())
     },

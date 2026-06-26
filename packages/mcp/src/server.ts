@@ -21,9 +21,11 @@ export function buildServer(c: typeof client = client): McpServer {
     inputSchema: {
       query: z.string().describe('natural-language query, e.g. "musical instrument", "renewable energy"'),
       category: z.string().optional().describe('category filter (animals, objects, nature, buildings, ...)'),
+      view: z.string().optional().describe('orientation filter (front, side, three-quarter, top, back, flat)'),
+      style: z.string().optional().describe('graphic-style / collection filter, e.g. "engraving" (antique monochrome) or "paper-theater" (flat color clipart)'),
       limit: z.number().int().min(1).max(50).optional(),
     },
-  }, async ({ query, category, limit }) => text(await c.searchAssets(query, { category, limit })))
+  }, async ({ query, category, view, style, limit }) => text(await c.searchAssets(query, { category, view, style, limit })))
 
   server.registerTool('get_asset', {
     description: 'Look up a library asset by its exact `name` (dimensions, tags, description, recipe).',
