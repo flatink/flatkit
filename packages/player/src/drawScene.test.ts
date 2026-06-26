@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { parseProgramFull } from '@flatkit/engine/flatFormat'
 import { resolveLayerAt } from '@flatkit/engine/cel'
-import { itemsHaveGlyph, wrapLines, isRenderStatic, compositeFiltered, renderItems } from './drawScene'
+import type { Doc, Group, Instance, Layer, SymbolDef } from '@flatkit/types'
+import { IDENTITY } from '@flatkit/engine/transform'
+import { itemsHaveGlyph, wrapLines, isRenderStatic, isContentStatic, compositeFiltered, renderItems } from './drawScene'
 
 // Mask clipping routing: TEXT/IMAGE matter -> alpha clipping (compositeMasked);
 // vector matter -> fast clip `ctx.clip` (common case, unchanged).
@@ -65,6 +67,55 @@ describe('drawScene -- isRenderStatic (cacheability of filtered composites)', ()
   it('dynamic text (bind) inside -> NOT static', () => {
     const { doc, it } = firstItem('    group "Gauge" at 0,0 filter glow 5 #ffffff {\n      layer "c" { text "{}" at 0,0 box 20 10 bind "score" }\n    }')
     expect(isRenderStatic(doc as never, it)).toBe(false)
+  })
+})
+
+describe('drawScene -- isContentStatic (cache a tinted item that only moves/scales)', () => {
+  // Ignores the item's OWN channel expressions (folded into the composite cache signature) but still
+  // requires its CONTENT subtree to be static — so each-bound tinted bricks reuse their baked composite
+  // instead of re-isolating off-screen every frame. Regression guard for the "pop-corn breaker" lag.
+  const layer = (items: Layer['items']): Layer => ({ id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items })
+  const staticInner: Group = { id: 'in', kind: 'group', name: 'in', transform: IDENTITY, layers: [] }
+  const animInner: Group = { id: 'in', kind: 'group', name: 'in', transform: IDENTITY, expressions: { x: 'sin(time)' }, layers: [] }
+  const STATIC_SYM: SymbolDef = { id: 'brick', name: 'Brick', layers: [layer([staticInner])] }
+  const ANIM_SYM: SymbolDef = { id: 'animbrick', name: 'AnimBrick', layers: [layer([animInner])] }
+  const docWith = (item: Group | Instance): Doc => ({ width: 100, height: 100, symbols: [STATIC_SYM, ANIM_SYM], layers: [layer([item])], variables: {} })
+  const tint = { color: '#ff0000', amount: 0.85 }
+
+  it('tinted instance with a channel expression but STATIC symbol content -> content-static (cacheable)', () => {
+    const it: Instance = { id: 'b0', kind: 'instance', name: 'B0', transform: IDENTITY, symbolId: 'brick', tint, expressions: { scaleX: '1' } }
+    const doc = docWith(it)
+    expect(isRenderStatic(doc, it)).toBe(false) // its own channel expr makes it non-render-static…
+    expect(isContentStatic(doc, it)).toBe(true) // …but its content bitmap is invariant -> cacheable
+  })
+  it('instance whose SYMBOL content is animated -> NOT content-static', () => {
+    const it: Instance = { id: 'a0', kind: 'instance', name: 'A0', transform: IDENTITY, symbolId: 'animbrick', tint, expressions: { scaleX: '1' } }
+    expect(isContentStatic(docWith(it), it)).toBe(false)
+  })
+  it('group with a channel expression but static content -> content-static (where isRenderStatic says no)', () => {
+    const it: Group = { id: 'g', kind: 'group', name: 'g', transform: IDENTITY, expressions: { x: 'time * 10' }, layers: [layer([])] }
+    const doc = docWith(it)
+    expect(isRenderStatic(doc, it)).toBe(false)
+    expect(isContentStatic(doc, it)).toBe(true)
+  })
+  it('group with a channel expression AND an animated child -> NOT content-static', () => {
+    const it: Group = { id: 'gp', kind: 'group', name: 'gp', transform: IDENTITY, expressions: { x: '1' }, layers: [layer([{ id: 'ch', kind: 'group', name: 'ch', transform: IDENTITY, expressions: { y: 'sin(time)' }, layers: [] }])] }
+    expect(isContentStatic(docWith(it), it)).toBe(false)
+  })
+  it('group whose CHILD carries a stateful modifier (no expression) -> NOT static (the spring would freeze)', () => {
+    // A modifier (smooth/spring) integrates over time, so the child's pose changes frame-to-frame even with
+    // no expression. The cache signature has no per-frame signal for a settled CHILD -> the subtree must be
+    // treated as non-static, else the baked composite freezes the child mid-spring.
+    const springChild: Group = { id: 'ch', kind: 'group', name: 'ch', transform: IDENTITY, modifiers: { rotation: { kind: 'smooth', target: '90', k: 0.2 } }, layers: [] }
+    const it: Group = { id: 'gm', kind: 'group', name: 'gm', transform: IDENTITY, expressions: { x: '1' }, layers: [layer([springChild])] }
+    expect(isRenderStatic(docWith(it), springChild)).toBe(false) // the child itself is driven by the modifier
+    expect(isContentStatic(docWith(it), it)).toBe(false) // …so its parent's content bitmap is not cacheable
+  })
+  it('plain static instance -> content-static AND render-static (consistent)', () => {
+    const it: Instance = { id: 'b1', kind: 'instance', name: 'B1', transform: IDENTITY, symbolId: 'brick', tint }
+    const doc = docWith(it)
+    expect(isRenderStatic(doc, it)).toBe(true)
+    expect(isContentStatic(doc, it)).toBe(true)
   })
 })
 

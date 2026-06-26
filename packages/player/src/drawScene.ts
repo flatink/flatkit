@@ -199,10 +199,16 @@ const matOf = (m: DOMMatrix): Transform => ({ a: m.a, b: m.b, c: m.c, d: m.d, e:
 
 // -- Render-staticness (for the filtered composite cache) --------------------
 // A subtree is "render-static" if its APPEARANCE depends neither on the frame nor on expressions:
-// no channel expression, no text `bind`, no animated timeline/cel. -> its filtered
-// composition changes only with the screen transform (zoom/pan) or with an asset load, so it is cacheable.
+// no channel expression, no stateful modifier (smooth/spring), no text `bind`, no animated timeline/cel.
+// -> its filtered composition changes only with the screen transform (zoom/pan) or with an asset load,
+// so it is cacheable.
 const staticMemo = new WeakMap<object, boolean>()
 const hasExpr = (it: Item): boolean => 'expressions' in it && !!it.expressions && Object.keys(it.expressions).length > 0
+// A stateful modifier (smooth/spring) integrates over time -> the item's pose changes frame-to-frame even
+// with no expression. We have no per-frame signal for a CHILD's settled state in the cache signature, so any
+// modifier in the subtree makes it non-static (the TOP item's own modifier is handled precisely: its pose
+// is folded into the signature -- see `isContentStatic`/`filterCacheSlot`).
+const hasMod = (it: Item): boolean => isPoseable(it) && !!it.modifiers && Object.keys(it.modifiers).length > 0
 function layersStatic(doc: Doc, layers: Layer[], seen: Set<string>): boolean {
   for (const l of layers) {
     if (l.cels && l.cels.length) return false // animated layer (keyframes)
@@ -213,7 +219,7 @@ function layersStatic(doc: Doc, layers: Layer[], seen: Set<string>): boolean {
 export function isRenderStatic(doc: Doc, it: Item, seen: Set<string> = new Set()): boolean {
   const memo = staticMemo.get(it)
   if (memo !== undefined) return memo // structural result (stable as long as the doc does not change)
-  if ((isText(it) && (it.bind || it.textPath?.startExpr || it.textPath?.spacingExpr)) || hasExpr(it)) { staticMemo.set(it, false); return false }
+  if ((isText(it) && (it.bind || it.textPath?.startExpr || it.textPath?.spacingExpr)) || hasExpr(it) || hasMod(it)) { staticMemo.set(it, false); return false }
   let result = true
   if (isInstance(it)) {
     if (seen.has(it.symbolId)) return true // cycle: DO NOT memoize (depends on `seen`)
@@ -226,11 +232,38 @@ export function isRenderStatic(doc: Doc, it: Item, seen: Set<string> = new Set()
   return result
 }
 
-/** Cache slot for a filtered container, iff the player provides `filterCache` AND the subtree is
- *  static. Signature = screen transform + tint + filter + image epoch (busted on asset load). */
+/** Like `isRenderStatic`, but IGNORES the item's OWN channel drivers (expressions AND stateful modifiers):
+ *  they drive only its transform/opacity (both folded into the composite cache signature below, or applied
+ *  at blit time), so they never make the baked CONTENT bitmap stale. The item's CONTENT subtree must still
+ *  be static (a child's own expression/modifier DOES bust it, via `layersStatic`). This lets a tinted/
+ *  filtered instance that merely moves/scales — e.g. `each`-bound bricks: same tint+content while alive —
+ *  reuse its baked composite (whenever its pose holds still) instead of re-isolating off-screen every frame. */
+const contentStaticMemo = new WeakMap<object, boolean>()
+export function isContentStatic(doc: Doc, it: Item, seen: Set<string> = new Set()): boolean {
+  const memo = contentStaticMemo.get(it)
+  if (memo !== undefined) return memo
+  let result: boolean
+  if (isInstance(it)) {
+    if (seen.has(it.symbolId)) return true // cycle: DO NOT memoize (depends on `seen`)
+    result = getSymbol(doc, it.symbolId)?.timeline ? false : layersStatic(doc, containerLayers(doc, it), new Set([...seen, it.symbolId]))
+  } else if (isGroup(it)) {
+    result = it.timeline ? false : layersStatic(doc, it.layers, seen)
+  } else {
+    result = isRenderStatic(doc, it, seen) // leaf: no separate pose-vs-content -> fall back
+  }
+  contentStaticMemo.set(it, result)
+  return result
+}
+
+/** Cache slot for a filtered/tinted container, iff the player provides `filterCache` AND the container's
+ *  CONTENT is static. Signature = the content's full SCREEN placement (parent transform ∘ the item's own
+ *  resolved pose) + tint + filter + image epoch. Folding the item's own pose in means an expression-driven
+ *  move/scale busts the cache (correctness), while a momentarily-still posed item keeps HITting (the win).
+ *  `opacity` is deliberately absent: `compositeFiltered` applies it at blit, so a pure fade reuses the bitmap. */
 function filterCacheSlot(rctx: RenderCtx, doc: Doc, it: Item, ctx: CanvasRenderingContext2D, tint: Tint | null, filterStr: string): CacheSlot | undefined {
-  if (!rctx.filterCache || typeof document === 'undefined' || !isRenderStatic(doc, it)) return undefined
-  const m = ctx.getTransform()
+  if (!rctx.filterCache || typeof document === 'undefined' || !isContentStatic(doc, it)) return undefined
+  const own = 'transform' in it && it.transform ? (it.transform as Transform) : IDENTITY
+  const m = compose(matOf(ctx.getTransform()), own)
   const r = (n: number) => Math.round(n * 100) / 100
   const sig = `${r(m.a)},${r(m.b)},${r(m.c)},${r(m.d)},${r(m.e)},${r(m.f)}|${tint ? `${tint.color}:${tint.amount}` : ''}|${filterStr}|${rctx.imageEpoch ?? 0}`
   return { map: rctx.filterCache, id: it.id, sig }
@@ -240,6 +273,8 @@ function filterCacheSlot(rctx: RenderCtx, doc: Doc, it: Item, ctx: CanvasRenderi
  * Composes isolated content (tint + filters) while limiting the off-screen area to the object's BOX
  * (+ filter margin) instead of the full screen. `devBBox` = screen box of the object; `null` or too
  * large -> full-screen fallback. `draw(octx)` paints the content (the brush sets its own transform).
+ * `knownFilterStr`: the caller's already-computed `cssFilterString(filters, scale)` (every caller has it) ->
+ * reused on the miss/bake path instead of recomputing it here.
  */
 export function compositeFiltered(
   ctx: CanvasRenderingContext2D,
@@ -250,6 +285,7 @@ export function compositeFiltered(
   devBBox: BBox | null,
   draw: (octx: CanvasRenderingContext2D) => void,
   cache?: CacheSlot,
+  knownFilterStr?: string,
 ): void {
   // Cache HIT: the subtree is static and its transform/tint/filter have not changed -> we
   // reblit the final bitmap (no redraw, no refiltering). This is THE "paper theatre" win.
@@ -266,7 +302,7 @@ export function compositeFiltered(
   // We only BAKE if the signature was ALREADY the one from the previous frame (stable object) -- otherwise an
   // object moved every frame would pay a useless bake on every miss.
   const stable = !!(prev && prev.sig === cache!.sig)
-  const filterStr = cssFilterString(filters, scale)
+  const filterStr = knownFilterStr ?? cssFilterString(filters, scale)
   const cw = ctx.canvas.width
   const ch = ctx.canvas.height
   let ox = 0, oy = 0, ow = cw, oh = ch
@@ -701,7 +737,7 @@ function renderOneItem(
         compositeFiltered(ctx, opacity, tint, it.filters, scale, devBBox, (octx) => {
           applyTransform(octx, ctm)
           renderContainerChildren(octx, doc, it, frame, hidden, next, rctx, childParent, depth)
-        }, cache)
+        }, cache, filterStr)
       } else {
         ctx.save()
         ctx.globalAlpha *= opacity
@@ -892,7 +928,7 @@ function paintLeaf(ctx: CanvasRenderingContext2D, tint: Tint | undefined, filter
     ctx.restore()
     return
   }
-  compositeFiltered(ctx, opacity, t, filters, scale, devBBox.minX <= devBBox.maxX ? devBBox : null, draw)
+  compositeFiltered(ctx, opacity, t, filters, scale, devBBox.minX <= devBBox.maxX ? devBBox : null, draw, undefined, filterStr)
 }
 
 /** Draws a stack of layers at a frame (each layer resolves its content via the cels). */
