@@ -1,6 +1,15 @@
 # Keeps the supply chain current: bumps the SHA-pinned GitHub Actions (and their version comment) and the
 # npm/pnpm dependencies, so pinning stays a security control rather than a way to rot on old versions.
 version: 2
+# Pin npm resolution to the PUBLIC npm registry. Without this, Dependabot's auto GitHub Packages auth
+# makes it resolve deps against https://npm.pkg.github.com/ (a stale mirror -- e.g. it caps @types/node at
+# 17.0.18), so the weekly npm run fails with ERR_PNPM_NO_MATCHING_VERSION. `replaces-base: true` forces the
+# base back to npmjs. No token: the registry is public. This repo pulls no GitHub Packages-hosted deps.
+registries:
+  npmjs:
+    type: npm-registry
+    url: https://registry.npmjs.org
+    replaces-base: true
 updates:
   # Third-party GitHub Actions pinned by SHA in .github/workflows/*. Dependabot updates the SHA + comment.
   - package-ecosystem: github-actions
@@ -16,6 +25,8 @@ updates:
   # npm dependencies (pnpm workspace, resolved from the root pnpm-lock.yaml).
   - package-ecosystem: npm
     directory: /
+    registries:
+      - npmjs
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
