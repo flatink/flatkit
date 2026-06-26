@@ -1,6 +1,6 @@
 {
   "name": "@flatkit/mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "FlatInk MCP server: exposes the asset library + the forge's compile/preview/publish as tools for LLM agents.",
   "license": "MIT",
   "author": "Zwyk Studio",
