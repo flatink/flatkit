@@ -14,6 +14,8 @@ updates:
         patterns: ["*"]
 
   # npm dependencies (pnpm workspace, resolved from the root pnpm-lock.yaml).
+  # Registry is pinned to public npmjs in the root .npmrc -- see the comment there for why (GitHub's
+  # auto GitHub Packages routing was shadowing @types/node with a stale entry and failing npm runs).
   - package-ecosystem: npm
     directory: /
     schedule:
