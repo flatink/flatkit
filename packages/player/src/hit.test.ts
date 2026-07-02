@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { pointInPolygons, pointNearPath, pathFollowsPolygons, hitChain, hitChains, hitContextAt, warmHitCache } from './hit'
 import { translation } from '@flatkit/engine/transform'
 import { polygonsToPath } from '@flatkit/engine/path'
-import type { Doc, Layer, Point, Region } from '@flatkit/types'
+import type { Doc, Image, Layer, Point, Region, Text } from '@flatkit/types'
 
 const square = (cx: number, cy: number, s: number) => [
   [
@@ -154,6 +154,38 @@ describe('noHit -- non-interactive item (click/hover pass through, stays visible
   it('covers the back: the editor ALWAYS selects a noHit item on click (hitContextAt unchanged)', () => {
     const doc: Doc = { width: 300, height: 300, symbols: [], layers: [layerOf([{ ...region('veil', sq), noHit: true }])] }
     expect(hitContextAt(doc, doc.layers, undefined, 0, { x: 100, y: 100 })?.item.id).toBe('veil')
+  })
+})
+
+// A mask layer can be shaped by ANY material, not only regions. A TEXT (or image) mask has no `.path`:
+// reading it as a region threw "Cannot read properties of undefined (reading 'subpaths')" on EVERY click,
+// since the mask is point-tested before any position check (cf. the "logo qui se dessine" demo).
+describe('mask shaped by text/image (no .path) — must not crash, clips by the box', () => {
+  const textMask = (w: number, h: number): Text => ({
+    id: 'tm', kind: 'text', name: 'tm', transform: translation(0, 0), content: 'X',
+    font: 'sans-serif', size: 20, align: 'left', lineHeight: 1, color: '#fff', box: { w, h },
+  })
+  const imageMask = (w: number, h: number): Image => ({ id: 'im', kind: 'image', name: 'im', transform: translation(0, 0), assetId: 'a', w, h })
+  // mask layer M (its material clips) + child layer C (parent = M) holding the maskED region.
+  const masked = (maskItem: Text | Image): Doc => ({
+    width: 300, height: 300, symbols: [],
+    layers: [
+      { id: 'M', name: 'M', visible: true, locked: false, opacity: 1, items: [maskItem], isMask: true },
+      { id: 'C', name: 'C', visible: true, locked: false, opacity: 1, items: [region('r', square(50, 50, 40))], parent: 'M' },
+    ],
+  })
+
+  // mask box [0,0]..[40,40] SMALLER than the region [10,10]..[90,90] → some region points fall outside the box.
+  it('text mask: inside the box reveals the masked region; outside the box clips it (no throw)', () => {
+    const doc = masked(textMask(40, 40))
+    expect(hitContextAt(doc, doc.layers, undefined, 0, { x: 20, y: 20 })?.item.id).toBe('r') // inside box ∩ region
+    expect(hitContextAt(doc, doc.layers, undefined, 0, { x: 70, y: 70 })).toBeNull() // inside the region but OUTSIDE the mask box → clipped
+  })
+
+  it('image mask: same box clipping, no crash', () => {
+    const doc = masked(imageMask(40, 40))
+    expect(hitContextAt(doc, doc.layers, undefined, 0, { x: 20, y: 20 })?.item.id).toBe('r')
+    expect(hitContextAt(doc, doc.layers, undefined, 0, { x: 70, y: 70 })).toBeNull() // outside the mask box
   })
 })
 

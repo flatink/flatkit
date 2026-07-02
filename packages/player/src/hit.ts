@@ -22,8 +22,13 @@ function pointInMask(mask: Layer, frame: number, fps: number, ctx: ExprContext |
   let hasContainer = false
   for (const it of resolveLayerAt(mask, frame, { fps, ctx })) {
     if (it.hidden) continue
+    // A mask can be shaped by ANY material, not only regions. Text/image have NO `path` (reading `.path`
+    // here would throw): they clip by their box, like the hit test treats them elsewhere. A container is a
+    // complex shape we can't cheaply point-test → non-blocking (keeps the masked content selectable).
     if (isContainer(it)) { hasContainer = true; continue }
-    if (pointInPolygons(pathToPolygons((it as Region).path), pt)) return true // fill = concrete polygons (no transform)
+    if (isText(it)) { if (pointInBox(it.transform, it.box.w, it.box.h, pt)) return true; continue }
+    if (isImage(it)) { if (pointInBox(it.transform, it.w, it.h, pt)) return true; continue }
+    if (pointInPolygons(pathToPolygons((it as Region).path), pt)) return true // region fill = concrete polygons (no transform)
   }
   return hasContainer // complex mask shape (symbol/group) -> we do not block the selection
 }
