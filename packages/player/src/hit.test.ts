@@ -159,7 +159,7 @@ describe('noHit -- non-interactive item (click/hover pass through, stays visible
 
 // A mask layer can be shaped by ANY material, not only regions. A TEXT (or image) mask has no `.path`:
 // reading it as a region threw "Cannot read properties of undefined (reading 'subpaths')" on EVERY click,
-// since the mask is point-tested before any position check (cf. the "logo qui se dessine" demo).
+// since the mask is point-tested before any position check (repro: a scene with a text-shaped mask).
 describe('mask shaped by text/image (no .path) — must not crash, clips by the box', () => {
   const textMask = (w: number, h: number): Text => ({
     id: 'tm', kind: 'text', name: 'tm', transform: translation(0, 0), content: 'X',
