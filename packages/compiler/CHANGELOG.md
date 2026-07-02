@@ -1,5 +1,14 @@
 # @flatkit/compiler
 
+## 0.20.2
+
+### Patch Changes
+
+- Updated dependencies [[`cb8720d`](https://github.com/flatink/flatkit/commit/cb8720ded50eab1d7296ee4aa5fb61379effdfd5)]:
+  - @flatkit/player@0.20.2
+  - @flatkit/types@0.20.2
+  - @flatkit/engine@0.20.2
+
 ## 0.20.1
 
 ### Patch Changes

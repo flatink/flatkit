@@ -1,5 +1,17 @@
 # @flatkit/player
 
+## 0.20.2
+
+### Patch Changes
+
+- [`cb8720d`](https://github.com/flatink/flatkit/commit/cb8720ded50eab1d7296ee4aa5fb61379effdfd5) Thanks [@kaelhem](https://github.com/kaelhem)! - fix(hit): a mask shaped by text/image no longer crashes selection
+
+  `pointInMask` read `(it as Region).path` for any non-container mask material. A mask shaped by a **text** or **image** (e.g. `mask layer { text "…" }`) has no `.path`, so the hit test threw `Cannot read properties of undefined (reading 'subpaths')`. Because a masked layer is point-tested before any position check, **every click** on such a scene crashed. Text/image mask material now clips by its box (like the rest of the hit test); containers stay non-blocking.
+
+- Updated dependencies []:
+  - @flatkit/types@0.20.2
+  - @flatkit/engine@0.20.2
+
 ## 0.20.1
 
 ### Patch Changes
