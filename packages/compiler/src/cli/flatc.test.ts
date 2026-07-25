@@ -32,6 +32,19 @@ describe('flatc — CLI', () => {
     }
   })
 
+  it('--check on a program using a LOCAL package → exit 0 (the qualified alias is not re-emitted as `fn`)', () => {
+    // `use "physics"` inlines `tick` AND the alias `physics.tick`. The alias has no syntax, so printing it
+    // back as `fn physics.tick(…)` made the reconstructed program unparseable → 3 phantom errors, exit 1.
+    const errs: string[] = []
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((s: string | Uint8Array) => { errs.push(String(s)); return true })
+    try {
+      expect(run(['node', 'flatc', join(cli, 'scene.flatink'), '--check'])).toBe(0)
+      expect(errs.join('')).not.toMatch(/fn physics/)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('--assets external → relative keys + sidecar files (no base64)', () => {
     const out = join(cli, '__ext_out.flatpack')
     const assetsDir = join(cli, '__ext_out.assets')

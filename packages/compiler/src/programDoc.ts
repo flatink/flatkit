@@ -36,7 +36,12 @@ export function scopeProgram(doc: Doc, editPath: EditFrame[] = []): string {
     .filter((it): it is Group | Instance => isContainer(it) && !!it.name && nameCount.get(it.name) === 1 && scripted(it))
     .map((it) => ({ name: it.name, body: printUnits(objectToUnits(it.id, doc.interactions, it.expressions, doc.interactors)) }))
   const imports = atRoot ? printUnits(importsToUnits(doc.imports)) : ''
-  const funcs = atRoot ? printUnits(functionsToUnits(doc.functions)) : ''
+  // A local package (`use "physics"` -> physics.flatink) is inlined TWICE into doc.functions: `tick` and the
+  // qualified alias `physics.tick` (so both call forms resolve). The alias is not authored source and has NO
+  // syntax (`fn physics.tick(s) = …` does not parse) -> never re-emit it, or the reconstructed program fails
+  // to parse and `--check` reports phantom errors. The alias stays in `doc.functions`, so `docLintContext`
+  // still knows `physics.tick` as a callable name.
+  const funcs = atRoot ? printUnits(functionsToUnits((doc.functions ?? []).filter((f) => !f.name.includes('.')))) : ''
   const globals = atRoot ? printUnits(variablesToUnits(doc.variables)) : ''
   const scene = printUnits(timelineToUnits(getScopeTimeline(doc, editPath)))
   const head = [imports, globals, funcs, scene].filter((t) => t.trim()).join('\n\n')

@@ -16,6 +16,27 @@ describe('programDoc — scopeProgram', () => {
   })
 })
 
+describe('programDoc — package function aliases', () => {
+  // A local package inlines each function twice: `tick` + the qualified alias `physics.tick`. The alias has
+  // no `fn` syntax → it must stay OUT of the reconstructed text, but stay a KNOWN callable name.
+  const d: Doc = {
+    width: 100, height: 100, symbols: [], layers: [], imports: ['physics'],
+    functions: [{ name: 'tick', params: ['s'], kind: 'value', expr: 's + 1' }, { name: 'physics.tick', params: ['s'], kind: 'value', expr: 's + 1' }],
+    interactions: [], variables: {},
+  }
+
+  it('the qualified alias is not printed as a `fn` declaration (it would not parse)', () => {
+    const text = scopeProgram(d)
+    expect(text).toContain('fn tick(s)')
+    expect(text).not.toMatch(/fn physics/)
+  })
+
+  it('but it stays callable: no phantom lint error, and both call forms are known', () => {
+    expect(lintDocReport(d)).toBe('')
+    expect([...(docLintContext(d).functions ?? [])]).toEqual(expect.arrayContaining(['tick', 'physics.tick']))
+  })
+})
+
 describe('programDoc — docLintContext', () => {
   it('gathers variables, functions, objects of the Doc', () => {
     const d: Doc = {
