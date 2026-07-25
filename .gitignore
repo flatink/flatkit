@@ -5,6 +5,9 @@ node_modules
 dist
 *.tsbuildinfo
 
+# Local `pnpm pack` tarballs (testing a build against a consumer app before publishing)
+.local-packs/
+
 # Tests / coverage
 coverage
 

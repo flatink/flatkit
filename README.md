@@ -60,8 +60,9 @@ const player = new FlatPlayer(canvas, doc, { autoplay: true })
 
 **Learn the DSL** in [`docs/`](docs/) — a guided set from [getting started](docs/getting-started.md) to
 [scene & drawing](docs/scene-and-drawing.md), [behavior & interactions](docs/behavior-and-interactions.md),
-[expressions & stdlib](docs/expressions-and-stdlib.md), and the [`flatc` tooling](docs/tooling.md). See
-[`examples/cli`](examples/cli) for an end-to-end project.
+[expressions & stdlib](docs/expressions-and-stdlib.md), and the [`flatc` tooling](docs/tooling.md).
+Embedding it in an app (receiving `send` events, driving variables) →
+[host integration](docs/host-integration.md). See [`examples/cli`](examples/cli) for an end-to-end project.
 
 ## Development
 

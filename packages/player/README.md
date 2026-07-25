@@ -27,6 +27,27 @@ const player = new FlatPlayer(canvas, doc, { autoplay: true })
 - Subpath entries: `@flatkit/player/debug` (headless playback + gesture trace), `@flatkit/player/render`
   (canvas drawing primitives), `@flatkit/player/hit` (hit-testing).
 
+## Talking to the scene
+
+A scene emits events with the DSL's `send`, and exposes its state variables both ways:
+
+```js
+const player = new FlatPlayer(canvas, doc, {
+  onEvent: (e) => {
+    // e = { name, value? , fields? } — `value` for `send "s", <expr>` / `text("…")`,
+    //                                  `fields` for the record form `send "s", { a = …, b }`
+    if (e.name === 'save') setState((s) => ({ ...s, ...e.fields }))
+  },
+})
+
+player.setVar('difficulty', 2)   // host → scene
+player.getVar('score')           // scene → host
+player.destroy()                 // on unmount: releases the listeners
+```
+
+Full contract (payload shapes, keyboard, teardown, security) →
+[docs/host-integration.md](https://github.com/flatink/flatkit/blob/main/docs/host-integration.md).
+
 ## Security
 
 A `.flatpack` is **untrusted input**: the player loads embedded `data:` assets only by default (no arbitrary

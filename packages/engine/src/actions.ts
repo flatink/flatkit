@@ -7,12 +7,21 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Action } from '@flatkit/types'
+import { DANGEROUS_KEYS } from './validateDoc'
 export type { SendPayload, Action, FuncDef, FrameAction, FrameLabel, ItemEvent, Interaction } from '@flatkit/types'
 
 /** `send` event name: a letter/"_" then letters/digits/"_"/"-" (64 max). */
 export const SEND_EVENT_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/
 /** Max length of a text payload (`text(…)`); truncated beyond it (defense in depth). */
 export const MAX_SEND_TEXT = 4096
+/** `send` record field name (`send "e", { a = … }`): a DSL identifier, 64 max. Stricter than an event
+ *  name (no "-") because a field is also a bare variable in the shorthand form `{ a }`. */
+export const SEND_FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/
+/** Max number of fields in a `send` record payload → the host always receives a BOUNDED patch. */
+export const MAX_SEND_FIELDS = 32
+/** Is `name` usable as a `send` record field? Its name becomes a KEY in the object handed to the host,
+ *  so a prototype-pollution key is rejected on top of the shape (cf. validateDoc.DANGEROUS_KEYS). */
+export const isSendField = (name: string): boolean => SEND_FIELD_NAME.test(name) && !DANGEROUS_KEYS.has(name)
 
 /**
  * Cap on the number of repetitions of a SINGLE `repeat` block. The language has NO infinite loop
@@ -47,8 +56,9 @@ export interface ActionHost {
   callProc(name: string, args: number[]): void
   /** Evaluates an expression in the current runtime context (variables, time…). */
   evalNumber(src: string): number
-  /** Emits a named event to the host (`send`). No-op if the host is not listening. */
-  emit(name: string, value?: number | string): void
+  /** Emits a named event to the host (`send`). `fields` carries a record payload (named numeric
+   *  values, a state patch). No-op if the host is not listening. */
+  emit(name: string, value?: number | string, fields?: Record<string, number>): void
   /** Live content of a Text item resolved by id (`text("…")`). `''` if not found. */
   textContent(itemId: string): string
   /** Plays an audio clip (asset) one-shot (`sound "id"`). No-op if audio is off / asset is missing. */
@@ -117,7 +127,22 @@ function runAction(a: Action, host: ActionHost, budget: Budget): void {
       // Synchronous, return ignored, no queue: an event channel to the host (cf. ActionHost.emit).
       if (!a.payload) host.emit(a.event)
       else if (a.payload.kind === 'expr') host.emit(a.event, host.evalNumber(a.payload.expr))
-      else host.emit(a.event, host.textContent(a.payload.itemId))
+      else if (a.payload.kind === 'text') host.emit(a.event, host.textContent(a.payload.itemId))
+      else {
+        // Record payload: the field NAMES become keys of an object handed to the host. The parser rejects
+        // a malformed/dangerous name and caps the count, but a hand-written `.flatpack` never went through
+        // it → re-check here (defense in depth, like MAX_SEND_TEXT for `text(…)`). Non-conforming fields
+        // are dropped silently: an untrusted doc must not be able to shape the host's state patch.
+        const fields: Record<string, number> = {}
+        let n = 0
+        for (const f of a.payload.fields) {
+          if (n >= MAX_SEND_FIELDS) break
+          if (!isSendField(f.name)) continue
+          fields[f.name] = host.evalNumber(f.expr)
+          n++
+        }
+        host.emit(a.event, undefined, fields)
+      }
       break
     case 'sound':
       host.playSound(a.assetId)

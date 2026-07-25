@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { compileExpr, evalExpr } from './expr'
-import { runActions, MAX_REPEAT, MAX_ACTIONS_PER_TICK, type Action, type ActionHost } from './actions'
+import { runActions, MAX_REPEAT, MAX_ACTIONS_PER_TICK, MAX_SEND_FIELDS, type Action, type ActionHost } from './actions'
 
 function mock() {
   const calls: string[] = []
-  const events: { name: string; value?: number | string }[] = []
+  const events: { name: string; value?: number | string; fields?: Record<string, number> }[] = []
   const texts: Record<string, string> = { greeting: 'Hello', card0: 'French Revolution' }
   const vars = new Map<string, number | number[]>()
   const labels: Record<string, number> = { start: 0, mid: 30 }
@@ -17,7 +17,7 @@ function mock() {
     setIndex: (n, i, v) => { const a = vars.get(n); if (Array.isArray(a)) a[i] = v },
     setParam: (t, p, v) => calls.push(`setParam:${t}.${p}=${v}`),
     callProc: () => {},
-    emit: (name, value) => events.push(value === undefined ? { name } : { name, value }),
+    emit: (name, value, fields) => events.push({ name, ...(value === undefined ? {} : { value }), ...(fields ? { fields } : {}) }),
     textContent: (id) => texts[id] ?? '',
     playSound: (id) => calls.push('sound:' + id),
     // a "real" evalNumber: compiles the expression and resolves the current variables
@@ -200,6 +200,36 @@ describe('actions — interpreter', () => {
       const m = mock()
       runActions([{ do: 'send', event: 'answer', payload: { kind: 'text', itemId: 'missing' } }], m.host)
       expect(m.events).toEqual([{ name: 'answer', value: '' }])
+    })
+    it('record payload: each field evaluated, emitted as a named patch (no positional value)', () => {
+      const m = mock()
+      m.vars.set('px', 12)
+      m.vars.set('doors', 3)
+      runActions(
+        [{ do: 'send', event: 'save', payload: { kind: 'record', fields: [{ name: 'x', expr: 'px + 1' }, { name: 'doors', expr: 'doors' }] } }],
+        m.host,
+      )
+      expect(m.events).toEqual([{ name: 'save', fields: { x: 13, doors: 3 } }])
+    })
+    // A hand-written .flatpack never goes through the parser -> the interpreter re-checks (defense in depth).
+    it('record payload: a prototype-pollution / malformed key is dropped (untrusted doc)', () => {
+      const m = mock()
+      m.vars.set('a', 1)
+      runActions(
+        [{ do: 'send', event: 'save', payload: { kind: 'record', fields: [
+          { name: '__proto__', expr: 'a' }, { name: 'constructor', expr: 'a' }, { name: 'prototype', expr: 'a' },
+          { name: '1bad', expr: 'a' }, { name: 'with space', expr: 'a' }, { name: '', expr: 'a' }, { name: 'ok', expr: 'a' },
+        ] } }],
+        m.host,
+      )
+      expect(m.events).toEqual([{ name: 'save', fields: { ok: 1 } }])
+      expect(Object.getPrototypeOf(m.events[0].fields!)).toBe(Object.prototype) // prototype intact
+    })
+    it('record payload: the field count is capped (untrusted doc)', () => {
+      const m = mock()
+      const fields = Array.from({ length: MAX_SEND_FIELDS + 10 }, (_, i) => ({ name: `f${i}`, expr: '1' }))
+      runActions([{ do: 'send', event: 'save', payload: { kind: 'record', fields } }], m.host)
+      expect(Object.keys(m.events[0].fields!)).toHaveLength(MAX_SEND_FIELDS)
     })
   })
 

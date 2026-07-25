@@ -196,6 +196,7 @@ export type InstancePlayback = {
 export type SendPayload =
   | { kind: 'expr'; expr: string } // send "x", <numeric expr>
   | { kind: 'text'; itemId: string } // send "x", text("itemId")
+  | { kind: 'record'; fields: { name: string; expr: string }[] } // send "x", { a = expr, b = expr } — named numeric fields (state patch)
 
 export type Action =
   | { do: 'play' }

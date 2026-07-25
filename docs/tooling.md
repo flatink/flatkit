@@ -105,6 +105,7 @@ flatc <file> --play --script gestures.json [--trace]
   { "type": "tap",     "target": "Button" },
   { "type": "scratch", "target": "Cover1" },
   { "type": "connect", "source": "Word",  "target": "Picture" },
+  { "type": "key",     "name": "ArrowRight", "frames": 10 },
   { "type": "wait",    "frames": 30 },
   { "type": "expect",  "sends": ["win"], "vars": { "score": 3 } }
 ]
@@ -112,17 +113,25 @@ flatc <file> --play --script gestures.json [--trace]
 
 - `drag` / `tap` / `scratch` (sweeps a `reveal` zone) / `connect` (pulls a `link` wire) — by name.
 - `set` drives a variable from the host; `wait` runs N fixed 60 Hz steps (advances `every frame` physics).
+- **`key`** holds a key down (`keys.<name>` reads `1`) for `frames` steps — default `1` — then releases
+  it: the way to test a keyboard-driven scene in CI. Use the authored name (`"ArrowRight"`, `"Space"`).
 - **`expect`** turns the script into a test: it compares the `send`s emitted since the last `expect` and
-  the current vars, and makes `--play` **exit ≠0** on mismatch. No more eyeballing.
+  the current vars, and makes `--play` **exit ≠0** on mismatch. No more eyeballing. It matches the
+  **sequence of event names**; to assert a payload, read `sends` from the JSON output (each entry is the
+  object the host would receive: `{ name, value?, fields? }` — see
+  [host integration](host-integration.md#receiving-events-send--onevent)).
 - Low-level gestures (`down`/`move`/`up`/`cancel` with `x,y`) remain for special cases.
-- `--trace` prints a human-readable log per gesture (emitted sends + variable diff) instead of JSON.
+- `--trace` prints a human-readable log per gesture (emitted sends + variable diff) instead of JSON —
+  a `send` shows as `name`, `name=value`, or `name{a=1, b=2}` for a record payload.
 
 ### Recording
 
 In the player, `player.startRecording()` / `stopRecording(): Gesture[]` capture gestures you play by
 hand into a script that `--play` replays. (Authoring/CI helpers live in `@flatkit/player/debug`.)
+Pointer only — key presses are not captured; add the `key` gestures to the recorded script yourself.
 
 ## See also
 
 - The language itself → **[Scene & drawing](scene-and-drawing.md)** · **[Behavior & interactions](behavior-and-interactions.md)**
+- Wiring a scene into an app → **[Host integration](host-integration.md)**
 - Pitfalls & best practices → **[Gotchas](dsl-gotchas.md)**

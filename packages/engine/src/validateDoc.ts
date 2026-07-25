@@ -17,7 +17,9 @@ import type { Doc } from '@flatkit/types'
 /** Hard cap on a page dimension (px). Above this, a doc is treated as hostile/corrupt and clamped. */
 export const MAX_DIMENSION = 16_384
 
-const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+/** Keys that must never be written into a plain object built from untrusted input (prototype-pollution
+ *  defense). Canonical list — also used by the action interpreter for `send` record field names. */
+export const DANGEROUS_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype'])
 
 function clampDimension(v: unknown, fallback: number): number {
   const n = typeof v === 'number' && Number.isFinite(v) ? Math.floor(v) : fallback

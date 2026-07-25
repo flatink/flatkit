@@ -36,7 +36,8 @@ Read in order if you're new, or jump to a topic:
 4. **[Behavior & interactions](behavior-and-interactions.md)** — events, actions, drag/drop, interactors, feedback.
 5. **[Expressions & stdlib](expressions-and-stdlib.md)** — the expression language, math, `self`/`mouse`/`time`, and the `use "…"` packages.
 6. **[Tooling](tooling.md)** — the `flatc` CLI: compile, render, headless play, gesture scripts, CI.
-7. **[Embedding fonts](embedding-fonts.md)** — mounting `@flatkit/player` yourself: register the doc's embedded fonts (browser `FontFace` / skia `FontLibrary`) so text uses the authored faces.
+7. **[Host integration](host-integration.md)** — mounting `@flatkit/player` in an app: receive `send` events, drive the state variables, keyboard and teardown.
+8. **[Embedding fonts](embedding-fonts.md)** — register the doc's embedded fonts (browser `FontFace` / skia `FontLibrary`) so text uses the authored faces.
 
 **Appendix — [Gotchas & best practices](dsl-gotchas.md)**: hard-won pitfalls from real production. Skim
 it once you know the basics.

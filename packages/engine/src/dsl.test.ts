@@ -522,7 +522,7 @@ describe('dsl — stateful channel modifiers (spring/smooth), block form', () =>
 })
 
 describe('dsl — send (event channel to the host)', () => {
-  // MODEL round-trip of the three payload forms: none, numeric, text("…").
+  // MODEL round-trip of the four payload forms: none, numeric, text("…"), record { … }.
   it('round-trip: bare form', () => {
     roundtrip([{ kind: 'event', event: 'click', body: [{ do: 'send', event: 'correct' }] }])
   })
@@ -532,6 +532,58 @@ describe('dsl — send (event channel to the host)', () => {
   })
   it('round-trip: text("itemId") payload', () => {
     roundtrip([{ kind: 'event', event: 'click', body: [{ do: 'send', event: 'answer', payload: { kind: 'text', itemId: 'txt_card0' } }] }])
+  })
+  it('round-trip: record payload (state patch), explicit and shorthand', () => {
+    roundtrip([{ kind: 'event', event: 'click', body: [
+      { do: 'send', event: 'save', payload: { kind: 'record', fields: [{ name: 'x', expr: 'px' }, { name: 'y', expr: 'py' }] } },
+    ] }])
+    roundtrip([{ kind: 'event', event: 'click', body: [
+      { do: 'send', event: 'save', payload: { kind: 'record', fields: [{ name: 'doors', expr: 'doors' }, { name: 'd', expr: 'near(a, b, r)' }] } },
+    ] }])
+  })
+  it('prints a record payload (explicit "x = px" and shorthand "doors")', () => {
+    const src = printUnits([
+      { kind: 'event', event: 'click', body: [
+        { do: 'send', event: 'save', payload: { kind: 'record', fields: [{ name: 'x', expr: 'px' }, { name: 'doors', expr: 'doors' }] } },
+      ] },
+    ])
+    expect(src).toBe('when clicked {\n  send "save", { x = px, doors }\n}\n')
+  })
+  it('record field with an internal comma stays one field (depth-aware)', () => {
+    const printed = printUnits(parseUnits('when clicked {\n  send "save", { d = near(a, b, r) }\n}').units)
+    expect(printed).toBe('when clicked {\n  send "save", { d = near(a, b, r) }\n}\n')
+  })
+  it('empty record → error', () => {
+    const r = parseUnits('when clicked {\n  send "save", {  }\n}')
+    expect(r.diagnostics.some((d) => /no fields/.test(d.message))).toBe(true)
+  })
+  it('unterminated record → error, no hang', () => {
+    const r = parseUnits('when clicked {\n  send "save", { x = 1\n}')
+    expect(r.diagnostics.length).toBeGreaterThan(0)
+  })
+  it('malformed field name → error', () => {
+    const r = parseUnits('when clicked {\n  send "save", { 1bad = 1 }\n}')
+    expect(r.diagnostics.some((d) => /invalid field name/.test(d.message))).toBe(true)
+  })
+  // The field name becomes a KEY in the object handed to the host → the prototype-pollution keys are out.
+  it('reserved key as a field name → error', () => {
+    for (const k of ['__proto__', 'constructor', 'prototype']) {
+      const r = parseUnits(`when clicked {\n  send "save", { ${k} = 1 }\n}`)
+      expect(r.diagnostics.some((d) => /reserved key/.test(d.message))).toBe(true)
+    }
+  })
+  it('duplicate field → error (a silent last-wins would be a footgun)', () => {
+    const r = parseUnits('when clicked {\n  send "save", { x = 1, x = 2 }\n}')
+    expect(r.diagnostics.some((d) => /duplicate field/.test(d.message))).toBe(true)
+  })
+  it('too many fields → error (bounded state patch)', () => {
+    const many = Array.from({ length: 40 }, (_, i) => `f${i} = 1`).join(', ')
+    const r = parseUnits(`when clicked {\n  send "save", { ${many} }\n}`)
+    expect(r.diagnostics.some((d) => /too many fields/.test(d.message))).toBe(true)
+  })
+  it('a stray assignment in a record field is still caught (footgun)', () => {
+    const r = parseUnits('when clicked {\n  send "save", { x = y = 1 }\n}')
+    expect(r.diagnostics.some((d) => /one action per line/.test(d.message))).toBe(true)
   })
 
   it('prints the three forms as-is', () => {

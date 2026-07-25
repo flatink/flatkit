@@ -70,6 +70,7 @@ Usage:
   --script <f>      JSON gesture script: [{ "type": "down|move|up|cancel", "x", "y" }, { "type": "set", "name", "value" }, { "type": "wait", "frames": N }, { "type": "wheel", "dy": N }]
                     semantic (by NAME, the engine resolves coords): { "type": "drag", "source", "target" } · { "type": "tap", "target" }
                     · { "type": "scratch", "target" } (sweeps a reveal zone) · { "type": "connect", "source", "target" } (pulls a link wire)
+                    { "type": "key", "name": "ArrowRight", "frames": N } holds a key (keys.<name> = 1) N steps, then releases it
                     "wait" lets the simulation run N fixed steps (60 Hz): "every frame" + playhead advance like in real playback
                     "expect" self-verifies: { "type": "expect", "sends": ["done"], "vars": { "score": 3 } } → exits ≠0 on mismatch
                     (sends = sequence of names emitted SINCE the last expect; vars = current state). Great in CI.
@@ -240,7 +241,11 @@ function playOnce(filePath: string, scriptPath: string, trace: boolean): number 
   if (!trace) process.stdout.write(JSON.stringify(res, null, 2) + '\n')
   else // --trace: readable log (one gesture per line) → inspection / debug-player.
     for (const s of res.steps ?? []) {
-      const sends = s.sends.length ? '  sends:[' + s.sends.map((e) => (e.value !== undefined ? `${e.name}=${e.value}` : e.name)).join(', ') + ']' : ''
+      // `name` · `name=value` · `name{a=1, b=2}` (record payload) — the three shapes the host receives.
+      const send = (e: { name: string; value?: number | string; fields?: Record<string, number> }): string =>
+        e.fields ? `${e.name}{${Object.entries(e.fields).map(([k, v]) => `${k}=${v}`).join(', ')}}`
+          : e.value !== undefined ? `${e.name}=${e.value}` : e.name
+      const sends = s.sends.length ? '  sends:[' + s.sends.map(send).join(', ') + ']' : ''
       const vars = Object.entries(s.changed).map(([k, [a, b]]) => `${k}:${JSON.stringify(a)}→${JSON.stringify(b)}`)
       process.stdout.write(`${s.gesture.padEnd(28)}${sends}${vars.length ? '  vars{' + vars.join(' ') + '}' : ''}\n`)
     }

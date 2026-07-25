@@ -16,7 +16,7 @@
 //
 //  Round-trip guaranteed at the MODEL level: parseUnits(printUnits(u)).units ≡ u.
 // ─────────────────────────────────────────────────────────────────────────────
-import { SEND_EVENT_NAME, type Action, type FuncDef } from './actions'
+import { MAX_SEND_FIELDS, SEND_EVENT_NAME, SEND_FIELD_NAME, isSendField, type Action, type FuncDef } from './actions'
 import { EXPR_CHANNELS, BIND_CHANNELS, type ExprChannel, type BindChannel } from './timeline'
 import type { ChannelModifier } from '@flatkit/types'
 
@@ -103,7 +103,11 @@ function printAction(a: Action, depth: number): string {
       return ind + `${a.name}(${a.args.join(', ')})`
     case 'send': {
       let s = ind + `send ${quote(a.event)}`
-      if (a.payload) s += a.payload.kind === 'expr' ? `, ${a.payload.expr}` : `, text(${quote(a.payload.itemId)})`
+      if (a.payload) {
+        if (a.payload.kind === 'expr') s += `, ${a.payload.expr}`
+        else if (a.payload.kind === 'text') s += `, text(${quote(a.payload.itemId)})`
+        else s += `, { ${a.payload.fields.map((f) => (f.name === f.expr ? f.name : `${f.name} = ${f.expr}`)).join(', ')} }`
+      }
       return s
     }
     case 'sound':
@@ -495,6 +499,21 @@ class Parser {
     }
     return stripComment(raw).trim()
   }
+  /** A send-record field value: up to a depth-0 "," or "}" (nested parens/brackets stay inside, so
+   *  `near(a, b)` is one field). Single-line, like other DSL expressions. */
+  private recordFieldExpr(): string {
+    let raw = ''
+    let depth = 0
+    while (!this.eof()) {
+      const c = this.peek()
+      if (c === '\n') break
+      if (depth === 0 && (c === ',' || c === '}')) break
+      if (c === '(' || c === '[') depth++
+      else if (c === ')' || c === ']') depth--
+      raw += this.next()
+    }
+    return stripComment(raw).trim()
+  }
   private expectBrace(): boolean {
     this.skipWs()
     if (this.peek() === '{') {
@@ -680,6 +699,51 @@ class Parser {
     }
     this.next() // consume ","
     this.skipSpace()
+    if (this.peek() === '{') { // record payload: { field = expr, field2, … } → named numeric fields (state patch)
+      const rm = this.mark()
+      this.next() // consume "{"
+      const fields: { name: string; expr: string }[] = []
+      const seen = new Set<string>()
+      for (;;) {
+        this.skipWs()
+        if (this.eof()) { this.err('"}" expected in the send record', rm); this.skipLine(); return null }
+        if (this.peek() === '}') { this.next(); break }
+        const fm = this.mark()
+        const fname = this.word()
+        if (!fname) { this.err('field name expected in the send record', fm); this.skipLine(); return null }
+        // The name becomes a key in the object handed to the host → identifier shape, never a
+        // prototype-pollution key (the runtime drops a non-conforming field anyway; here we SAY it).
+        if (!SEND_FIELD_NAME.test(fname)) {
+          this.err(`invalid field name "${fname}" in the send record (letters, digits, "_"; starts with a letter or "_"; 64 characters max)`, fm)
+          this.skipLine(); return null
+        }
+        if (!isSendField(fname)) { this.err(`"${fname}" is a reserved key and cannot name a send record field`, fm); this.skipLine(); return null }
+        if (seen.has(fname)) { this.err(`duplicate field "${fname}" in the send record`, fm); this.skipLine(); return null }
+        seen.add(fname)
+        let fexpr: string
+        this.skipSpace()
+        if (this.peek() === '=') {
+          this.next() // consume "="
+          const epos = this.mark()
+          fexpr = this.recordFieldExpr()
+          if (!fexpr) { this.err('expression expected after "=" in the send record', epos); this.skipLine(); return null }
+          if (this.flagStrayAssign(fexpr, epos, '"send" record field')) { this.skipLine(); return null }
+          this.exprSite(fexpr, epos)
+        } else { // shorthand `{ field }` ≡ `{ field = field }`
+          fexpr = fname
+          this.exprSite(fexpr, fm)
+        }
+        fields.push({ name: fname, expr: fexpr })
+        if (fields.length > MAX_SEND_FIELDS) { this.err(`too many fields in the send record (max ${MAX_SEND_FIELDS})`, rm); this.skipLine(); return null }
+        this.skipWs()
+        if (this.peek() === ',') { this.next(); continue }
+        if (this.peek() === '}') { this.next(); break }
+        this.err('"," or "}" expected in the send record', rm); this.skipLine(); return null
+      }
+      if (fields.length === 0) { this.err('the send record has no fields', rm); return null }
+      this.endStatement()
+      return valid ? { do: 'send', event: name, payload: { kind: 'record', fields } } : null
+    }
     if (this.peekIsTextCall()) { // text payload: text("itemId")
       const tm = this.mark()
       this.word() // consume "text"

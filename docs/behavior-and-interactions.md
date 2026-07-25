@@ -44,9 +44,28 @@ if <cond> { … } [else if <cond> { … }] [else { … }]
 repeat <n> times { … }                   # runtime loop (bounded)
 repeat i from <a> to <b> { … }           # runtime range loop
 <fn>(<args>)                             # call a function
-send "<event>" [, <expr> | , text("<id>")]   # emit an event to the host
+send "<event>" [, <payload>]             # emit an event to the host (see below)
 sound "<assetId>"                        # one-shot audio
 ```
+
+### `send` — talking to the host
+
+`send` is the one-way channel from the scene to the page that embeds it. Four payload forms:
+
+```
+send "win"                               # bare — just the event
+send "score", lives * 100                # a NUMBER (any expression)
+send "answer", text("txtCard")           # the live TEXT of a text item
+send "save", { x = px, y = py, doors }   # a RECORD: named numbers (a state patch)
+```
+
+In a record, `{ doors }` is shorthand for `{ doors = doors }` — handy when the field and the variable
+share a name. Fields hold **numbers only**, at most 32 per `send`, and each name must be a plain
+identifier (`[A-Za-z_]\w*`, 64 characters max, and never `__proto__`/`constructor`/`prototype`).
+
+The host receives one object: `{ name, value?, fields? }` — `value` for the number/text forms, `fields`
+for the record. Nothing comes back: `send` is fire-and-forget and never blocks the scene. See
+**[Host integration](host-integration.md)** for the receiving end.
 
 ## Variables
 
@@ -241,5 +260,6 @@ you keep the visual (`var <Item>_x`/`_y` + your channel expressions).
 ## See also
 
 - The expression language and stdlib → **[Expressions & stdlib](expressions-and-stdlib.md)**
+- Receive `send` events / drive variables from the page → **[Host integration](host-integration.md)**
 - Test interactions headlessly (gesture scripts, `scratch`/`connect`) → **[Tooling](tooling.md)**
 - Pitfalls (event order, monotone reveal, `$()` in `each`…) → **[Gotchas](dsl-gotchas.md)**

@@ -27,7 +27,7 @@ play · pause · go to frame N [and play|and pause] · go to "label"
 name = expr            // set a variable
 arr[i] = expr          // write an array slot
 if cond { } else { } · repeat N times { } · repeat i from A to B { }
-myProc() · send "event"[, expr] · sound "assetId"
+myProc() · send "event"[, expr | text("id") | { a = expr, b … }] · sound "assetId"
 
 ## Expressions (drive a channel, or compute in an action)
 channel = expr         channels: ${EXPR_CHANNELS.join(' ')}   (expression wins over keyframes)

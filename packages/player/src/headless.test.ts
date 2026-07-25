@@ -307,6 +307,36 @@ describe('headless -- scratch / connect (semantic gestures for reveal/link)', ()
     expect(res.expectFailures).toBeUndefined()
   })
 
+  // Keyboard replay: the `key` gesture is the only way to exercise `keys.<Name>` without a browser.
+  it('key holds a key for N sim frames, then releases it', () => {
+    const doc: Doc = {
+      width: 100, height: 100, symbols: [], variables: { px: 0, ticks: 0 },
+      layers: [{ id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: [] } as Layer],
+      timeline: { fps: 24, durationFrames: 48, tracks: [], onEnterFrame: [
+        { do: 'setVar', name: 'px', value: 'px + keys.ArrowRight * 2' },
+        { do: 'setVar', name: 'ticks', value: 'ticks + 1' },
+      ] },
+    }
+    const res = playHeadless(doc, [
+      { type: 'key', name: 'ArrowRight', frames: 5 }, // held for 5 steps -> +2 each
+      { type: 'wait', frames: 3 }, // released: the extra steps add nothing
+      { type: 'expect', vars: { px: 10, ticks: 8 } },
+    ])
+    expect(res.vars.px).toBe(10)
+    expect(res.expectFailures).toBeUndefined()
+  })
+
+  it('key defaults to a single frame, and the trace names it', () => {
+    const doc: Doc = {
+      width: 100, height: 100, symbols: [], variables: { px: 0 },
+      layers: [{ id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: [] } as Layer],
+      timeline: { fps: 24, durationFrames: 48, tracks: [], onEnterFrame: [{ do: 'setVar', name: 'px', value: 'px + keys.Space' }] },
+    }
+    const res = playHeadless(doc, [{ type: 'key', name: 'Space' }], { trace: true })
+    expect(res.vars.px).toBe(1)
+    expect(res.steps?.[0].gesture).toBe('key Space')
+  })
+
   it('connect to a missing target -> clear error', () => {
     const source = mkText('Source', 0, 0)
     const doc: Doc = {

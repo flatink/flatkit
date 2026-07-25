@@ -17,7 +17,9 @@
   ("one action per line — unexpected `=`"), with the column pointing at the second `=`.
 - **`send` footgun (fixed)**: `send "evt", x = 1` (with a comma) used to capture `x = 1` as
   the *payload*. It is now a dedicated error. A `send` carries at most one payload:
-  `send "evt"`, `send "evt", <expr>`, or `send "evt", text("textId")`.
+  `send "evt"`, `send "evt", <expr>`, `send "evt", text("textId")`, or the record form
+  `send "evt", { a = <expr>, b }` — several *named* values in ONE event, not several payloads.
+  Inside a record the same rule holds: `{ x = y = 1 }` is the same error.
 
 ## Drawing (region / path)
 

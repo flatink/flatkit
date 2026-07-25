@@ -11,7 +11,7 @@ import { itemBoundsByName, dropZoneBounds } from '@flatkit/engine/groups'
 import { isGroup } from '@flatkit/engine/layers'
 import type { Doc, Item } from '@flatkit/types'
 export type { Gesture } from './player' // defined on the player side (reused by `--record`)
-import type { Gesture } from './player'
+import type { Gesture, SendEvent } from './player'
 
 type Box = { minX: number; minY: number; maxX: number; maxY: number }
 /** Cap on the moves a `scratch` synthesizes (anti-DoS: a huge bbox / tiny brush must not blow up). */
@@ -60,7 +60,7 @@ function sweepPoints(b: Box, brush: number): { x: number; y: number }[] {
 }
 
 export type PlayResult = {
-  sends: { name: string; value?: number | string }[]
+  sends: SendEvent[]
   vars: Record<string, number | number[]>
   steps?: TraceStep[] // present if `trace`: one record per gesture (inspection / debug-player)
   expectFailures?: string[] // mismatches reported by the `expect` gestures (empty/absent = all verified) -> exit != 0 in CLI
@@ -69,7 +69,7 @@ export type PlayResult = {
 /** Trace of ONE gesture: its description, the `send`s emitted during it, and the variable diff. */
 export type TraceStep = {
   gesture: string
-  sends: { name: string; value?: number | string }[]
+  sends: SendEvent[]
   changed: Record<string, [number | number[] | undefined, number | number[]]> // var -> [before, after]
 }
 
@@ -109,7 +109,8 @@ const describeGesture = (g: Gesture): string =>
   g.type === 'drag' ? `drag ${g.source}->${g.target}` : g.type === 'tap' ? `tap ${g.target}`
     : g.type === 'connect' ? `connect ${g.source}->${g.target}` : g.type === 'scratch' ? `scratch ${g.target}`
       : g.type === 'turn' ? `turn ${g.target} ${g.angle}` : g.type === 'set' ? `set ${g.name}=${g.value}`
-        : g.type === 'wait' ? `wait ${g.frames}` : g.type === 'wheel' ? `wheel ${g.dy}` : g.type === 'expect' ? 'expect' : `${g.type} (${g.x},${g.y})`
+        : g.type === 'wait' ? `wait ${g.frames}` : g.type === 'wheel' ? `wheel ${g.dy}`
+          : g.type === 'key' ? `key ${g.name}${g.frames && g.frames !== 1 ? ` x${g.frames}` : ''}` : g.type === 'expect' ? 'expect' : `${g.type} (${g.x},${g.y})`
 
 /** Plays `doc`, replays `gestures`, returns the collected `send`s plus the final state of the variables.
  *  `trace`: adds `steps` (sends + variable diff PER gesture) -- for inspection / the debug-player. */
@@ -140,6 +141,8 @@ export function playHeadless(doc: Doc, gestures: Gesture[], opts: { trace?: bool
   const applyGesture = (g: Gesture): void => {
     if (g.type === 'set') { pl.setVar(g.name, g.value); return }
     if (g.type === 'wait') { pl.stepSim(g.frames); return }
+    // Keyboard: no DOM event in Node (the global listeners are stubs) -> drive the held-keys set directly.
+    if (g.type === 'key') { pl.setKey(g.name, true); pl.stepSim(g.frames ?? 1); pl.setKey(g.name, false); return }
     if (g.type === 'wheel') { const h = handlers['wheel']; if (h) (h as unknown as (e: { deltaY: number; deltaMode: number; preventDefault: () => void }) => void)({ deltaY: g.dy, deltaMode: 0, preventDefault: () => {} }); pl.stepSim(g.frames ?? 1); return }
     if (g.type === 'drag') { const id = g.id ?? 1, t = dropPoint(g.target); fire('down', grabPoint(g.source), id); fire('move', t, id); fire('up', t, id); return }
     if (g.type === 'tap') { const id = g.id ?? 1, c = grabPoint(g.target); fire('down', c, id); fire('up', c, id); return }

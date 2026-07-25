@@ -2,7 +2,7 @@
 //  runtime/index.ts -- public surface of the FlatInk runtime (player + drawing core).
 //  Importable on its own, without anything from the editor. The played format = the FlatInk `Doc` JSON.
 // -----------------------------------------------------------------------------
-export { FlatPlayer, sameOriginAssetResolver, type PlayerOptions } from './player'
+export { FlatPlayer, sameOriginAssetResolver, type PlayerOptions, type SendEvent } from './player'
 // `Gesture` stays here (FlatPlayer.stopRecording returns Gesture[]). The headless replay tools
 // (playHeadless, trace) live under `@flatkit/player/debug` — not needed for plain playback.
 export type { Gesture } from './player'

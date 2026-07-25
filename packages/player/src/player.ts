@@ -10,7 +10,7 @@ import type { Asset, Doc, Layer, Point, Text } from '@flatkit/types'
 import { resolveInstanceFrame, scheduleSounds, applyEasing, type Timeline, type Easing } from '@flatkit/engine/timeline'
 import { stateValueOf, initialStateValue, stateMachineByParam } from '@flatkit/engine/states'
 import { compileCached, evalExpr, exprScope, type ExprContext, type Compiled } from '@flatkit/engine/expr'
-import { runActions, MAX_SEND_TEXT, SEND_EVENT_NAME, type Action, type ActionHost, type ItemEvent } from '@flatkit/engine/actions'
+import { runActions, MAX_SEND_FIELDS, MAX_SEND_TEXT, SEND_EVENT_NAME, isSendField, type Action, type ActionHost, type ItemEvent } from '@flatkit/engine/actions'
 import { containerLayers, getSymbol, isGroup, isInstance, isText } from '@flatkit/engine/layers'
 import { renderLayers, collectModifierTargets, docHasModifiers, type FilterCacheEntry, type RenderCtx } from './drawScene'
 import { restState, advanceModifier, type ModState } from '@flatkit/engine/channelModifiers'
@@ -40,9 +40,14 @@ export type Gesture =
   | { type: 'set'; name: string; value: number } // drives a variable from the "host"
   | { type: 'wait'; frames: number } // lets the simulation run N fixed steps (60 Hz): `every frame` + playhead advance
   | { type: 'wheel'; dy: number; frames?: number } // scrolls the wheel by `dy` px, then advances `frames` sim steps (default 1) so `every frame` integrates `mouse.wheel`
+  | { type: 'key'; name: string; frames?: number } // HOLDS a key (`keys.<name>` = 1) for `frames` sim steps (default 1), then releases it
   // Assertion (CI self-check): compares the `send`s emitted SINCE the last `expect` (sequence of names)
   // and the current state of the variables; any mismatch is reported in PlayResult.expectFailures (-> exit != 0 in CLI).
   | { type: 'expect'; sends?: string[]; vars?: Record<string, number | number[]> }
+
+/** What the host receives on each DSL `send`. `value` = the number / `text("…")` form, `fields` = the
+ *  record form `send "e", { a = …, b }` (named numbers, a state patch). Both absent = bare `send "e"`. */
+export type SendEvent = { name: string; value?: number | string; fields?: Record<string, number> }
 
 export type PlayerOptions = {
   autoplay?: boolean
@@ -56,7 +61,7 @@ export type PlayerOptions = {
   // only — never a remote URL. To serve EXTERNAL (local/same-origin) assets, pass `sameOriginAssetResolver(baseUrl)`:
   // the HOST picks the origin, the (untrusted) document only supplies a relative key, so the security contract holds.
   resolveAsset?: (asset: Asset) => string | null
-  onEvent?: (event: { name: string; value?: number | string }) => void // DSL `send` channel -> host (Moiki)
+  onEvent?: (event: SendEvent) => void // DSL `send` channel -> host (Moiki)
 }
 
 type View = { tx: number; ty: number; scale: number }
@@ -139,6 +144,24 @@ const docUsesWheel = (doc: Doc): boolean => /mouse\s*\.\s*wheel/.test(JSON.strin
 // Does any expression read the pointer POSITION (`mouse.x`/`mouse.y`)? If not, a pointermove changes no
 // expression input, so the per-move `bustNamed()` (cache invalidation → rebuild) is pure waste — skip it.
 const docReadsMousePos = (doc: Doc): boolean => /mouse\s*\.\s*[xy]/.test(JSON.stringify(doc))
+/** Key names the scene actually READS (`keys.<Name>` in any expression) — same over-approximating scan as
+ *  `docUsesWheel` (a literal "keys.X" inside a text is a false positive; harmless). The player consumes
+ *  ONLY these: everything else keeps its native page behavior (scroll, shortcuts). */
+const docReadKeys = (doc: Doc): Set<string> => {
+  const out = new Set<string>()
+  for (const m of JSON.stringify(doc).matchAll(/keys\s*\.\s*([A-Za-z_]\w*)/g)) out.add(m[1])
+  return out
+}
+/** Keys we never consume, whatever the scene declares: browser/OS shortcuts (a modifier is held) and the
+ *  navigation/system keys — swallowing those breaks accessibility and the surrounding page. */
+const NEVER_CONSUMED = /^(Tab|F\d{1,2})$/
+/** Is the event headed to a form field of the HOST page (its own <input>, a rich-text editor…)? The key
+ *  listeners are global, so without this a scene would steal the keystrokes the user is typing there. */
+const isEditableTarget = (t: EventTarget | null): boolean => {
+  const el = t as { tagName?: string; isContentEditable?: boolean } | null
+  if (!el) return false
+  return el.isContentEditable === true || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT'
+}
 const SIM_MAX_STEPS = 30 // "spiral of death" safeguard after a long pause (backgrounded tab)
 
 const CLICK_EVENTS: readonly ItemEvent[] = ['click']
@@ -193,7 +216,7 @@ export class FlatPlayer {
   private simAlpha = 1
   private simActive = false
   private audioOn: boolean
-  private readonly onEvent?: (event: { name: string; value?: number | string }) => void
+  private readonly onEvent?: (event: SendEvent) => void
   private renderOn = true
   private readonly imageProvider?: (assetId: string) => CanvasImageSource | null
   private readonly resolveAsset: (asset: Asset) => string | null
@@ -214,11 +237,24 @@ export class FlatPlayer {
   private readonly mouse = { x: 0, y: 0, dx: 0, dy: 0, wheel: 0 } // dx/dy = movement SINCE the last tick; wheel = accumulated wheel delta SINCE the last tick (both reset after onEnterFrame) -> "what happened this frame?"
   private usesWheel = false // does the scene read `mouse.wheel`? → capture the wheel + preventDefault (else let the page scroll over the canvas)
   private usesMousePos = false // does the scene read `mouse.x`/`mouse.y`? → only then must a pointermove bust the expr cache
+  private readKeys = new Set<string>() // key names the scene reads (`keys.<Name>`) → the only ones consumed (preventDefault)
   private hitWarmId = 0 // requestIdleCallback handle for the deferred hit-cache warm-up (0 = none pending)
   private readonly heldKeys = new Set<string>()
   private readonly keyProxy = new Proxy(
     {},
-    { get: (_t, k) => (typeof k === 'string' && this.heldKeys.has(k) ? 1 : 0) },
+    {
+      get: (_t, k) => (typeof k === 'string' && this.heldKeys.has(k) ? 1 : 0),
+      // The expression evaluator guards member access with `Object.hasOwn(o, prop)`
+      // (sandbox: own props only). A bare get-trap proxy has an empty target, so
+      // hasOwn is always false and `keys.<Name>` evaluates to NaN. Report every
+      // string key as an own property so the guard passes; the value still comes
+      // from the get trap.
+      has: (_t, k) => typeof k === 'string',
+      getOwnPropertyDescriptor: (_t, k) =>
+        typeof k === 'string'
+          ? { value: this.heldKeys.has(k) ? 1 : 0, writable: false, enumerable: true, configurable: true }
+          : undefined,
+    },
   ) as Record<string, number>
   private hovered: string | null = null
   private hoverIds = new Set<string>() // ALL ids in the topmost hit chain under the pointer (for self.hovered feedback, handler-independent)
@@ -271,14 +307,36 @@ export class FlatPlayer {
     this.ctxCache = null // its baked-in named channels are now stale
   }
   private readonly onKeyDown = (e: KeyboardEvent) => {
-    this.heldKeys.add(e.key)
-    if (e.key === ' ') this.heldKeys.add('Space')
+    if (isEditableTarget(e.target)) return // the user is typing in a field of the host page — not for us
+    this.holdKey(e.key, true)
+    // Consume the key ONLY if the scene reads it (cf. onWheel): an activity bound to the arrows/space
+    // stops scrolling the page under it, while an unused key keeps its native behavior.
+    if (this.readsKey(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !NEVER_CONSUMED.test(e.key)) e.preventDefault()
+  }
+  // NB: no editable-target guard on keyup — a key pressed over the canvas then released while a host
+  // input has the focus must still be cleared, or it stays "held" forever.
+  private readonly onKeyUp = (e: KeyboardEvent) => {
+    this.holdKey(e.key, false)
+  }
+  /** Single write path for the held-keys set (physical key, `setKey`, headless replay). The space bar
+   *  arrives as `" "` but is authored as `keys.Space` → both are held/released together. */
+  private holdKey(key: string, down: boolean): void {
+    const alias = key === ' ' ? 'Space' : null
+    if (down) { this.heldKeys.add(key); if (alias) this.heldKeys.add(alias) }
+    else { this.heldKeys.delete(key); if (alias) this.heldKeys.delete(alias) }
     this.bustNamed()
   }
-  private readonly onKeyUp = (e: KeyboardEvent) => {
-    this.heldKeys.delete(e.key)
-    if (e.key === ' ') this.heldKeys.delete('Space')
+  /** Losing the window (alt-tab, focus on another frame) never delivers the keyup → release everything,
+   *  else the scene keeps running with a key stuck down. */
+  private readonly onBlur = () => {
+    if (!this.heldKeys.size) return
+    this.heldKeys.clear()
     this.bustNamed()
+    this.render()
+  }
+  /** Does the scene read this key? `" "` is authored as `keys.Space` (cf. onKeyDown's alias). */
+  private readsKey(key: string): boolean {
+    return this.readKeys.has(key === ' ' ? 'Space' : key)
   }
   private readonly onPointerLeave = () => {
     // Safety net: if pointer capture is not supported, a pointer that leaves releases the grab.
@@ -598,7 +656,7 @@ export class FlatPlayer {
     setParam: (target, param, value) => this.setParam(target, param, value),
     callProc: (name, args) => this.callProc(name, args),
     evalNumber: (src) => this.evalNumber(src),
-    emit: (name, value) => this.emit(name, value),
+    emit: (name, value, fields) => this.emit(name, value, fields),
     textContent: (itemId) => this.textContent(itemId),
     playSound: (assetId) => this.playSound(assetId),
   }
@@ -613,6 +671,7 @@ export class FlatPlayer {
     this.ctx = ctx
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
     this.usesWheel = docUsesWheel(this.doc)
+    this.readKeys = docReadKeys(this.doc)
     this.usesMousePos = docReadsMousePos(this.doc)
     this.hasModifiers = docHasModifiers(this.doc)
     this.loop = opts.loop ?? true
@@ -632,6 +691,7 @@ export class FlatPlayer {
     if (opts.input ?? true) { // false (gallery preview): plays the anim but does not attach the inputs
       globalThis.addEventListener('keydown', this.onKeyDown)
       globalThis.addEventListener('keyup', this.onKeyUp)
+      globalThis.addEventListener('blur', this.onBlur) // alt-tab: no keyup is delivered -> release the held keys
       this.canvas.addEventListener('pointermove', this.onPointerMove)
       this.canvas.addEventListener('pointerdown', this.onPointerDown)
       this.canvas.addEventListener('pointerup', this.onPointerUp)
@@ -788,16 +848,33 @@ export class FlatPlayer {
   /**
    * Emits a `send` event toward the host. Silent no-op if no `onEvent` is provided
    * (e.g. editor preview). Defense-in-depth validation (the parser already guarantees the name):
-   * conforming name, finite number (NaN -> 0, DSL convention), text <= MAX_SEND_TEXT (truncated).
+   * conforming name, finite number (NaN -> 0, DSL convention), text <= MAX_SEND_TEXT (truncated),
+   * record fields <= MAX_SEND_FIELDS with conforming keys. The host receives a VETTED object.
    * If the host callback throws, we catch and log -- the player does not break.
    */
-  private emit(name: string, value?: number | string): void {
+  private emit(name: string, value?: number | string, fields?: Record<string, number>): void {
     if (!this.onEvent || !SEND_EVENT_NAME.test(name)) return
     let v = value
     if (typeof v === 'number') { if (!Number.isFinite(v)) v = 0 }
     else if (typeof v === 'string' && v.length > MAX_SEND_TEXT) v = v.slice(0, MAX_SEND_TEXT)
+    let f: Record<string, number> | undefined
+    if (fields) {
+      // Own keys only, conforming names only (never `__proto__`/`constructor`/`prototype`: the host
+      // spreads this patch into its own state), bounded count, each value a finite number (NaN -> 0).
+      f = {}
+      let n = 0
+      for (const k of Object.keys(fields)) {
+        if (n >= MAX_SEND_FIELDS) break
+        if (!isSendField(k)) continue
+        f[k] = Number.isFinite(fields[k]) ? fields[k] : 0
+        n++
+      }
+    }
     try {
-      this.onEvent(v === undefined ? { name } : { name, value: v })
+      const ev: SendEvent = { name }
+      if (v !== undefined) ev.value = v
+      if (f !== undefined) ev.fields = f
+      this.onEvent(ev)
     } catch (e) {
       console.error('FlatPlayer: the onEvent callback threw an exception', e)
     }
@@ -914,10 +991,22 @@ export class FlatPlayer {
     this.render()
   }
 
+  /**
+   * Presses (`down: true`) or releases a key programmatically -- exactly what a physical key does to
+   * `keys.<Name>` in the expressions. For an ON-SCREEN control (a touch D-pad, where there is no
+   * keyboard) and for the headless `key` gesture. `name` is the authored one (`"ArrowRight"`,
+   * `"Space"`). A pressed key STAYS held until released: pair every `true` with a `false`.
+   */
+  setKey(name: string, down: boolean): void {
+    this.holdKey(name, down)
+    this.render()
+  }
+
   /** Replaces the played document (resets the framing + the variables, keeps the frame). */
   load(doc: Doc): void {
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
     this.usesWheel = docUsesWheel(this.doc)
+    this.readKeys = docReadKeys(this.doc)
     this.usesMousePos = docReadsMousePos(this.doc)
     this.vars = cloneVars(doc.variables)
     this.namedCache = null // new document -> named-objects cache stale
@@ -1324,6 +1413,7 @@ export class FlatPlayer {
     window.removeEventListener('resize', this.onResize)
     globalThis.removeEventListener('keydown', this.onKeyDown)
     globalThis.removeEventListener('keyup', this.onKeyUp)
+    globalThis.removeEventListener('blur', this.onBlur)
     this.canvas.removeEventListener('pointermove', this.onPointerMove)
     this.canvas.removeEventListener('pointerdown', this.onPointerDown)
     this.canvas.removeEventListener('pointerup', this.onPointerUp)
