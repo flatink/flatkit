@@ -36,6 +36,11 @@ preview first.
 missing/overlapping drop zones, never-used variables, and a `color` param used as a paint (a `fill`/`stroke`,
 a gradient stop `0:teinte@…`, or a `tint`) that the symbol doesn't declare — a silent "dead recolor".
 
+It also flags the three **silent drops of a cel layer** (such a layer draws only the current cel's
+`matter` and the containers that cel poses): a bare shape left in the layer, a `pose "X"` naming no roster
+item, and a roster item no cel ever poses. Each renders an empty frame with no other signal — see
+[frame-by-frame](animating-symbols.md#frame-by-frame--a-different-drawing-on-each-cel).
+
 ## See what you draw — `--render`
 
 Render a PNG (skia backend, faithful to the browser). Needs the optional `skia-canvas` dep

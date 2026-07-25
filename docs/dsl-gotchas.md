@@ -92,8 +92,15 @@
   with `pivot <center>` driven by `object "P" { scaleX = s }` grows/spins **in place** — it no longer
   shrinks toward the top-left corner. With no `pivot` (default `{0,0}`) it scales/rotates around the origin
   as before. When a `pivot` is set, the `x`/`y` channels position **the pivot** (the object's anchor).
-- **Render order**: in an animated layer the static **matter draws BEHIND the posed containers**, and
-  declaration order between a bare `path` and an animated `group` is NOT preserved. To put a static
+- **A layer WITH cels draws ONLY the cel's `matter` + the containers that cel poses.** A bare shape
+  written straight into such a layer is **silently never drawn** (it stays in the roster, which holds
+  bodies, not drawings). The drawing of a frame goes inside the cel: `cel 0 { matter { circle 0 0 30
+  fill #e33 } }` — that IS how you author **frame-by-frame** (a new `matter` per cel; it holds until the
+  next one, `morph` tweens the shape). A static element belongs on a **cel-less layer**. `--check` warns
+  on all three silent drops: a bare shape in a cel layer, a `pose "X"` matching no roster item, and a
+  roster item no cel poses. See [Animating a symbol](animating-symbols.md).
+- **Render order**: in an animated layer the **matter draws BEHIND the posed containers**, and
+  declaration order between the matter and an animated `group` is NOT preserved. To put a static
   shape in front of an animation, give it its own **layer above** (or wrap it in a group).
 - **Gating a subtree by opacity is FREE**: a group whose resolved `opacity` is `<= 0.01` (e.g. the
   off-phase branch of `opacity = phase == X ? 1 : 0`, even when smoothed toward ~0) is **pruned** — its

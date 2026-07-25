@@ -143,9 +143,10 @@ at center  ·  at center,540  ·  at 120,center        # canvas-relative anchor 
 align <point> of "Name" [offset dx,dy]               # pin this item's origin onto another item's bbox
 ```
 
-> **Placement & naming gotchas.** On `text`/`image`, put `at …` / `matrix(…)` / `as "…"` **right after the
-> content** (the string, or `image "id" w h`), *before* style attributes (`font`/`box`/`fill`/…). So
-> `text "…" box W H at x,y` fails — write `text "…" at x,y box W H`. **Shapes** name themselves with `as
+> **Placement & naming gotchas.** The order is fixed: **content → `as "…"` → `at …` / `matrix(…)` →
+> style attributes** (`font`/`box`/`fill`/…). So `text "…" box W H at x,y` fails — write `text "…" at x,y
+> box W H`; and `image "logo" 80 80 at 0,0 as "L"` fails — write `image "logo" 80 80 as "L" at 0,0`
+> (same for `instance "Sym" as "hero" at x,y`). **Shapes** name themselves with `as
 > "<id>"` **right after the geometry** (`circle cx cy r as "Ring" fill …`); a named shape is addressable by
 > **text-on-path** (`along "<id>"`). To drive a shape from *behavior* (clicks, `send`, drop zones), still
 > wrap it in a `group "Name"` — the region name addresses geometry, the group name an interactive object.

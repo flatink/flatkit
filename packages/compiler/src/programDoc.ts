@@ -148,7 +148,42 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
     }
   }
   out.push(...docPaintParamWarnings(doc))
+  out.push(...docCelLayerWarnings(doc))
   out.push(...docLayoutWarnings(doc))
+  return out
+}
+
+/**
+ * SILENT DROPS in a cel layer. `resolveLayerAt` draws exactly two things: the current cel's `matter`, and
+ * the containers that cel POSES — never the layer's other roster items. Three ways to author a layer that
+ * compiles, renders an empty frame, and says nothing:
+ *   (a) a bare shape (`path`/`circle`/`rect`/…) sitting in a layer that has cels — it belongs inside a
+ *       cel's `matter { … }` (frame-by-frame drawing) or on a cel-less layer (static decor);
+ *   (b) a `pose "X"` naming no roster item (the parser leaves such a pose id as `@X`) — poses nothing;
+ *   (c) a roster container/text/image that no cel ever poses — never drawn.
+ * All three are the classic "my drawing vanished" bug. Warnings (non-blocking).
+ */
+export function docCelLayerWarnings(doc: Doc): { scope: string; diag: Diagnostic }[] {
+  const out: { scope: string; diag: Diagnostic }[] = []
+  const checkScope = (scope: string, layers: Layer[]) => {
+    const push = (message: string) => out.push({ scope, diag: { line: 1, col: 1, severity: 'warning', message } })
+    const visit = (ls: Layer[]): void => {
+      for (const l of ls) {
+        if (l.cels?.length) {
+          const bare = l.items.filter(isRegion)
+          if (bare.length) push(`layer "${l.name}" has cels, so its ${bare.length} bare shape(s) are NEVER drawn — a cel layer draws only the cel's \`matter { … }\` and the containers it poses. Move them into \`cel N { matter { … } }\`, or onto a cel-less layer if they are static.`)
+          const posed = new Set<string>()
+          for (const c of l.cels) for (const p of c.poses) posed.add(p.id)
+          for (const id of posed) if (id.startsWith('@')) push(`layer "${l.name}": \`pose "${id.slice(1)}"\` matches no item of this layer — the pose draws nothing (roster: ${l.items.map(itemLabel).join(', ') || 'empty'}).`)
+          for (const it of l.items) if (isPoseable(it) && !posed.has(it.id)) push(`layer "${l.name}": "${itemLabel(it)}" is never posed by a cel — it is never drawn. Add \`pose "${itemLabel(it)}"\` to the cels where it should show.`)
+        }
+        for (const it of l.items) if (isGroup(it)) visit(it.layers)
+      }
+    }
+    visit(layers)
+  }
+  checkScope('scene', doc.layers)
+  for (const s of doc.symbols) checkScope(s.name, s.layers)
   return out
 }
 

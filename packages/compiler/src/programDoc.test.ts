@@ -166,6 +166,52 @@ describe('programDoc — structural warnings', () => {
   })
 })
 
+describe('programDoc — cel-layer warnings (silent drops)', () => {
+  const shape = (id: string): Region => ({ id, color: '#000', path: { subpaths: [] } })
+  const celLayer = (items: Layer['items'], cels: Layer['cels']): Layer => ({ id: 'L', name: 'draw', visible: true, locked: false, opacity: 1, items, cels })
+  const doc = (l: Layer): Doc => ({ width: 100, height: 100, symbols: [], layers: [l], timeline: { fps: 24, durationFrames: 24, tracks: [] } })
+  const hit = (d: Doc, re: RegExp) => docStructureWarnings(d).filter((w) => re.test(w.diag.message))
+
+  it('a bare shape in a layer WITH cels -> warning (it is never drawn)', () => {
+    const d = doc(celLayer([shape('r'), group('a', 'A')], [{ frame: 0, poses: [{ id: 'a' }] }]))
+    const ws = hit(d, /bare shape/)
+    expect(ws).toHaveLength(1)
+    expect(ws[0].diag.message).toMatch(/matter \{ … \}/)
+    expect(docHasErrors(d)).toBe(false) // non-blocking
+  })
+
+  it('frame-by-frame via `matter` -> no warning; a bare shape on a CEL-LESS layer -> no warning', () => {
+    const fbf = doc(celLayer([], [{ frame: 0, poses: [], matter: [shape('r0')] }, { frame: 1, poses: [], matter: [shape('r1')] }]))
+    expect(hit(fbf, /never drawn|never posed|matches no item/)).toEqual([])
+    const staticLayer: Doc = { width: 100, height: 100, symbols: [], layers: [layer([shape('r')])] }
+    expect(hit(staticLayer, /never drawn|never posed|matches no item/)).toEqual([])
+  })
+
+  it('a pose naming no roster item (unresolved `@Name`) -> warning', () => {
+    const ws = hit(doc(celLayer([group('a', 'A')], [{ frame: 0, poses: [{ id: 'a' }] }, { frame: 1, poses: [{ id: '@Typo' }] }])), /matches no item/)
+    expect(ws).toHaveLength(1)
+    expect(ws[0].diag.message).toMatch(/pose "Typo"/)
+  })
+
+  it('a roster container no cel ever poses -> warning', () => {
+    const ws = hit(doc(celLayer([group('a', 'A'), group('g', 'Ghost')], [{ frame: 0, poses: [{ id: 'a' }] }])), /never posed/)
+    expect(ws).toHaveLength(1)
+    expect(ws[0].diag.message).toMatch(/"Ghost"/)
+  })
+
+  it('scoped to the owning symbol, and nested group layers are visited', () => {
+    const inner = celLayer([shape('r')], [{ frame: 0, poses: [] }])
+    const outer: Group = { id: 'g', kind: 'group', name: 'G', transform: IDENTITY, layers: [inner] }
+    const d: Doc = {
+      width: 100, height: 100, layers: [], timeline: { fps: 24, durationFrames: 24, tracks: [] },
+      symbols: [{ id: 's', name: 'Sym', timeline: { fps: 24, durationFrames: 24, tracks: [] }, layers: [layer([outer])] }],
+    }
+    const ws = hit(d, /bare shape/)
+    expect(ws).toHaveLength(1)
+    expect(ws[0].scope).toBe('Sym')
+  })
+})
+
 describe('programDoc — layout warnings', () => {
   const mkText = (content: string, x: number, boxW: number, wrap?: boolean): Text => ({
     id: 't', kind: 'text', name: content, transform: translation(x, 20), content,

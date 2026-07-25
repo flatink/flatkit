@@ -111,6 +111,42 @@ cel 60 hold       { pose "Ring" scale 1 }
 `hold` is opt-in per cel; without it the default (an omitted container is removed) is unchanged — so
 exits still work.
 
+## Frame-by-frame — a different DRAWING on each cel
+
+A cel carries the poses **and** the layer's **matter**: the drawing at that key, written as a
+`matter { … }` block. Change it from cel to cel and you get classic cel animation — one drawing per
+frame, no tween:
+
+```
+symbol "Blink" {
+  timeline 12 3
+  layer "draw" {
+    cel 0 { matter { circle 0 0 30 fill #e33 } }
+    cel 1 { matter { rect -30 -30 60 60 fill #3a3 } }
+    cel 2 { matter { path "M -30 30 L 0 -30 L 30 30 Z" fill #33e } }
+  }
+}
+```
+
+- The matter is **held** until the next cel that defines one — a drawing kept over several frames is
+  written **once**, on the cel where it appears. An explicit `matter { }` (empty) blanks it.
+- **`morph`** on the cel interpolates the *shape* toward the next cel's matter instead of cutting.
+- A cel can carry **both**: a `matter { … }` for that frame's drawing *plus* `pose "…"` for the
+  containers animated on top of it (matter always draws **behind** the posed containers).
+
+Two other ways to author the same thing, when the drawings already exist as objects:
+
+- **Swap containers** — declare each drawing as a group in the roster, then pose only the one you want on
+  each cel (a container omitted from a cel disappears — see above).
+- **Image sequence** — the same idiom with `image` items: `image "f1" 100 100 as "F1" at -50,-50` in the
+  roster, `cel 0 { pose "F1" }`. The media is declared in the `.flatink` (`asset "f1" "f1.png" image`).
+
+> **The trap:** in a layer that **has cels**, a bare shape written directly in the layer is **never
+> drawn** — such a layer renders the current cel's `matter` plus the containers that cel poses, and
+> nothing else. Put the shape inside a `matter { … }`, or on a **cel-less layer** if it is static decor.
+> `flatc --check` warns about it, and about the two sibling silent drops: a `pose "X"` naming no roster
+> item, and a roster item that no cel ever poses.
+
 ## Driving a channel with an expression (`expr`)
 
 Instead of keyframes you can bind a channel to an expression on the container itself:
