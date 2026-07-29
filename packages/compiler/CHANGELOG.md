@@ -1,5 +1,30 @@
 # @flatkit/compiler
 
+## 0.22.0
+
+### Minor Changes
+
+- [`d09f867`](https://github.com/flatink/flatkit/commit/d09f8672f59b12c58a4b35338ab1dbac8b089a26) Thanks [@kaelhem](https://github.com/kaelhem)! - `--check`: flag the three SILENT DROPS of a cel layer. Such a layer draws only the current cel's
+  `matter` and the containers that cel poses, so a bare shape left in the layer, a `pose "X"` naming no
+  roster item, and a roster item no cel ever poses all render an empty frame with no signal. They are now
+  warnings (non-blocking), scoped to the owning symbol. Also documents frame-by-frame authoring (a
+  `matter { … }` per cel, held until the next one, `morph` to tween the shape) in the docs and the agent
+  prompts, where the block syntax was missing entirely.
+
+### Patch Changes
+
+- [`b2be877`](https://github.com/flatink/flatkit/commit/b2be87781939b40ce778fa5e55ce6aeac7690a53) Thanks [@kaelhem](https://github.com/kaelhem)! - Fix `--check` on any program that imports a LOCAL package (`use "physics"` -> physics.flatink): it
+  reported one phantom `"(" expected after "fn <pkg>"` error per package function and exited 1, so a
+  healthy program failed its own lint. A local package is inlined twice into `doc.functions` (the bare
+  name plus the qualified alias `physics.tick`, so both call forms resolve); the alias has no `fn` syntax,
+  and re-emitting it into the reconstructed scope program made that text unparseable. The alias is no
+  longer printed - it stays in the Doc and stays a known callable name, so qualified calls still lint and
+  run. The shipped `examples/cli/scene.flatink` now passes `--check`.
+- Updated dependencies []:
+  - @flatkit/types@0.22.0
+  - @flatkit/engine@0.22.0
+  - @flatkit/player@0.22.0
+
 ## 0.21.0
 
 ### Minor Changes
