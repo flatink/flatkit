@@ -46,7 +46,12 @@
       "skia-canvas"
     ],
     "overrides": {
-      "esbuild": ">=0.28.1"
+      "esbuild": ">=0.28.1",
+      "@changesets/parse>js-yaml": ">=4.3.1",
+      "read-yaml-file>js-yaml": "^3.15.1",
+      "minimatch>brace-expansion": ">=5.0.9",
+      "express-rate-limit>ip-address": ">=10.3.1",
+      "ajv>fast-uri": ">=3.1.5"
     }
   }
 }
