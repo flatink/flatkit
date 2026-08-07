@@ -11,10 +11,24 @@
   `path`/`circle`/`group`/`image`/`text`) and the **behavior** that follows (`object "Name"
   { … }`, `every frame`, timeline bindings). The two do NOT share the same grammar.
 
+## `object "X"` addresses an ANIMATABLE item — a group, instance, text or image
+
+- A **shape is baked material**: `rect 0 0 960 540 as "Eclat"` names it so `text … along "Eclat"` can
+  find it, but it carries **no pose**, so it can never be animated. Same for a **layer**. An `object`
+  block on either used to be dropped in **total silence** — the program compiled, ran, and the animation
+  simply did not exist. It is now a **compile error** naming what you actually hit. To animate a shape,
+  wrap it: `group "Eclat" { layer "art" { rect … } }`.
+- Corollary — **opacities multiply**. Setting `opacity 0` on the shape to hide it at rest cancels the
+  group's animation even when the group lights up. Drive the *group's* opacity and leave the shape at 1.
+
 ## One action / one binding per line
 
+- **Comments are `//`, never `#`.** `#` starts a COLOR (`#ffcc00`), so a `# note` inside a program is a
+  parse error, not a comment. (Reference listings in these docs annotate with `#`; runnable examples use `//`.)
 - **One single action or assignment per line.** `x = 1  y = 2` raises a clear error
   ("one action per line — unexpected `=`"), with the column pointing at the second `=`.
+  A swallowed statement is named now — `score = score + 1  send "ok", 1` reports *"two statements on one
+  line — `send …` was swallowed into the expression before it"*, not `unexpected character """`.
 - **`send` footgun (fixed)**: `send "evt", x = 1` (with a comma) used to capture `x = 1` as
   the *payload*. It is now a dedicated error. A `send` carries at most one payload:
   `send "evt"`, `send "evt", <expr>`, `send "evt", text("textId")`, or the record form
@@ -84,7 +98,7 @@
   jumps to the left edge whenever the expression is small). The channel value is absolute, not added to `at` —
   classic cause of "the animation appears in the wrong place." Two ways to keep it on the anchor:
   - **Preferred — additive offsets `dx`/`dy`** (binding-only): `object "G" { dx = bump }` resolves to
-    `pos = at + (dx, dy)`, so `dx = 58*sin(time)` oscillates **around** `at X,Y` with no base to re-type.
+    `pos = at + (dx, dy)`, so `dx = 58*sin(clock)` oscillates **around** `at X,Y` with no base to re-type.
     This is the natural "offset from the anchor" idiom (mirror of CSS `translate` / pivot). `dx`/`dy` compose
     with an absolute `x`/`y` if both are bound (`pos = x + dx`); they have no keyframe/`spring`/`smooth` form.
   - **Or re-inject the base** with the absolute channel: `x = $(X) + bump` (same for `y`/`rotation`/`scaleX`/…).

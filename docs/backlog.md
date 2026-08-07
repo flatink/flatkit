@@ -11,12 +11,16 @@
    `resolveLink` now runs BEFORE `fireEvent('release')` in `onPointerUp`, so a `when released`
    handler reads the resolved `<target>`/end position directly (consistent with `drag`). Test:
    `playerDrag.test.ts` "a `when released` handler reads the RESOLVED target".
-2. ~~**`link` with `enabled` = false still grabs the pointer.**~~ — **VERIFIED OK (2026-06-11)**:
-   in flatkit a disabled interactor is already not captured (`pickInteractor` filters on
-   `enabled`) and the verdict only runs when `dragActive` is set, so re-pulling an already-linked
-   source does NOT re-trigger it. Locked by `playerDrag.test.ts` "a DISABLED interactor does not
-   capture the pointer". (A separate `when released` *handler* on the same object still fires —
-   that is intended: handlers are independent of the interactor's `enabled`.)
+2. ~~**`link` with `enabled` = false still grabs the pointer.**~~ — **VERIFIED OK (2026-06-11)**,
+   then **REOPENED and FIXED (2026-08-07)**: a disabled interactor is indeed not captured
+   (`pickInteractor` filters on `enabled`), and a `when released` *handler* on the same object
+   still firing IS intended — handlers are independent of the interactor's `enabled`. But the
+   2026-06-11 reading stopped one step short: because the verdict only ran when `dragActive` was
+   set, the target-index variable **kept the last completed gesture's value**. A handler gated on
+   `if target == 1 { … }` therefore re-ran on every further press, and an activity could finish
+   with pairs it never connected. A gated-off (or canceled, or pointer-left) release now resolves
+   the index to `0` — "no target reached". Position outputs are untouched (zeroing a `drag`'s vars
+   would teleport the object). Test: `headless.test.ts` "a link gated OFF resolves to target 0".
 3. ~~**[verify] `reveal`: coverage grid recreated on every grab.**~~ — **DONE (2026-06-11)**:
    ticked cells are now PERSISTED per target (`revealStates` map, reset on `load()`), so coverage
    accumulates across grabs (true monotonicity for several short strokes). Test:
@@ -72,10 +76,11 @@
     (A) the player now exposes per-object interaction state to channel expressions as
     `self.hovered`/`self.grabbed`/`self.pressed` (0/1), tracked handler-independently;
     (B) a `feedback` stdlib package (`lift`/`dim`/`tilt`/`sink`/`shake`); (C) a `feedback <tokens>`
-    DSL sugar (`lift tilt dim shake(<expr>)`) that unfolds into composed channel bindings and
-    auto-injects `use "feedback"`. One line per element. Settle-bounce deferred (needs a release
-    timestamp → not stateless). Tests: `cel.test.ts`, `playerFeedback.test.ts`, `stdlib.test.ts`,
-    `flatFormat.test.ts` (feedback sugar).
+    DSL sugar (`lift tilt dim shake(<expr>)`) that unfolds into composed channel bindings. One line
+    per element. Settle-bounce deferred (needs a release timestamp → not stateless). Tests:
+    `cel.test.ts`, `playerFeedback.test.ts`, `stdlib.test.ts`, `flatFormat.test.ts` (feedback sugar).
+    *(2026-08-07: the sugar no longer injects a `use "feedback"` LINE — the package is auto-imported
+    from the calls themselves, and the expansion is line-preserving so it cannot shift diagnostics.)*
 
 ## Packaging
 
@@ -88,3 +93,37 @@
     `@flatkit/player/browser` → one ESM/IIFE file with engine+types inlined, zero bare imports).
     Then consumers `cp` it instead of bundling. Low effort (an extra esbuild target in the
     player's own build), removes a real friction for the primary use case.
+
+## Moiki integration — silent traps (2026-08-07)
+
+Reported after writing two activity generators (`arrange`, `connect`) against 0.21. All nine points
+were real; two were worse than reported. **All shipped in the same batch** — recorded here because the
+class of bug matters more than the individual fixes: *the program compiled, `--check` passed, and the
+behavior was simply absent*. Nothing on screen and nothing in the tooling could say so.
+
+13. ~~**`object "X"` silently ignored when X is not poseable.**~~ — **DONE**: only a
+    group/instance/text/image carries a pose, so a block naming a SHAPE or a LAYER had its channel
+    bindings dropped AND its handlers pointed at a dangling `@name` target no hit-test resolves. Now a
+    compile error naming what was actually hit (`objectTargetDiagnostics`). The reporters' four
+    generators all had this on their end-of-game veil, which never displayed once.
+14. ~~**`pulse`/`shake` computed on `time`, which wraps.**~~ — **DONE**: both ride the monotone `clock`
+    now. The existing `time`-wraps warning only grepped the channel TEXT, so it said nothing at all when
+    the wrapping clock sat inside the callee — it now follows `time` through functions and names them.
+    MIGRATION: capture instants with `clock`.
+15. ~~**`--check` line:col pointed into a program the author never wrote.**~~ — **DONE**: `lintDoc` linted
+    the text rebuilt from the Doc (no `scene { … }` block), so every position was offset by that block's
+    height and every scope read `scene`. Pass the source (`lintDoc(doc, src)`) → exact lines and real
+    `object "X"` scopes. The editor keeps the rebuilt-text path, where that text IS the file.
+16. ~~**A PROGRAM saved as `.flat` passed `--check` vacuously.**~~ — **DONE**: refused now. The danger
+    was tooling-shaped: a check written against the wrong extension ALWAYS passed and looked like a net.
+17. ~~**Calling a package function required a `use` the sugar happened to write.**~~ — **DONE**:
+    auto-import on call. A generator emitting `feedback` per element broke at the exact moment its last
+    element was removed.
+18. ~~**Error messages that did not state the rule.**~~ — **DONE**: a swallowed non-assignment statement
+    (`… send "x", 1`) and a misplaced `as` both name the rule now, instead of `unexpected character """`
+    and `"layer" expected`.
+19. ~~**`flatc` loaded every `.flat` in the folder, and never named the culprit.**~~ — **DONE**:
+    `--no-libs`, plus the offending file's name in the error.
+20. ~~**No idiom for drawing a `link`'s thread.**~~ — **DONE**: documented in
+    [behavior-and-interactions](./behavior-and-interactions.md#drawing-the-thread-of-a-link) (rotate +
+    stretch a bar of known length). The example is compiled and replayed, not sketched.

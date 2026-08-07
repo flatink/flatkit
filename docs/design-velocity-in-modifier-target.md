@@ -13,9 +13,9 @@
 ## 1. Surface d'auteur (validée)
 `velocity(<expr>)` valide **uniquement dans une cible de `spring`/`smooth`** (lint l'exige). Composable.
 ```
-# .flat
+// .flat
 group "Suspente" spring rotation "rad(-velocity(crochetX) * 40)" stiffness 0.06 damping 0.22 { … }
-# .flatink
+// .flatink
 object "Hero" { spring rotationDeg = -velocity(crochetX) * 40 { stiffness 0.06 damping 0.22 } }
 ```
 Composable (≠ un `kind: sway` figé) : `"rad(-velocity(crochetX)*40 + 2*sin(time))"` (balancier réactif + idle).

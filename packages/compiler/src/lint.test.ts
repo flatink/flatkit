@@ -40,6 +40,16 @@ describe('lint — expressions', () => {
     expect(d.every((x) => !/two statements on one line/.test(x.message))).toBe(true)
   })
 
+  it('a swallowed ACTION (not just an assignment) is named, with the one-action-per-line rule', () => {
+    // `score = score + 1  send "correct", 1` reported `unexpected character """` — the rule was in the docs
+    // but nowhere near the message. Only assignments were detected; actions fell through to the generic text.
+    const d = lint('when pressed { if t == 2 { score = score + 1  send "correct", 1 } }', { variables: ['score', 't'] })
+    const m = d.map((x) => x.message).find((x) => /two statements on one line/.test(x))
+    expect(m).toBeDefined()
+    expect(m).toMatch(/`send …`/) // names what was swallowed
+    expect(m).toMatch(/own line/) // states the rule
+  })
+
   it('dx/dy are valid offset channels, but their expressions are still linted', () => {
     expect(lint('dx = 58 * sin(time)  dy = 0')).toEqual([]) // valid offset bindings → nothing to report
     const d = lint('dx = speed') // unknown variable inside the offset expression is still caught

@@ -307,6 +307,27 @@ describe('headless -- scratch / connect (semantic gestures for reveal/link)', ()
     expect(res.expectFailures).toBeUndefined()
   })
 
+  // `{ enabled … }` gates the GESTURE, not the handler: `when released` keeps firing once the link is off.
+  // The target index used to keep the LAST resolved value, so a handler gated on `target == 1` re-ran on
+  // every further press — an activity could finish with pairs it never actually connected.
+  it('a link gated OFF resolves to target 0, never the previous gesture\'s index', () => {
+    const b = mkText('B', 70, 70)
+    const targets = { id: 'Targets', kind: 'group', name: 'Targets', transform: IDENTITY, layers: [{ id: 'cl', name: 'c', visible: true, locked: false, opacity: 1, items: [b] }] } as never
+    const source = mkText('Source', 0, 0)
+    const doc: Doc = {
+      width: 100, height: 100, symbols: [], variables: { ex: 0, ey: 0, target: 0, done: 0, linked: 0 },
+      layers: [{ id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: [targets, source] } as Layer],
+      interactors: [{ targetId: 'Source', axis: 'link', varX: 'ex', varY: 'ey', varT: 'target', confine: 'Targets', enabled: 'done == 0' }],
+      interactions: [{ id: 'i1', targetId: 'Source', event: 'release', actions: [
+        { do: 'if', cond: 'target == 1', then: [{ do: 'setVar', name: 'done', value: '1' }, { do: 'setVar', name: 'linked', value: 'linked + 1' }] },
+      ] }],
+      timeline: { fps: 24, durationFrames: 1, tracks: [] },
+    }
+    const res = playHeadless(doc, Array(3).fill({ type: 'connect', source: 'Source', target: 'B' }))
+    expect(res.vars.linked).toBe(1) // counted ONCE, not once per release
+    expect(res.vars.target).toBe(0) // the gated-off releases reached nothing
+  })
+
   // Keyboard replay: the `key` gesture is the only way to exercise `keys.<Name>` without a browser.
   it('key holds a key for N sim frames, then releases it', () => {
     const doc: Doc = {

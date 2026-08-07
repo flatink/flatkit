@@ -47,13 +47,19 @@ scene {
 }
 
 object "Sun" {
-  scaleX = 1 + sin(time * 3) * 0.1   # gentle pulse
-  scaleY = 1 + sin(time * 3) * 0.1
+  scaleX = 1 + sin(clock * 3) * 0.1   // gentle pulse
+  scaleY = 1 + sin(clock * 3) * 0.1
 }
 ```
 
-`time` is seconds elapsed; `sin`/`cos` and friends are built in (see [Expressions](expressions-and-stdlib.md)).
-Channels you can bind: `x`, `y`, `scaleX`, `scaleY`, `rotation`, `opacity`.
+`clock` is seconds elapsed, **monotone**; `sin`/`cos` and friends are built in (see
+[Expressions](expressions-and-stdlib.md)). Channels you can bind: `x`, `y`, `scaleX`, `scaleY`,
+`rotation`, `opacity`.
+
+> **`clock`, not `time`.** `time` restarts at 0 every `durationFrames` (2.5 s by default), so free-running
+> motion **jumps** on each loop and a one-shot ramp **replays**. Use `time` only for motion you tuned to
+> the loop itself; use `clock` for ambience and for any instant you capture and compare later. `--check`
+> warns when a channel reads `time` under a short timeline — including through a function you wrote.
 
 ## 3. Make it react
 
@@ -71,7 +77,7 @@ scene {
 
 object "Sun" {
   when clicked { score = score + 1 }
-  scaleY = self.grabbed ? 0.92 : 1     # squash while pressed
+  scaleY = self.grabbed ? 0.92 : 1     // squash while pressed
 }
 ```
 

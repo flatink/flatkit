@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { printFlat, parseFlat, parseFlatLib, pathToData, printProgram, parseProgram, printProgramFull, parseProgramFull, behaviorDiagnostics, type Program } from './flatFormat'
+import { printFlat, parseFlat, parseFlatLib, pathToData, printProgram, parseProgram, printProgramFull, parseProgramFull, behaviorDiagnostics, objectTargetDiagnostics, expandFeedback, type Program } from './flatFormat'
 import { parsePathData, circlePath, ellipsePath, rectPath } from './svgPath'
 import { folderPath } from './layers'
 import type { Folder, Group, Image, Instance, Region, SymbolDef, Text } from '@flatkit/types'
@@ -429,6 +429,64 @@ describe('flatFormat — .flatink program', () => {
     expect(diags[0].scope).toBe('object "G"')
     expect(diags[0].diag.line).toBe(8) // absolute line of `scaleZ = 1`
     expect(diags[0].diag.message).toContain('unknown channel "scaleZ"')
+  })
+
+  it('a misplaced `as` states the ordering rule instead of "layer expected"', () => {
+    // `as` at the END lands where the next item/layer was expected → the bare `"layer" expected, "as" found`
+    // sent the author auditing their layer structure, which was never the problem.
+    const bad = 'size 100 100\nscene { layer "L" { rect 0 0 10 10 fill #ffffff as "Eclat" } }\n'
+    expect(() => parseProgramFull(bad)).toThrow(/"as" is out of place/)
+    expect(() => parseProgramFull(bad)).toThrow(/RIGHT AFTER its geometry/)
+    // The correct order still parses, and the shape carries the name.
+    const good = 'size 100 100\nscene { layer "L" { rect 0 0 10 10 as "Eclat" fill #ffffff } }\n'
+    expect((parseProgramFull(good).layers[0].items[0] as Region).name).toBe('Eclat')
+  })
+
+  it('objectTargetDiagnostics: an `object` block on a SHAPE binds to nothing (was silent)', () => {
+    const src = [
+      'size 100 100',                              // 1
+      'var doneAt = 0',                            // 2
+      'scene {',                                   // 3
+      '  layer "L" {',                             // 4
+      '    rect 0 0 100 100 as "Eclat" fill #fff', // 5
+      '  }',                                       // 6
+      '}',                                         // 7
+      'object "Eclat" {',                          // 8
+      '  opacity = 1 - doneAt',                    // 9
+      '}',                                         // 10
+      '',
+    ].join('\n')
+    // The binding really is dropped: a Region carries no pose (isPoseable is false).
+    const item = parseProgramFull(src).layers[0].items[0] as { expressions?: Record<string, string> }
+    expect(item.expressions).toBeUndefined()
+    const diags = objectTargetDiagnostics(src)
+    expect(diags).toHaveLength(1)
+    expect(diags[0].scope).toBe('object "Eclat"')
+    expect(diags[0].diag.line).toBe(8) // the `object` keyword, absolute in the source
+    expect(diags[0].diag.message).toContain('is a shape')
+    expect(diags[0].diag.message).toContain('Wrap it in a group')
+  })
+
+  it('objectTargetDiagnostics: tells a LAYER and an unknown name apart, and stays silent on real targets', () => {
+    const src = [
+      'size 100 100',
+      'scene {',
+      '  layer "L" {',
+      '    group "G" { layer "c" { circle 0 0 5 fill #f00 } }',
+      '    text "Hi" as "Greet" at 0,0 size 10 color #000000',
+      '  }',
+      '}',
+      'object "L" { opacity = 0.5 }',     // a layer — not animatable
+      'object "Nope" { opacity = 0.5 }',  // a typo — nothing of that name
+      'object "G" { opacity = 0.5 }',     // a group — fine
+      'object "Greet" { opacity = 0.5 }', // a text id — fine
+      'object "Hi" { opacity = 0.5 }',    // a text content name — fine
+      '',
+    ].join('\n')
+    const diags = objectTargetDiagnostics(src)
+    expect(diags.map((d) => d.scope)).toEqual(['object "L"', 'object "Nope"'])
+    expect(diags[0].diag.message).toContain('is a layer')
+    expect(diags[1].diag.message).toContain('no group, instance, text or image named "Nope"')
   })
 
   it('behaviorDiagnostics surfaces a dropped parse error in a SCENE script (incomplete assignment)', () => {
@@ -992,7 +1050,7 @@ function i_name(doc: { layers: { items: { id: string; name?: string }[] }[] }, i
 
 describe('flatFormat -- feedback sugar (EDU #10)', () => {
   const findItem = (prog: Program, name: string) => prog.layers[0].items.find((it) => 'name' in it && it.name === name) as Group
-  it('feedback <tokens> -> channel bindings (composed) + use "feedback"', () => {
+  it('feedback <tokens> -> channel bindings (composed, on ONE line) + use "feedback"', () => {
     const src = [
       'size 200 200',
       'scene { layer "L" { group "Btn" at 100,100 { layer "c" { circle 0 0 30 fill #00aaff } } } }',
@@ -1004,8 +1062,13 @@ describe('flatFormat -- feedback sugar (EDU #10)', () => {
       scaleX: 'lift(self.hovered)',
       scaleY: 'lift(self.hovered) * tilt(self.grabbed)', // hover + grab composed on one channel
       opacity: 'dim(self.hovered)',
-      rotation: 'shake(wrong, time)',
+      rotation: 'shake(wrong, clock)', // monotone: on `time` the wobble skipped on every timeline loop
     })
+  })
+  it('the sugar is LINE-PRESERVING (one line in, one line out — diagnostics stay on the author\'s lines)', () => {
+    const src = ['size 200 200', 'scene { layer "L" { group "Btn" { layer "c" { circle 0 0 30 fill #00aaff } } } }',
+      'object "Btn" {', '  feedback lift tilt dim shake(wrong)', '}'].join('\n')
+    expect(expandFeedback(src).split('\n')).toHaveLength(src.split('\n').length)
   })
   it('composes only the chosen channels (no clash with x/y position bindings)', () => {
     const src = [

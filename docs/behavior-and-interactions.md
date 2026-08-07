@@ -7,8 +7,8 @@ Everything after the `scene { … }` block is behavior. It attaches to named sce
 var score = 0
 
 object "Coin" {
-  when clicked { score = score + 1 }     # an EVENT handler (actions)
-  rotation = time * 90                    # a CHANNEL binding (expression, every frame)
+  when clicked { score = score + 1 }     // an EVENT handler (actions)
+  rotation = clock * 90                   // a CHANNEL binding (expression, every frame)
 }
 
 every frame { if (score >= 10) { send "win" } }
@@ -85,7 +85,7 @@ Drive an item's pose every frame with an expression. Channels: `x`, `y`, `scaleX
 
 ```
 object "Needle" {
-  rotation = atan2(mouse.y - 160, mouse.x - 240)   # point at the cursor (RADIANS)
+  rotation = atan2(mouse.y - 160, mouse.x - 240)   // point at the cursor (RADIANS)
   opacity  = lit ? 1 : 0.3
 }
 ```
@@ -94,20 +94,21 @@ object "Needle" {
 instead — sugar for `rotation = rad(<expr>)`: `rotationDeg = 45`, `rotationDeg = handAngle`.
 
 `x`/`y` are **absolute** — they REPLACE the item's declared `at X,Y`. For motion **around** the anchor,
-bind the additive offsets **`dx`/`dy`** instead: `pos = at + (dx, dy)`, so `dx = 30*sin(time)` wobbles a
+bind the additive offsets **`dx`/`dy`** instead: `pos = at + (dx, dy)`, so `dx = 30*sin(clock)` wobbles a
 group `at 620,150` around 620 with no base to re-inject (and `dx`/`dy` add on top of `x`/`y` if both are
 bound). Offsets are binding-only — no keyframe/`spring`/`smooth` form. See the
 [absolute-vs-offset gotcha](dsl-gotchas.md).
 
 `self.x`/`self.y`/… is the item's own current pose; `mouse.x`/`mouse.y` (and `mouse.wheel`, the per-frame
-scroll delta), `time`, `frame`, variables and named objects (`Target.x`) are all available — see
-[Expressions](expressions-and-stdlib.md).
+scroll delta), `time`, `clock`, `frame`, variables and named objects (`Target.x`) are all available — see
+[Expressions](expressions-and-stdlib.md). Prefer **`clock`** (monotone) over `time` (restarts on every
+timeline loop) for free-running motion and for any instant you capture and compare later.
 
 ## Drag & drop
 
 ```
 object "Piece" {
-  drag px, py                            # follow the pointer, writing into px/py (use them: x = px, y = py)
+  drag px, py                            // follow the pointer, writing into px/py (use them: x = px, y = py)
   x = px   y = py
   when dropped on Slot at pointer { placed = 1 }
 }
@@ -115,6 +116,11 @@ object "Piece" {
 
 - `drag x, y` / `dragX x` / `dragY y` — the gesture writes the position into your variables.
 - `{ confine to <Zone> }` clamp · `{ snap <grid> }` pixel-snap · `{ enabled <expr> }` active only while the expression ≠ 0 (a dynamic lock — no ternary needed).
+- ⚠️ **`enabled` gates the GESTURE, not the handlers.** Once it is off the object stops being draggable, but
+  `when pressed` / `when released` / `when clicked` **still fire** on it. Guard the handler body yourself
+  (`when released { if done == 0 { … } }`) whenever it must run only while the gesture is live. (A `link`'s
+  target index is the exception: it resolves to `0` — "no target reached" — on a gated-off release, so it
+  can never hand you the previous gesture's answer.)
 - **Drop zones**: by default the object's **center** is tested against the zone; `at pointer` tests the
   pointer instead. Define an explicit rectangle with `group "Zone" … hitbox <w> <h> { … }`.
 - Several `when dropped on` per object are evaluated in declaration order (the right-zone / wrong-zones pattern).
@@ -135,6 +141,35 @@ link  <endX>, <endY>, <target> to <Group>          # pull a thread → end follo
 Each output also accepts an **array element** (`drag hx[i], hy[i]`, `reveal seen[2]`) — the natural form
 under `each` (see below).
 
+### Drawing the thread of a `link`
+
+`link` gives you the end position and the target index; **the visible wire is yours to draw**. The idiom:
+draw a horizontal bar of a known length, anchored at the source, then rotate and stretch it onto the end.
+
+```
+use "gesture"    // angle(cx, cy, px, py)   → radians
+use "collision"  // dist(ax, ay, bx, by)    → length
+
+scene {
+  layer "Fils" {
+    // A 100 px bar whose LEFT edge sits on the origin → scaling it stretches it away from the anchor.
+    group "Fil" at 120,300 { layer "c" { rect 0 -1 100 2 fill #3355ff } }
+  }
+  layer "Jeu" { group "Src" at 120,300 { layer "c" { circle 0 0 20 fill #3355ff } } }
+}
+
+object "Src" { link ex, ey, hit to Cibles }
+object "Fil" {
+  opacity  = self.grabbed          // only visible while the thread is being pulled
+  rotation = angle(120, 300, ex, ey)
+  scaleX   = dist(120, 300, ex, ey) / 100   // 100 = the bar's DRAWN length
+}
+```
+
+Two things make it work: the bar is drawn **from its own origin** (so `scaleX` stretches the far end, not
+both), and the divisor is the bar's drawn length. With the source at a variable position, replace the
+literals with its coordinates.
+
 ## Pointer gestures (drag delta, finger-scroll, tap vs drag)
 
 `mouse.x`/`mouse.y` hold the pointer position inside **any** handler — including `when pressed` /
@@ -151,7 +186,7 @@ object "List" {
     base = off
   }
   when dragged {
-    off = base + (mouse.y - a)   # `off` scrolls by the finger delta
+    off = base + (mouse.y - a)   // `off` scrolls by the finger delta
   }
 }
 ```
@@ -161,7 +196,7 @@ wheel is still), read in an `every frame` accumulator — the same idiom as the 
 
 ```
 every frame {
-  off = clamp(off + mouse.wheel, 0, max)   # one notch ≈ tens of px; scale/clamp to taste
+  off = clamp(off + mouse.wheel, 0, max)   // one notch ≈ tens of px; scale/clamp to taste
 }
 ```
 
@@ -175,8 +210,8 @@ click** when you drag. That's what makes "tap a card to pick it, drag the list t
 
 ```
 object "Card" {
-  when clicked { picked = id }                 # fires on a TAP only
-  when dragged { off = base + (mouse.y - a) }  # a DRAG scrolls — `clicked` does not fire
+  when clicked { picked = id }                 // fires on a TAP only
+  when dragged { off = base + (mouse.y - a) }  // a DRAG scrolls — `clicked` does not fire
 }
 ```
 
@@ -200,7 +235,7 @@ channel so it never clashes with your `x`/`y` bindings:
 ```
 object "Tile" {
   x = tx   y = ty
-  feedback lift tilt dim shake(wrongZone)   # lift=hover grow · tilt=grab squash · dim=hover opacity · shake=refusal wobble
+  feedback lift tilt dim shake(wrongZone)   // lift=hover grow · tilt=grab squash · dim=hover opacity · shake=refusal wobble
 }
 ```
 
@@ -213,21 +248,27 @@ in a handler so nothing is hidden:
 
 ```
 var shown = -999
-object "Hint" { opacity = pulse(shown, 4) }     # visible 4 s after each trigger, then gone
-object "Piece" { when dropped on Wrong { shown = time } }
+object "Hint" { opacity = pulse(shown, 4) }     // visible 4 s after each trigger, then gone
+object "Piece" { when dropped on Wrong { shown = clock } }
 ```
 
 (A multiplicative decay like `v * 0.86` is fine for a quick flash but vanishes before TEXT can be read —
 `pulse` gives a duration you state.)
+
+> ⚠️ **Capture the instant with `clock`, not `time`.** `pulse` and `shake` ride the monotone `clock`
+> precisely because `time` **resets every `durationFrames`** (2.5 s by default). Timed on `time`, a
+> one-shot end-of-game ramp *replays for ever* and a refusal wobble *skips* on every loop — with nothing
+> on screen, and nothing at `--check`, to say so. `--check` now names any function of yours that reads
+> `time` from inside a channel expression.
 
 ## Reuse / factoring
 
 Cut repetition with compile-time sugar (all resolved at parse → zero runtime cost):
 
 ```
-def gap = 70                              # a compile-time constant (removed at parse), used via $(…)
+def gap = 70                              // a compile-time constant (removed at parse), used via $(…)
 scene { layer "L" {
-  repeat i from 0 to 4 { circle $(40 + i*gap) 80 6 fill #ffd98a }   # generate N items; $(expr) interpolates
+  repeat i from 0 to 4 { circle $(40 + i*gap) 80 6 fill #ffd98a }   // generate N items; $(expr) interpolates
 } }
 ```
 
@@ -241,7 +282,7 @@ scene { layer "Pad" {
   repeat i from 0 to 8 { instance "Key"($(i+1)) as "K$(i)" at $(70 + (i%3)*80),$(80 + floor(i/3)*80) }
 } }
 
-each "Key" as i { when clicked { input = input * 10 + (i + 1) } }   # one handler per generated key
+each "Key" as i { when clicked { input = input * 10 + (i + 1) } }   // one handler per generated key
 ```
 
 **`match`** — declarative pairing (factors drag+drop for a matching activity):

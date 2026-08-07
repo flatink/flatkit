@@ -39,18 +39,22 @@ fn inZone(px, py, x, y, w, h) = px >= x && px <= x + w && py >= y && py <= y + h
 `,
   // Feedback: stateless reactions for interactive elements, driven by self.hovered/self.grabbed (0/1).
   // Use as channel bindings: scaleX = lift(self.hovered), opacity = dim(self.hovered),
-  // scaleY = tilt(self.grabbed), y = sink(self.grabbed), rotation = shake(wrong, time). The `feedback …`
+  // scaleY = tilt(self.grabbed), y = sink(self.grabbed), rotation = shake(wrong, clock). The `feedback …`
   // DSL sugar generates these lines for you. (settle-bounce needs a release timestamp → not stateless.)
   // `pulse(since, dur)` = a 1→0 linear ramp over `dur` seconds since the instant `since` (so a feedback
   // text/flash stays readable, vs a too-fast multiplicative decay). Capture the instant in a handler:
-  // `var shown = -999` + `when wrong { shown = time }`, then `opacity = pulse(shown, 4)`. Stateless: the
+  // `var shown = -999` + `when wrong { shown = clock }`, then `opacity = pulse(shown, 4)`. Stateless: the
   // author supplies the timestamp, nothing hidden.
+  //
+  // BOTH ride the MONOTONE `clock`, never `time`. `time` resets every `durationFrames` (2.5 s by default),
+  // which silently made a one-shot end-of-game `pulse` REPLAY forever and a refusal wobble SKIP on every
+  // loop — with nothing on screen, and nothing at `--check`, to say so. Capture the instant with `clock`.
   feedback: `
 fn lift(h) = h ? 1.06 : 1
 fn dim(h) = h ? 0.85 : 1
 fn tilt(g) = g ? 0.94 : 1
 fn sink(g) = g ? 2 : 0
 fn shake(bad, t) = bad ? sin(t * 40) * 4 : 0
-fn pulse(since, dur) = clamp(1 - (time - since) / dur, 0, 1)
+fn pulse(since, dur) = clamp(1 - (clock - since) / dur, 0, 1)
 `,
 }

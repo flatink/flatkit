@@ -17,6 +17,7 @@ import { contextLayers, getScopeTimeline, isContainer, isGroup, isText, isImage,
 import { importedFunctions } from '@flatkit/engine/stdlib'
 import { EXPR_CHANNELS } from '@flatkit/engine/timeline'
 import { objectNames } from '@flatkit/engine/sceneRefs'
+import { behaviorRegions } from '@flatkit/engine/flatFormat'
 import { itemBBox, dropZoneBounds } from '@flatkit/engine/groups'
 import { makePathSampler } from '@flatkit/engine/path'
 import { bboxIntersects } from '@flatkit/engine/bbox'
@@ -103,6 +104,26 @@ function itemNameById(doc: Doc, id: string): string | null {
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')
 
+/** Value functions reachable in this Doc whose body reads the LOOP-WRAPPED `time`, directly or through
+ *  another such function. Only `kind: 'value'` matters — a `proc` is not callable from a channel expression.
+ *  Fixpoint, so `fn a(t) = b(t)` inherits from `b`. Qualified aliases (`feedback.pulse`) are kept: an author
+ *  may call either form. */
+function functionsReadingTime(doc: Doc): string[] {
+  const defs = [...(doc.functions ?? []), ...importedFunctions(doc.imports)].filter((f) => f.kind === 'value')
+  const reads = new Set<string>()
+  for (;;) {
+    const before = reads.size
+    for (const f of defs) {
+      if (reads.has(f.name)) continue
+      const body = f.expr
+      // A parameter NAMED `time` would shadow the runtime scalar — then the body's `time` is just an argument.
+      if (!f.params.includes('time') && /\btime\b/.test(body)) { reads.add(f.name); continue }
+      for (const other of reads) if (new RegExp(`\\b${escapeRe(other)}\\s*\\(`).test(body)) { reads.add(f.name); break }
+    }
+    if (reads.size === before) return [...reads]
+  }
+}
+
 /** STRUCTURAL warnings (non-blocking) of a Doc: phantom drop zones, dead variables. */
 export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnostic }[] {
   const out: { scope: string; diag: Diagnostic }[] = []
@@ -134,22 +155,30 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
       if ((m?.length ?? 0) <= 1) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `global variable "${name}" never used (declared, but neither read nor written)` } })
     }
   }
-  // (c) raw `time` in a channel expression + a SHORT looping timeline → ambient motion JUMPS on each loop
+  // (c) `time` reaching a channel expression + a SHORT looping timeline → the motion JUMPS on each loop
   //     (`time = frame/fps` resets to 0 every `durationFrames`). The monotone `clock` never wraps.
+  //     A `time` reached THROUGH A FUNCTION counts: the costliest version of this trap was
+  //     `opacity = pulse(doneAt, 0.9)`, where the wrapping clock sat in the callee's body and the channel
+  //     text held no `time` at all — so a warning that only grepped the channel said nothing whatsoever.
   const dur = doc.timeline?.durationFrames ?? 60
   const fps = doc.timeline?.fps ?? 24
   if (dur <= 120) { // ≤ 5 s @24fps: short enough that the reset is visible as a periodic jump
-    let usesTime = false
+    const viaFn = functionsReadingTime(doc)
+    const culprits = new Set<string>()
     const scan = (layers: Layer[]) => {
       for (const l of layers) for (const it of l.items) {
-        if (isPoseable(it) && it.expressions) for (const k in it.expressions) if (/\btime\b/.test(it.expressions[k as keyof typeof it.expressions] ?? '')) usesTime = true
+        if (isPoseable(it) && it.expressions) for (const k in it.expressions) {
+          const expr = it.expressions[k as keyof typeof it.expressions] ?? ''
+          if (/\btime\b/.test(expr)) culprits.add('`time`')
+          for (const fn of viaFn) if (new RegExp(`\\b${escapeRe(fn)}\\s*\\(`).test(expr)) culprits.add(`\`${fn}()\`` + ' (which reads `time`)')
+        }
         if (isGroup(it)) scan(it.layers)
       }
     }
     scan(doc.layers)
-    if (usesTime) {
+    if (culprits.size) {
       const secs = Math.round((dur / fps) * 10) / 10
-      out.push(warn(`a channel expression uses \`time\`, but the timeline loops every ${secs}s (durationFrames ${dur}) — \`time\` resets each loop, so the motion jumps. Use the monotone \`clock\` (never wraps), drive it by \`frame/${dur}\`, or set a longer \`timeline\`.`))
+      out.push(warn(`a channel expression uses ${[...culprits].join(' and ')}, but the timeline loops every ${secs}s (durationFrames ${dur}) — \`time\` resets each loop, so the motion jumps (a one-shot ramp REPLAYS forever). Use the monotone \`clock\` (never wraps), drive it by \`frame/${dur}\`, or set a longer \`timeline\`.`))
     }
   }
   out.push(...docPaintParamWarnings(doc))
@@ -306,15 +335,24 @@ export function docLayoutWarnings(doc: Doc): { scope: string; diag: Diagnostic }
 }
 
 /** Semantic lint of a whole Doc (all the scopes) -> diagnostics labeled by scope.
- *  The scope program contains `object` blocks (outside DSL) -> we lint each region
- *  separately and re-project the lines (like the editor, cf. CodeEditor.lintFile).
- *  Adds the structural warnings (phantom drop zones, dead variables). */
-export function lintDoc(doc: Doc): { scope: string; diag: Diagnostic }[] {
+ *  A scope's text contains `object` blocks (outside DSL) -> we lint each region separately and re-project
+ *  the lines. `src` = the program SOURCE, when the caller has it (the CLI): the scene scope is then read
+ *  from it, so positions and scopes describe the author's file. Without it the scene scope falls back to
+ *  the text rebuilt from the Doc — right for the editor, where that rebuilt text IS the file being edited
+ *  (cf. CodeEditor.lintFile). Adds the structural warnings (phantom drop zones, dead variables). */
+export function lintDoc(doc: Doc, src?: string): { scope: string; diag: Diagnostic }[] {
   const out: { scope: string; diag: Diagnostic }[] = []
   const allVars = allScopeVariables(doc) // computed ONCE (global vars -> known in all the scopes)
   for (const { label, editPath } of scopes(doc)) {
     const ctx = docLintContext(doc, editPath, allVars)
-    for (const r of scopeRegions(scopeProgram(doc, editPath))) for (const d of lint(r.body, ctx)) out.push({ scope: label, diag: { ...d, line: d.line + r.line - 1 } })
+    // The SCENE scope is linted from the SOURCE whenever the caller has it (the CLI does). `scopeProgram`
+    // rebuilds a text the author never wrote -- no `scene { … }` block -- so its line numbers are offset by
+    // that block's height and its scope is always `scene`, never the `object "X"` the error is really in.
+    // Symbols keep the reconstruction: they come from `.flat` libs, whose source is not this program's.
+    const regions = src && editPath.length === 0
+      ? behaviorRegions(src)
+      : scopeRegions(scopeProgram(doc, editPath)).map((r) => ({ scope: label, body: r.body, line: r.line }))
+    for (const r of regions) for (const d of lint(r.body, ctx)) out.push({ scope: r.scope, diag: { ...d, line: d.line + r.line - 1 } })
   }
   out.push(...docStructureWarnings(doc))
   out.push(...docModifierWarnings(doc))
@@ -351,12 +389,13 @@ export function docModifierWarnings(doc: Doc): { scope: string; diag: Diagnostic
 
 const sev = (d: Diagnostic) => (d.severity === 'warning' ? 'warning' : 'error')
 
-/** Lint report of a Doc ready to display: `''` = no issue, otherwise `[scope] line:col: level: message`. */
-export function lintDocReport(doc: Doc): string {
-  return lintDoc(doc).map(({ scope, diag }) => `[${scope}] ${diag.line}:${diag.col}: ${sev(diag)}: ${diag.message}`).join('\n')
+/** Lint report of a Doc ready to display: `''` = no issue, otherwise `[scope] line:col: level: message`.
+ *  Pass `src` (the program source) to get positions that point INTO IT rather than into a rebuilt program. */
+export function lintDocReport(doc: Doc, src?: string): string {
+  return lintDoc(doc, src).map(({ scope, diag }) => `[${scope}] ${diag.line}:${diag.col}: ${sev(diag)}: ${diag.message}`).join('\n')
 }
 
 /** `true` if the Doc has at least one ERROR (warnings alone do not block). */
-export function docHasErrors(doc: Doc): boolean {
-  return lintDoc(doc).some(({ diag }) => sev(diag) === 'error')
+export function docHasErrors(doc: Doc, src?: string): boolean {
+  return lintDoc(doc, src).some(({ diag }) => sev(diag) === 'error')
 }

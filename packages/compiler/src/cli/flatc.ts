@@ -12,7 +12,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, watch, mkdirSync, copyFileSync } from 'node:fs'
 import { resolve, dirname, basename, extname, join, relative, isAbsolute } from 'node:path'
 import { compileFlatpack, packToJSON, type MediaMap } from '../compile'
-import { parseProgramFull, parseFlatLib, behaviorDiagnostics } from '@flatkit/engine/flatFormat'
+import { parseProgramFull, parseFlatLib, behaviorDiagnostics, objectTargetDiagnostics } from '@flatkit/engine/flatFormat'
 import { hasPackage } from '@flatkit/engine/stdlib'
 import { parseUnits } from '@flatkit/engine/dsl'
 import { sanitizeDoc } from '@flatkit/engine/validateDoc'
@@ -64,6 +64,8 @@ Usage:
                     play with sameOriginAssetResolver(<flatpackUrl>))
   --check           semantic lint only (no .flatpack); exits ≠0 on ERROR (warnings do not stop). Lints a
                     program .flatink OR an asset library .flat (per-symbol; several .flat are merged)
+  --no-libs         do NOT auto-discover the .flat files sitting next to the program (use it in a working
+                    folder, where a neighbouring scratch file is not a dependency)
   --watch           recompile on every change in the folder (agent → player loop)
   --play            run the file WITHOUT a canvas, replay --script and print { sends, vars } (JSON)
   --trace           (with --play) HUMAN-READABLE log per gesture: emitted sends + variable diff (debug)
@@ -99,21 +101,22 @@ Media referenced by 'asset "id" "path" kind' are embedded (paths relative to the
 /** How media is baked: `inline` = base64 data-URI in the .flatpack; `external` = relative key + sidecar files. */
 type AssetMode = 'inline' | 'external'
 type MediaCopy = { src: string; key: string } // external mode: source file → relative key (forward slashes)
-type BuildResult = { doc: Doc; flatLibs: number; packages: number; media: number; mediaCopies: MediaCopy[]; behaviorDiags: ReturnType<typeof behaviorDiagnostics> }
+type BuildResult = { doc: Doc; flatLibs: number; packages: number; media: number; mediaCopies: MediaCopy[]; behaviorDiags: ReturnType<typeof behaviorDiagnostics>; src: string }
 
 /**
  * Reads a `.flatink`, resolves libs/packages/media, compiles → standalone Doc. Throws on compile error.
  * `assetMode`: `inline` embeds each media as a base64 data-URI (default); `external` keeps `asset.data` as a
  * relative key (`<assetsDir>/<path>`) and returns the files to copy beside the .flatpack (no base64 bloat).
  */
-function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], assetMode: AssetMode = 'inline', assetsDir = ''): BuildResult {
+function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], assetMode: AssetMode = 'inline', assetsDir = '', noLibs = false): BuildResult {
   const baseDir = dirname(programPath)
   const programSrc = readFileSync(programPath, 'utf8')
   const prog = parseProgramFull(programSrc)
 
-  // .flat libs: explicit if provided, otherwise auto-discover the .flat files in the program's folder.
+  // .flat libs: explicit if provided, otherwise auto-discover the .flat files in the program's folder
+  // (`--no-libs` opts out — in a working folder, a neighbouring scratch file is not a dependency).
   const flatPaths = new Set<string>(explicitFlats.map((p) => resolve(p)))
-  if (!flatPaths.size) for (const f of readdirSync(baseDir).filter((f) => f.endsWith('.flat'))) flatPaths.add(join(baseDir, f))
+  if (!flatPaths.size && !noLibs) for (const f of readdirSync(baseDir).filter((f) => f.endsWith('.flat'))) flatPaths.add(join(baseDir, f))
 
   // PACKAGES: non-stdlib `use "x"` → local files inlined (x.flatink = functions, x.flat = symbols).
   const pkgFunctions: FuncDef[] = []
@@ -129,7 +132,15 @@ function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], 
     if (found) localResolved.add(name)
     else process.stderr.write(`flatc: package not found: "${name}" (neither stdlib, nor ${name}.flatink / ${name}.flat)\n`)
   }
-  const assetSrcs = [...flatPaths].map((p) => readFileSync(p, 'utf8'))
+  // Parse each lib HERE so a failure names the FILE. Libs are auto-discovered from the folder, so the one
+  // that fails is often a neighbour the author never mentioned — a bare "compile error: …" sent them hunting
+  // through their own program for a fault that was never in it.
+  const assetSrcs = [...flatPaths].map((p) => {
+    const src = readFileSync(p, 'utf8')
+    try { parseFlatLib(src) } catch (e) { throw new Error(`${basename(p)}: ${(e as Error).message} (pass --no-libs to ignore the .flat files sitting next to the program)`, { cause: e }) }
+    if (programConstructsIn(src).length) process.stderr.write(`flatc: ${basename(p)}: looks like a PROGRAM saved as .flat — loaded as a symbol library, so its scene/object blocks are ignored. Rename it to .flatink, or pass --no-libs.\n`)
+    return src
+  })
 
   // Media: each `asset … "path" …` resolved relative to the program. `inline` → base64 data-URI baked in;
   // `external` → `asset.data` becomes a relative key and the file is copied next to the .flatpack.
@@ -153,24 +164,26 @@ function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], 
   if (pkgFunctions.length) doc = { ...doc, functions: [...(doc.functions ?? []), ...pkgFunctions] }
   const stdImports = (doc.imports ?? []).filter(hasPackage)
   doc = { ...doc, imports: stdImports.length ? stdImports : undefined }
-  return { doc, flatLibs: flatPaths.size, packages: localResolved.size, media: Object.keys(media).length, mediaCopies, behaviorDiags: behaviorDiagnostics(programSrc) }
+  // Both are source-based (exact positions) and both are ERRORS: a parse-level drop inside a block, and a
+  // block that binds to no animatable item at all.
+  return { doc, flatLibs: flatPaths.size, packages: localResolved.size, media: Object.keys(media).length, mediaCopies, src: programSrc, behaviorDiags: [...behaviorDiagnostics(programSrc), ...objectTargetDiagnostics(programSrc)] }
 }
 
 /** Compile once (write or --check). Returns the exit code. */
-function compileOnce(programPath: string, explicitFlats: string[], out: string, checkOnly: boolean, assetMode: AssetMode = 'inline'): number {
+function compileOnce(programPath: string, explicitFlats: string[], out: string, checkOnly: boolean, assetMode: AssetMode = 'inline', noLibs = false): number {
   const outPath = out ? resolve(out) : join(dirname(programPath), basename(programPath, extname(programPath)) + '.flatpack')
   // External mode: sidecar folder next to the .flatpack, e.g. `game.flatpack` → `game.assets/`.
   const assetsDir = assetMode === 'external' ? basename(outPath, extname(outPath)) + '.assets' : ''
   let built: BuildResult
-  try { built = buildDocFromProgram(programPath, explicitFlats, assetMode, assetsDir) }
+  try { built = buildDocFromProgram(programPath, explicitFlats, assetMode, assetsDir, noLibs) }
   catch (e) { process.stderr.write(`flatc: compile error: ${(e as Error).message}\n`); return 1 }
   const { doc } = built
   // Behavior parse errors (unknown channels / malformed statements inside `object` blocks) that the
   // Doc-based linter can't see — they were dropped before reaching the model. Always ERRORS.
   const behaviorReport = built.behaviorDiags.map(({ scope, diag }) => `[${scope}] ${diag.line}:${diag.col}: error: ${diag.message}`).join('\n')
-  // Dedupe exact-duplicate lines: a scene parse error could in principle be reported by both paths.
-  const report = [...new Set([behaviorReport, lintDocReport(doc)].flatMap((r) => r.split('\n')).filter(Boolean))].join('\n')
-  const hasErrors = docHasErrors(doc) || built.behaviorDiags.length > 0
+  // Dedupe exact-duplicate lines: a scene parse error IS reported by both paths (both now read the source).
+  const report = [...new Set([behaviorReport, lintDocReport(doc, built.src)].flatMap((r) => r.split('\n')).filter(Boolean))].join('\n')
+  const hasErrors = docHasErrors(doc, built.src) || built.behaviorDiags.length > 0
   if (checkOnly) {
     if (report) process.stderr.write(report + '\n')
     if (hasErrors) return 1
@@ -195,6 +208,18 @@ function compileOnce(programPath: string, explicitFlats: string[], out: string, 
   return 0
 }
 
+/** PROGRAM-only constructs found in what is supposed to be a `.flat` symbol library. `parseFlatLib` reads a
+ *  `.flat` as a bag of symbols and silently ignores everything else, so a whole program saved under the wrong
+ *  extension parsed to "0 symbol(s)" and passed `--check` with nothing verified — the worst possible answer
+ *  for tooling, since a check written against the wrong extension ALWAYS passes and looks like a safety net.
+ *  Both constructs are anchored at line start: only a real block matches, not a mention inside a string. */
+function programConstructsIn(src: string): string[] {
+  const found: string[] = []
+  if (/^[ \t]*scene\s*\{/m.test(src)) found.push('a `scene { … }` block')
+  if (/^[ \t]*object\s+"/m.test(src)) found.push('`object "…" { … }` blocks')
+  return found
+}
+
 /**
  * `--check` for a `.flat` asset LIBRARY (one or several): parse via `parseFlatLib` (NOT the program parser,
  * which would choke on `symbol`/`params`/`layer`), merge the symbols into an empty-scene Doc, and run the SAME
@@ -208,6 +233,11 @@ function checkFlatLibs(flatPaths: string[]): number {
   for (const p of flatPaths) {
     let src: string
     try { src = readFileSync(p, 'utf8') } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
+    const disguised = programConstructsIn(src)
+    if (disguised.length) { // a PROGRAM saved as `.flat` — see programConstructsIn
+      process.stderr.write(`flatc: ${basename(p)}: this is a PROGRAM, not a symbol library — it contains ${disguised.join(' and ')}, which a .flat never carries and which --check therefore does NOT verify. Rename it to .flatink.\n`)
+      return 1
+    }
     try { symbols.push(...parseFlatLib(src).symbols) } // ids are uid-unique across calls -> safe to merge libs
     catch (e) { process.stderr.write(`flatc: ${basename(p)}: ${(e as Error).message}\n`); return 1 } // a malformed lib -> a clean parse error (not "[scene] …")
   }
@@ -427,7 +457,7 @@ async function previewOnce(flatPath: string, symbolName: string, out: string, fr
 export function run(argv: string[]): number | Promise<number> {
   const args = argv.slice(2)
   let out = '', scriptPath = '', symbolName = ''
-  let checkOnly = false, doWatch = false, doPlay = false, doRender = false, doTrace = false, doPreview = false
+  let checkOnly = false, doWatch = false, doPlay = false, doRender = false, doTrace = false, doPreview = false, noLibs = false
   let frame = 0, scale = 2, steps = 0, pad = 24
   let scaleAuto = false
   let bboxMode: 'all' | 'frame0' = 'all'
@@ -441,6 +471,7 @@ export function run(argv: string[]): number | Promise<number> {
     else if (a === '--script') scriptPath = resolve(args[++i] ?? '')
     else if (a === '--assets') assetMode = args[++i] === 'external' ? 'external' : 'inline'
     else if (a === '--check') checkOnly = true
+    else if (a === '--no-libs') noLibs = true
     else if (a === '--watch') doWatch = true
     else if (a === '--play') doPlay = true
     else if (a === '--trace') doTrace = true
@@ -470,7 +501,7 @@ export function run(argv: string[]): number | Promise<number> {
   // (the following positionals are more `.flat` libs to merge). Every other path is unchanged.
   const action: () => number = checkOnly && filePath.endsWith('.flat')
     ? () => checkFlatLibs([filePath, ...explicitFlats])
-    : () => compileOnce(filePath, explicitFlats, out, checkOnly, assetMode)
+    : () => compileOnce(filePath, explicitFlats, out, checkOnly, assetMode, noLibs)
   if (doWatch) {
     const code = action()
     const baseDir = dirname(filePath)

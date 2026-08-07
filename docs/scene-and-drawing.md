@@ -73,8 +73,8 @@ frame — keep those small (see the [gotchas](dsl-gotchas.md) for the perf detai
 Cut a container's content to a viewport — scroll panes, reveal windows, framed cards:
 
 ```
-group "Viewport" at 20,20 clip 0 0 120 80 { layer "c" { … } }   # rectangular clip, in the group's LOCAL coords
-mask layer "Window" { circle 60 60 50 fill #fff  layer "c" { … } }  # arbitrary clip shape (the mask's matter clips its child layers)
+group "Viewport" at 20,20 clip 0 0 120 80 { layer "c" { … } }   // rectangular clip, in the group's LOCAL coords
+mask layer "Window" { circle 60 60 50 fill #fff  layer "c" { … } }  // arbitrary clip shape (the mask's matter clips its child layers)
 ```
 
 - **`clip <x> <y> <w> <h>`** on a `group`/`instance` cuts everything outside the rectangle. **Render-only**:
@@ -121,15 +121,15 @@ text "loop" along path "M0 80 C120 0 360 0 480 80"       # …or inline SVG path
 - **`spacing <px>`** — extra tracking per glyph (may be negative; the effective advance is floored at 1px).
 - **Animate** by quoting the value (it becomes an expression, same scope as `bind`: `time`, `frame`,
   `clock`, vars): `start "time * 0.1"` scrolls the run along the path (**marquee** — wraps on a closed
-  shape); `spacing "sin(time) * 4"` eases the tracking.
+  shape); `spacing "sin(clock) * 4"` eases the tracking.
 - `along` replaces `at`/`box`/`wrap` (a path-laid run is not box-wrapped). A run longer than the path drops
   its trailing glyphs, and `flatc` warns (`… overflows its path (~Npx > Lpx)`).
 
 ## Images
 
 ```
-asset "logo" "logo.svg" image      # declare the media (top of file) — embedded by flatc
-scene { layer "c" { image "logo" 80 80 at -40,-40 } }   # the origin is the top-left → center with at -w/2,-h/2
+asset "logo" "logo.svg" image      // declare the media (top of file) — embedded by flatc
+scene { layer "c" { image "logo" 80 80 at -40,-40 } }   // the origin is the top-left → center with at -w/2,-h/2
 ```
 
 ## Transforms & placement

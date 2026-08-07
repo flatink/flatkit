@@ -12,7 +12,7 @@
 //
 //  PURE module (no DOM).
 // ─────────────────────────────────────────────────────────────────────────────
-import type { Asset, Doc, Folder, Group, Image, Instance, InstancePlayback, Item, Layer, ParamDef, Region, StateAnchor, StateMachine, SymbolDef, Text } from '@flatkit/types'
+import type { Asset, Doc, Folder, FuncDef, Group, Image, Instance, InstancePlayback, Item, Layer, ParamDef, Region, StateAnchor, StateMachine, SymbolDef, Text } from '@flatkit/types'
 import type { Path } from './path'
 import { normalizeClosedForText } from './path'
 import type { Paint, Stop, Tint } from './paint'
@@ -24,11 +24,12 @@ import type { BlendMode, ChannelModifier, Interactor } from '@flatkit/types'
 import { EXPR_CHANNELS, BIND_CHANNELS, type Easing, type ExprChannel, type BindChannel, type SoundClip, type Timeline } from './timeline'
 import { parsePathData, circlePath, ellipsePath, rectPath } from './svgPath'
 import { compileExpr, evalExpr, exprScope } from './expr'
-import { isGroup, isInstance, isText, isImage, isPoseable, folderPath } from './layers'
+import { isGroup, isInstance, isText, isImage, isPoseable, isRegion, folderPath } from './layers'
 import { itemBoundsByName } from './groups'
 import type { BBox } from './bbox'
 import { printUnits, parseUnits, type Diagnostic } from './dsl'
 import { timelineToUnits, unitsToTimeline, objectToUnits, unitsToObject, functionsToUnits, unitsToFunctions } from './scriptDoc'
+import { providingPackage } from './stdlib'
 
 let _id = 0
 const uid = (p: string) => `${p}${(_id++).toString(36)}`
@@ -732,11 +733,14 @@ function generateMatch(items: string[], zones: string[], body: string): string {
 //  rotation) so it never clashes with the object's x/y position bindings. Tokens:
 //    lift  → hover grow (scaleX, and scaleY factor)   tilt → grab squash (scaleY factor)
 //    dim   → hover opacity                            shake(<expr>) → refusal wobble (rotation), <expr> ≠ 0
-/** Expand the `feedback …` sugar into channel bindings + ensure `use "feedback"`. */
+/** Expand the `feedback …` sugar into channel bindings. LINE-PRESERVING: the generated bindings stay on the
+ *  ONE line the `feedback` sugar occupied (the parser splits statements at whitespace boundaries), and no
+ *  `use "feedback"` line is injected — the package is auto-imported from the calls themselves (`autoImports`).
+ *  Both matter for diagnostics: every line of the expanded source maps 1:1 onto the author's file, so a
+ *  reported line:col is the one they can actually go and look at. */
 export function expandFeedback(src: string): string {
   if (!/\bfeedback\b/.test(src)) return src
-  let used = false
-  const out = src.replace(/^([ \t]*)feedback\b([^\n]*)$/gm, (full: string, indent: string, rest: string) => {
+  return src.replace(/^([ \t]*)feedback\b([^\n]*)$/gm, (full: string, indent: string, rest: string) => {
     const tokens: { t: string; arg?: string }[] = []
     const re = /shake\(\s*([^)]*?)\s*\)|([A-Za-z][\w-]*)/g
     let m: RegExpExecArray | null
@@ -752,16 +756,11 @@ export function expandFeedback(src: string): string {
     }
     if (has('dim')) lines.push('opacity = dim(self.hovered)')
     const shake = tokens.find((x) => x.t === 'shake')
-    if (shake) lines.push(`rotation = shake(${shake.arg && shake.arg.length ? shake.arg : '0'}, time)`)
+    // `clock`, not `time`: `time` wraps every `durationFrames`, which made the wobble SKIP on each loop.
+    if (shake) lines.push(`rotation = shake(${shake.arg && shake.arg.length ? shake.arg : '0'}, clock)`)
     if (!lines.length) return full // nothing recognized → leave as-is
-    used = true
-    return lines.map((l) => indent + l).join('\n')
+    return indent + lines.join('  ') // one line in, one line out (two spaces = statement boundary)
   })
-  if (!used || /(^|\n)\s*use\s+"feedback"/.test(out)) return out
-  // Inject the import AFTER the `size` line (size must stay the first directive).
-  const sz = /^[ \t]*size\b[^\n]*\n/m.exec(out)
-  if (sz) { const i = sz.index + sz[0].length; return out.slice(0, i) + 'use "feedback"\n' + out.slice(i) }
-  return `use "feedback"\n${out}`
 }
 
 export function expandMatch(src: string): string {
@@ -858,8 +857,9 @@ const HEADER_DIRECTIVE = /^[ \t]*(?:size|background|timeline|var|asset|sound|use
  *  taken from the WHOLE program (before AND after the `scene { … }` block) — so a `fn` / `every frame` /
  *  `object` placed in the header is honored, not silently dropped — with the scene block and the header
  *  composition directives MASKED (blanked, newlines kept) so only behavior reaches the DSL parser and every
- *  offset stays 1:1 with the source. `bodyAt` = absolute offset of each object body (drives line mapping). */
-function extractBehavior(expanded: string): { sceneText: string; tailAt: number; objects: { name: string; body: string; bodyAt: number }[] } {
+ *  offset stays 1:1 with the source. `bodyAt` = absolute offset of each object body (drives line mapping);
+ *  `at` = offset of the `object` KEYWORD (so a diagnostic about the block itself points at its header). */
+function extractBehavior(expanded: string): { sceneText: string; tailAt: number; objects: { name: string; body: string; bodyAt: number; at: number }[] } {
   const si = expanded.search(/\bscene\b/)
   const open = si >= 0 ? expanded.indexOf('{', si) : -1
   const close = open >= 0 ? matchBrace(expanded, open) : -1
@@ -871,7 +871,7 @@ function extractBehavior(expanded: string): { sceneText: string; tailAt: number;
 
   // Extracts the `object "name" { … }` blocks; the rest (object spans blanked out) = scene scripts.
   let sceneText = '', i = 0
-  const objects: { name: string; body: string; bodyAt: number }[] = []
+  const objects: { name: string; body: string; bodyAt: number; at: number }[] = []
   while (i < src.length) {
     const m = /object\s+"((?:[^"\\]|\\.)*)"\s*\{/.exec(src.slice(i))
     if (!m) { sceneText += src.slice(i); break }
@@ -880,7 +880,7 @@ function extractBehavior(expanded: string): { sceneText: string; tailAt: number;
     const ob = start + m[0].length - 1
     const oc = matchBrace(src, ob)
     if (oc < 0) { sceneText += src.slice(start); break }
-    objects.push({ name: m[1].replace(/\\(.)/g, (_, c) => (c === 'n' ? '\n' : c)), body: src.slice(ob + 1, oc), bodyAt: ob + 1 })
+    objects.push({ name: m[1].replace(/\\(.)/g, (_, c) => (c === 'n' ? '\n' : c)), body: src.slice(ob + 1, oc), bodyAt: ob + 1, at: start })
     sceneText += blankSpan(src.slice(start, oc + 1)) // mask the object span (keep newlines) → scene stays aligned
     i = oc + 1
   }
@@ -895,17 +895,85 @@ function extractBehavior(expanded: string): { sceneText: string; tailAt: number;
  *  splits at the boundary.) Errors only, scoped by `object "name"` / `scene`, with line numbers absolute
  *  in the (expanded) source. */
 export function behaviorDiagnostics(src: string): { scope: string; diag: Diagnostic }[] {
+  const out: { scope: string; diag: Diagnostic }[] = []
+  for (const r of behaviorRegions(src))
+    for (const d of parseUnits(r.body).diagnostics) out.push({ scope: r.scope, diag: { ...d, line: d.line + r.line - 1 } })
+  return out
+}
+
+/** The LINTABLE regions of a program SOURCE: one per `object "name" { … }` body, plus the scene scripts —
+ *  each with its scope label and the 1-based absolute line it starts on. Positions map 1:1 onto the AUTHOR'S
+ *  file: the `scene { … }` block and the header directives are MASKED rather than removed, and the sugar
+ *  expansions are line-preserving. Use this (not a text rebuilt from the Doc) whenever a diagnostic will be
+ *  shown against a source file — a rebuilt program numbers a file the author never wrote. */
+export function behaviorRegions(src: string): { scope: string; body: string; line: number }[] {
   const expanded = expandProgramSugar(src)
   const lineAt = (off: number) => expanded.slice(0, off).split('\n').length // 1-based line at an absolute offset
-  const out: { scope: string; diag: Diagnostic }[] = []
   const { sceneText, tailAt, objects } = extractBehavior(expanded)
-  for (const ob of objects) {
-    const base = lineAt(ob.bodyAt)
-    for (const d of parseUnits(ob.body).diagnostics) out.push({ scope: `object "${ob.name}"`, diag: { ...d, line: d.line + base - 1 } })
-  }
-  const sceneBase = lineAt(tailAt) // scene scripts begin right after the `}` of the `scene { … }` block
-  for (const d of parseUnits(sceneText).diagnostics) out.push({ scope: 'scene', diag: { ...d, line: d.line + sceneBase - 1 } })
+  const out = objects.map((ob) => ({ scope: `object "${ob.name}"`, body: ob.body, line: lineAt(ob.bodyAt) }))
+  out.push({ scope: 'scene', body: sceneText, line: lineAt(tailAt) }) // masked → absolute, base line 1
   return out
+}
+
+/** Diagnostics for `object "<name>"` blocks that bind to NOTHING. Until now these were SILENT and total: the
+ *  channel bindings were dropped (only a group/instance/text/image carries a pose, cf. `isPoseable`) and the
+ *  handlers got a dangling `@name` target that no hit-test ever resolves — the program compiled, ran, and the
+ *  animation simply did not exist. It is always a typo or a misconception (a SHAPE or a LAYER named where a
+ *  group is required), never intentional → ERROR, and the message names what the author actually hit. */
+export function objectTargetDiagnostics(src: string): { scope: string; diag: Diagnostic }[] {
+  const expanded = expandProgramSugar(src)
+  const { objects } = extractBehavior(expanded)
+  if (!objects.length) return []
+  let composition: Program
+  try { composition = parseProgram(expanded) } catch { return [] } // a malformed scene is already reported by the parser
+  const byName = itemsByName(composition.layers)
+  // A named SHAPE and a LAYER are both addressable elsewhere in the language (`text … along "<id>"`, the
+  // outliner) but neither can carry a pose — worth telling apart, since the fix differs.
+  const shapes = new Set<string>()
+  const layerNames = new Set<string>()
+  const walk = (ls: Layer[]) => {
+    for (const l of ls) {
+      if (l.name) layerNames.add(l.name)
+      for (const it of l.items) { if (isRegion(it) && it.name) shapes.add(it.name); if (isGroup(it)) walk(it.layers) }
+    }
+  }
+  walk(composition.layers)
+  const lineAt = (off: number) => expanded.slice(0, off).split('\n').length
+  const out: { scope: string; diag: Diagnostic }[] = []
+  for (const ob of objects) {
+    if (byName.has(ob.name)) continue
+    const why = shapes.has(ob.name)
+      ? `"${ob.name}" is a shape — shapes are baked material and cannot be animated. Wrap it in a group: \`group "${ob.name}" { layer "art" { … } }\``
+      : layerNames.has(ob.name)
+        ? `"${ob.name}" is a layer, not an object — a layer cannot be animated. Name a group inside it instead.`
+        : `no group, instance, text or image named "${ob.name}" in the scene`
+    out.push({ scope: `object "${ob.name}"`, diag: { line: lineAt(ob.at), col: 1, message: `binds to nothing: ${why}` } })
+  }
+  return out
+}
+
+/** Every bare name CALLED as a function in a source (`foo(`), string literals stripped so a `send "pulse(x)"`
+ *  payload can't look like a call. A qualified `feedback.pulse(` yields `pulse` too — same package either way. */
+function calledFunctions(src: string): Set<string> {
+  const bare = src.replace(/"(?:[^"\\]|\\.)*"/g, '""')
+  const out = new Set<string>()
+  for (const m of bare.matchAll(/([A-Za-z_]\w*)\s*\(/g)) out.add(m[1])
+  return out
+}
+
+/** Packages to import because the program CALLS one of their functions. A package is a VOCABULARY, not a
+ *  module to wire up: `pulse(…)` must work because it was written, not because an unrelated `feedback …`
+ *  line elsewhere happened to pull the package in — which made a program break at the exact moment its last
+ *  element was removed. Never overrides an author's own `fn` of that name, and skips ambiguous names. */
+function autoImports(src: string, ownFunctions: FuncDef[], declared: string[]): string[] {
+  const own = new Set(ownFunctions.map((f) => f.name))
+  const out = new Set(declared)
+  for (const call of calledFunctions(src)) {
+    if (own.has(call)) continue // the author's own definition wins
+    const pkg = providingPackage(call)
+    if (pkg) out.add(pkg)
+  }
+  return [...out]
 }
 
 /** Parses the FULL PROGRAM → partial doc (composition + timeline + interactions; refs by name). */
@@ -922,6 +990,8 @@ export function parseProgramFull(src: string): Program {
   if (Object.keys(tlScripts).length || composition.timeline) result.timeline = { ...baseTl, ...tlScripts }
   const functions = unitsToFunctions(sceneUnits)
   if (functions.length) result.functions = functions
+  const imports = autoImports(src, functions, composition.imports ?? [])
+  if (imports.length) result.imports = imports
 
   const byName = itemsByName(composition.layers)
   const interactions: Interaction[] = []
@@ -1021,7 +1091,18 @@ class FlatParser {
   private peek() { return this.t[this.p] }
   private next() { return this.t[this.p++] }
   private is(v: string) { const k = this.t[this.p]; return !!k && k.v === v }
-  private eat(v: string) { if (!this.is(v)) throw new Error(`"${v}" expected, "${this.peek()?.v ?? 'end'}" found`); this.p++ }
+  private eat(v: string) {
+    if (!this.is(v)) {
+      const found = this.peek()?.v ?? 'end'
+      // `as` names an item RIGHT AFTER its geometry (a shape) or its content (a text), BEFORE any style
+      // attribute. Written at the end instead, it lands exactly where the next item or layer was expected —
+      // and a bare `"layer" expected, "as" found` sent the author auditing their layer structure, which was
+      // never the problem. State the ordering rule instead.
+      if (found === 'as') throw new Error('"as" is out of place: an item names itself RIGHT AFTER its geometry (or, for a text, its content) and BEFORE any style attribute — write `rect 0 0 W H as "Name" fill #fff`, not `rect 0 0 W H fill #fff as "Name"`')
+      throw new Error(`"${v}" expected, "${found}" found`)
+    }
+    this.p++
+  }
   private num() { return Number(this.next().v) }
   private str() { return this.next().v }
   /** Value of a program variable: number, `fill(n, v)`, or array literal `[a, b, …]`. */

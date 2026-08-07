@@ -249,9 +249,9 @@ symbol "Boat" {
     bool   flag = true              "Show the pennant"
   }
   layer "body" {
-    path "…" fill hull                                  # a color param used as a fill
-    group "Deck" expr y "sin(time*3) * wave" { … }      # a number param read in an expression
-    group "Flag" expr opacity "flag ? 1 : 0" { … }      # a bool param as a toggle
+    path "…" fill hull                                  // a color param used as a fill
+    group "Deck" expr y "sin(clock*3) * wave" { … }     // a number param read in an expression
+    group "Flag" expr opacity "flag ? 1 : 0" { … }      // a bool param as a toggle
   }
 }
 ```
@@ -289,8 +289,8 @@ symbol "Door" {
   states door { closed at 0   open at 24   initial closed   transition 12 ease easeInOut }
   layer "panel" {
     group "Panel" at 60,10 pivot 0,0 { layer "art" { rect 0 0 40 80 fill #884422 } }
-    cel 0 tween { pose "Panel" rotate 0 }      # closed
-    cel 24       { pose "Panel" rotate 80 }    # open
+    cel 0 tween { pose "Panel" rotate 0 }      // closed
+    cel 24       { pose "Panel" rotate 80 }    // open
   }
 }
 ```
@@ -321,7 +321,7 @@ scene {
   layer "stage" { instance "Door" as "FrontDoor" at 100,100 }
 }
 object "FrontDoor" {
-  when clicked { FrontDoor.door = open }   # animates closed → open over `transition` frames
+  when clicked { FrontDoor.door = open }   // animates closed → open over `transition` frames
 }
 ```
 

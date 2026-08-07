@@ -38,3 +38,21 @@ export function importedFunctions(imports: string[] | undefined): FuncDef[] {
 export function packageFunctionNames(name: string): string[] {
   return resolvePackage(name).flatMap((f) => [f.name, `${name}.${f.name}`])
 }
+
+/** Bare function name → the package(s) that provide it. Built once. */
+const BY_FUNCTION: Map<string, string[]> = (() => {
+  const m = new Map<string, string[]>()
+  for (const pkg of PACKAGES) for (const f of resolvePackage(pkg)) {
+    const at = m.get(f.name)
+    if (at) at.push(pkg)
+    else m.set(f.name, [pkg])
+  }
+  return m
+})()
+
+/** The package that UNIQUELY provides a bare function name — for auto-import on first use. `undefined` if
+ *  no package provides it, or if several do (ambiguous: the author must pick with an explicit `use`). */
+export function providingPackage(name: string): string | undefined {
+  const pkgs = BY_FUNCTION.get(name)
+  return pkgs && pkgs.length === 1 ? pkgs[0] : undefined
+}

@@ -13,15 +13,19 @@ size 480 320
 
 scene {                     ← THE SCENE: what you see (shapes, text, images, groups)
   layer "game" {
-    circle 240 160 40 fill #ffcc00
+    group "Star" at 240,160 { layer "art" { circle 0 0 40 fill #ffcc00 } }
   }
 }
 
 object "Star" {             ← THE BEHAVIOR: how it moves and reacts
   when clicked { score = score + 1 }
-  rotation = time * 30
+  rotation = clock * 30
 }
 ```
+
+> Behavior attaches **by name**, and the name must be a **group** (or instance/text/image) — those alone
+> carry a pose. A bare `circle` can be named, but never animated. `clock` is the monotone second count;
+> `time` restarts on every timeline loop.
 
 The **scene** is composition; the **behavior** (everything after `scene { … }`) is logic — events,
 expressions, drag/drop, interactors. They don't share the same grammar.

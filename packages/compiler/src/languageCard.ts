@@ -16,6 +16,11 @@ export function languageCard(): string {
 Numbers only (0 = false, anything else = true). No string type (only event/label/asset names in quotes). Comment: // to end of line.
 One statement per line — a newline ends the statement (write \`x = 1\` then \`y = 2\` on separate lines, not \`x = 1  y = 2\`).
 
+## Objects
+object "Name" { … } attaches behavior BY NAME. The name must be a group / instance / text / image — the only things that carry a pose.
+A SHAPE (\`rect … as "N"\`) or a LAYER cannot be animated: wrap the shape in \`group "N" { layer "art" { … } }\`. (Naming one is a compile error.)
+Opacities MULTIPLY down the tree — do not set \`opacity 0\` on the shape to hide it at rest, or the group's fade-in stays invisible.
+
 ## Events (attach to an object or to the scene)
 when loaded { }      // once, on start
 every frame { }      // every frame
@@ -34,7 +39,9 @@ channel = expr         channels: ${EXPR_CHANNELS.join(' ')}   (expression wins o
 dx = expr · dy = expr  // ADDITIVE offset: final pos = at + (dx, dy) — oscillate AROUND the anchor (dx = 30*sin(time)); absolute x/y REPLACE at
 rotationDeg = expr     // sugar for rotation = rad(expr) — author angles in DEGREES (rotation & sin/cos/atan2 are RADIANS)
 operators: + - * / %   < > <= >= == !=   && || !   cond ? a : b
-context: time frame value · mouse.x mouse.y mouse.dx mouse.dy · keys.Space keys.ArrowLeft … (keys are 1/0, use directly: keys.Space ? … : …)
+context: time frame clock value · mouse.x mouse.y mouse.dx mouse.dy · keys.Space keys.ArrowLeft … (keys are 1/0, use directly: keys.Space ? … : …)
+  time WRAPS every durationFrames (2.5 s by default) — clock is MONOTONE. Timestamps you capture and compare later MUST use clock
+  (\`when wrong { shown = clock }\` + \`opacity = pulse(shown, 4)\`), or the ramp replays on every loop.
 Name.x Name.y Name.rotation Name.scaleX Name.scaleY Name.opacity   // any named object (identifier name), live on-screen value (read-only)
 self.x self.y self.rotation self.scaleX self.scaleY self.opacity   // the object's own channels, in its bindings (no mirror variable)
 
@@ -47,6 +54,7 @@ functions: ${STD_FUNCTIONS.join(' ')}
 
 ## Direct manipulation (interactors)
 drag x, y                      // object follows the pointer while held → writes vars x, y (bind them: x = vx, y = vy)
+{ enabled <expr> } gates the GESTURE only — when/pressed/released/clicked STILL fire. Guard the body: when released { if done == 0 { … } }
 dragX vx · dragY vy            // single-axis
 drag x, y { confine to Zone  snap 10 }   // bound to a named object's box · grid snap
 turn a around cx,cy { snap 15 }    // dial/knob → a = pivot→cursor angle in RADIANS (pair: rotation = a)
@@ -58,7 +66,7 @@ let name = 0 · let arr = fill(n, v) · let arr = [a, b, c]
 fn name(a, b) = expr                       // value function (use in expressions)
 fn name() { … }                            // procedure (block of actions)
 each "Symbol" as i { opacity = data[i] }   // bind every instance of a symbol (i = index)
-use "package"          packages: ${PACKAGES.join(' ')}
+use "package"          packages: ${PACKAGES.join(' ')}   // OPTIONAL: calling a package function imports it automatically
 
 ## Example
 let score = 0

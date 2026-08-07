@@ -43,9 +43,11 @@ describe('stdlib — embedded packages', () => {
     expect(evalFn('sink', { g: 0 })).toBe(0)
     expect(evalFn('shake', { bad: 0, t: 3 })).toBe(0) // no shake when not wrong
     expect(evalFn('shake', { bad: 1, t: 0 })).toBe(0) // sin(0) = 0
-    // pulse(since, dur): linear 1→0 ramp over `dur` s since `since` (uses ambient `time`), clamped 0..1.
-    expect(evalFn('pulse', { time: 0, since: 0, dur: 4 })).toBe(1) // just triggered
-    expect(evalFn('pulse', { time: 2, since: 0, dur: 4 })).toBeCloseTo(0.5, 5) // halfway
-    expect(evalFn('pulse', { time: 10, since: 0, dur: 4 })).toBe(0) // expired → clamped
+    // pulse(since, dur): linear 1→0 ramp over `dur` s since `since`, clamped 0..1. It reads the MONOTONE
+    // `clock`, not `time`: on `time` a one-shot ramp replayed on every timeline loop (2.5 s by default).
+    expect(evalFn('pulse', { clock: 0, since: 0, dur: 4 })).toBe(1) // just triggered
+    expect(evalFn('pulse', { clock: 2, since: 0, dur: 4 })).toBeCloseTo(0.5, 5) // halfway
+    expect(evalFn('pulse', { clock: 10, since: 0, dur: 4 })).toBe(0) // expired → clamped
+    expect(evalFn('pulse', { clock: 6, time: 0, since: 0, dur: 4 })).toBe(0) // a wrapped `time` cannot revive it
   })
 })

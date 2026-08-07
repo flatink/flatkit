@@ -211,7 +211,7 @@ export const PACKAGE_FUNCS: Record<string, FuncDef[]> = {
         "dur"
       ],
       "kind": "value",
-      "expr": "clamp(1 - (time - since) / dur, 0, 1)"
+      "expr": "clamp(1 - (clock - since) / dur, 0, 1)"
     }
   ]
 }

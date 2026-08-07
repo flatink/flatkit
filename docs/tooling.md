@@ -19,11 +19,20 @@ flatc game.flatink hero.flat -o game.flatpack
 `.flat` libs in the program's folder are discovered automatically; media declared by
 `asset "id" "path" kind` are embedded as `data:` URIs.
 
+> **The extension decides how a file is read**, so it decides what `--check` verifies. A `.flat` is read
+> as a bag of symbols: a whole *program* saved under that name has no symbols in it, so `--check` used to
+> report "0 symbol(s)" and exit 0 with nothing verified. `flatc` now **refuses** a `.flat` that contains a
+> `scene { … }` block or `object` blocks. When checking a program, make sure it is named `.flatink`.
+>
+> **`--no-libs`** turns off the folder auto-discovery. In a working folder a neighbouring scratch file is
+> not a dependency — and when one of them fails to parse, the error now names the file.
+
 ## Compile & check
 
 ```
 flatc <program.flatink> [-o out.flatpack]
 flatc <program.flatink> --check      # semantic lint only (exits ≠0 on ERROR; warnings don't block)
+flatc <program.flatink> --check --no-libs    # …without pulling in the .flat files sitting next to it
 flatc <program.flatink> --watch      # recompile on every change in the folder
 flatc <library.flat> [more.flat …] --check   # lint an asset LIB per-symbol (several .flat are merged)
 ```

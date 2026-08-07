@@ -343,6 +343,7 @@ export class FlatPlayer {
     if (this.grabbed) {
       const id = this.grabbed
       this.clearGrab()
+      this.clearLinkTarget(id) // the pointer left the canvas -> no target reached
       this.fireEvent(id, 'release')
     }
     if (this.hovered) {
@@ -493,6 +494,15 @@ export class FlatPlayer {
     if (it.varT) this.writeOut(it.varT, hit)
     this.bustNamed()
   }
+  /** A release that pulled NO thread (the `link` was `{ enabled … }`-gated off, or the gesture was canceled):
+   *  its target index is 0 — "no target reached" — not whatever the LAST completed gesture left there.
+   *  `{ enabled … }` gates the GESTURE, not the handler: `when released` still fires, so without this the
+   *  handler re-read a stale index and, e.g., counted the same pair again on every further press. Only the
+   *  target index is reset; the position outputs (varX/varY) are the wire end and stay where they were. */
+  private clearLinkTarget(id: string): void {
+    const it = this.interactorFor(id)
+    if (it?.axis === 'link' && it.varT) { this.writeOut(it.varT, 0); this.bustNamed() }
+  }
   /** On release: `when dropped on Zone` whose tested point falls within the zone bbox.
    *  Tested point = the object's CENTER by default, or the POINTER if `at pointer`. Zone = the group's
    *  explicit `hitbox` if present, otherwise the (static) bbox of its content. */
@@ -619,6 +629,7 @@ export class FlatPlayer {
       // Write the gesture outputs BEFORE emitting `release`, so a `when released` handler can read them
       // (link target index / end position) — consistent with `drag`, which writes its vars before `dragged`.
       if (this.dragActive?.it.axis === 'link') this.resolveLink(this.dragActive.it, p) // tests the reached target -> writes the index (0 = none)
+      else this.clearLinkTarget(grabbedId) // no thread was pulled (gated off) -> index 0, never a stale one
       this.fireEvent(grabbedId, 'release')
       if (this.dragActive) this.fireDrops(grabbedId, p) // `when dropped on Zone`
       this.clearGrab()
@@ -633,6 +644,7 @@ export class FlatPlayer {
     if (!this.grabbed) return
     const id = this.grabbed
     this.record('cancel', this.worldPoint(e), e.pointerId)
+    this.clearLinkTarget(id) // an interrupted gesture reached no target either
     this.fireEvent(id, 'release')
     this.clearGrab()
     this.render()

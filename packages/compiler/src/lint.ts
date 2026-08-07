@@ -62,6 +62,11 @@ const TEXT_CALL = /\btext\s*\(/
  *  SECOND statement crammed onto one line (FlatInk ends a statement at the newline, so it got swallowed). */
 const SECOND_ASSIGN = /[\w\]]\s*=(?![=])/
 
+/** Same tell-tale for the statements that are NOT assignments — `score = score + 1  send "correct", 1`
+ *  swallowed the `send` and reported a bewildering `unexpected character """` instead. All of these are
+ *  RESERVED words (cf. ident.ts), so none can legitimately appear as a name inside an expression. */
+const SECOND_ACTION = /\b(send|play|pause|sound|set|go|repeat)\b/
+
 /** Analyze a DSL source and return all diagnostics (syntax + semantic). */
 export function lint(src: string, ctx: LintContext = {}): Diagnostic[] {
   const { units, diagnostics, sites } = parseUnits(src)
@@ -91,10 +96,12 @@ export function lint(src: string, ctx: LintContext = {}): Diagnostic[] {
       }
       const a = analyzeExpr(s.text)
       if (!a.ok) {
-        // #1 footgun: two statements on one line. The 2nd `channel = …` got swallowed into this
-        // expression → a cryptic "unexpected character =". Detect the leftover assignment and say so.
-        const message = SECOND_ASSIGN.test(s.text)
-          ? 'two statements on one line — put each on its own line (FlatInk ends a statement at the newline)'
+        // #1 footgun: two statements on one line. The 2nd one got swallowed into this expression → a
+        // cryptic "unexpected character = / \"". Detect the leftover statement and NAME it, so the rule
+        // ("one action per line") is visible from the message rather than only from the docs.
+        const leftover = SECOND_ASSIGN.test(s.text) ? 'an assignment' : SECOND_ACTION.test(s.text) ? `\`${SECOND_ACTION.exec(s.text)![1]} …\`` : ''
+        const message = leftover
+          ? `two statements on one line — ${leftover} was swallowed into the expression before it. FlatInk ends a statement at the NEWLINE: put each action on its own line.`
           : `invalid expression: ${a.error}`
         out.push({ line: s.line, col: s.col, message })
         continue

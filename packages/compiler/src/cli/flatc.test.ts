@@ -105,6 +105,40 @@ describe('flatc — CLI', () => {
     }
   })
 
+  // A whole PROGRAM saved as `.flat` used to pass `--check` with "0 symbol(s)" and exit 0 — `parseFlatLib`
+  // reads a bag of symbols and ignores everything else. A check written against the wrong extension ALWAYS
+  // passed, which is the worst possible answer for tooling: it looks exactly like a safety net.
+  it('--check on a PROGRAM saved as .flat fails instead of vacuously passing', () => {
+    const disguised = join(cli, '__disguised.flat')
+    writeFileSync(disguised, 'var a = 0\nscene { layer "L" { circle 0 0 5 fill #fff } }\nobject "L" { opacity = a }\n')
+    const errs: string[] = []
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((s: string | Uint8Array) => { errs.push(String(s)); return true })
+    const outSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try {
+      expect(run(['node', 'flatc', disguised, '--check'])).toBe(1)
+      expect(errs.join('')).toMatch(/this is a PROGRAM, not a symbol library/)
+      expect(errs.join('')).toMatch(/Rename it to \.flatink/)
+    } finally { spy.mockRestore(); outSpy.mockRestore(); rmSync(disguised, { force: true }) }
+  })
+
+  // `.flat` libs are auto-discovered from the program's FOLDER, so a broken scratch file next to the program
+  // failed the build with an error that never named it. Name the file, and offer the opt-out.
+  it('a broken neighbouring .flat is NAMED, and --no-libs skips the auto-discovery', () => {
+    const prog = join(cli, '__neighbour_prog.flatink')
+    const broken = join(cli, '__neighbour_broken.flat')
+    writeFileSync(prog, 'size 100 100\nscene { layer "L" { circle 0 0 5 fill #ffffff } }\n')
+    writeFileSync(broken, 'symbol "Broken" {\n  layer "a" { rect 0 0 ZZZ }\n}\n')
+    const errs: string[] = []
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((s: string | Uint8Array) => { errs.push(String(s)); return true })
+    const outSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try {
+      expect(run(['node', 'flatc', prog, '--check'])).toBe(1)
+      expect(errs.join('')).toContain('__neighbour_broken.flat') // the culprit is named
+      expect(errs.join('')).toContain('--no-libs')               // and the way out is offered
+      expect(run(['node', 'flatc', prog, '--check', '--no-libs'])).toBe(0) // the program itself is fine
+    } finally { spy.mockRestore(); outSpy.mockRestore(); rmSync(prog, { force: true }); rmSync(broken, { force: true }) }
+  })
+
   it('--check <library>.flat lints the asset lib per-symbol (not as a scene)', () => {
     const ok = join(cli, '__lib_ok.flat')
     const warn = join(cli, '__lib_warn.flat')

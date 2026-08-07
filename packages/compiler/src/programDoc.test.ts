@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { scopeProgram, docLintContext, lintDoc, lintDocReport, docStructureWarnings, docHasErrors, docLayoutWarnings } from './programDoc'
+import { compileFlatpack } from './compile'
 import { IDENTITY, translation } from '@flatkit/engine/transform'
 import type { Doc, Group, Image, Interaction, Layer, Paint, Region, SymbolDef, Text } from '@flatkit/types'
 
@@ -185,6 +186,25 @@ describe('programDoc — structural warnings', () => {
     expect(hit(mk('50 + sin(time * 2) * 10', 36000))).toEqual([]) // long timeline → never wraps in a session
     expect(docHasErrors(mk('50 + sin(time * 2) * 10', 60))).toBe(false) // warning only, non-blocking
   })
+
+  it('follows `time` THROUGH a function and names it (the channel text holds no `time` at all)', () => {
+    const ambient = (expr: string): Group => ({ ...group('cloud', 'Cloud'), expressions: { opacity: expr } })
+    const mk = (expr: string, fns: Doc['functions'], dur = 60): Doc => ({
+      width: 100, height: 100, symbols: [], layers: [layer([ambient(expr)])],
+      ...(fns ? { functions: fns } : {}), timeline: { fps: 24, durationFrames: dur, tracks: [] },
+    })
+    const hit = (d: Doc) => docStructureWarnings(d).filter((w) => /resets each loop/.test(w.diag.message))
+    const wobble = { name: 'wobble', params: ['k'], kind: 'value' as const, expr: 'sin(time * k)' }
+    const outer = { name: 'outer', params: ['k'], kind: 'value' as const, expr: 'wobble(k) * 2' } // transitive
+
+    expect(hit(mk('wobble(2)', [wobble]))).toHaveLength(1)
+    expect(hit(mk('wobble(2)', [wobble]))[0].diag.message).toContain('`wobble()`')
+    expect(hit(mk('outer(2)', [wobble, outer]))[0].diag.message).toContain('`outer()`') // reached through wobble
+    // A parameter named `time` shadows the runtime scalar → the body's `time` is just an argument.
+    expect(hit(mk('shadow(2)', [{ name: 'shadow', params: ['time'], kind: 'value', expr: 'sin(time)' }]))).toEqual([])
+    // `pulse` now rides `clock`, so the case that started all this is clean by construction.
+    expect(hit(mk('pulse(0, 0.9)', []))).toEqual([])
+  })
 })
 
 describe('programDoc — cel-layer warnings (silent drops)', () => {
@@ -312,5 +332,44 @@ describe('programDoc — a color param used as a paint must be declared (RFC fol
     const w = paintWarn(d)
     expect(w).toHaveLength(1)
     expect(w[0]).toMatch(/\[B\].*unknown color param "teinte"/)
+  })
+})
+
+describe('programDoc — lint positions point into the SOURCE, not a rebuilt program', () => {
+  // `scopeProgram` rebuilds a text WITHOUT the `scene { … }` block. Linting that and reporting its line
+  // numbers against the author's file sent them to a line that had nothing to do with the error — the
+  // offset being exactly the height of the scene block. Passing the source fixes both line and scope.
+  const src = [
+    'var wrong = 0',                                   // 1
+    'scene {',                                         // 2
+    '  layer "Fond" {',                                // 3
+    '    rect 0 0 960 540 fill #ebf2fe',               // 4
+    '  }',                                             // 5
+    '  layer "Jeu" {',                                 // 6
+    '    group "A" {',                                 // 7
+    '      layer "i" { circle 0 0 40 fill #ff0000 }',  // 8
+    '    }',                                           // 9
+    '  }',                                             // 10
+    '}',                                               // 11
+    'object "A" {',                                    // 12
+    '  feedback lift tilt dim shake(wrong)',           // 13 — sugar: must not shift what follows
+    '  opacity = 1 - doneAtt',                         // 14 — the typo
+    '}',                                               // 15
+    '',
+  ].join('\n')
+
+  it('reports the real line and the real scope', () => {
+    const doc = compileFlatpack(src)
+    const diags = lintDoc(doc, src).filter(({ diag }) => /doneAtt/.test(diag.message))
+    expect(diags).toHaveLength(1)
+    expect(diags[0].scope).toBe('object "A"') // not the catch-all `scene`
+    expect(diags[0].diag.line).toBe(14)       // the line the author can actually go and read
+  })
+
+  it('without the source, the position is the rebuilt program\'s (kept for the editor, where it IS the file)', () => {
+    const doc = compileFlatpack(src)
+    const diags = lintDoc(doc).filter(({ diag }) => /doneAtt/.test(diag.message))
+    expect(diags).toHaveLength(1)
+    expect(diags[0].diag.line).not.toBe(14)
   })
 })

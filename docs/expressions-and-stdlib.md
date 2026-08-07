@@ -59,8 +59,8 @@ per second), `deg(r)` (the inverse, for readouts). Or bind the **`rotationDeg`**
 
 ```
 var slots = [0, 0, 0]
-object "P" { x = slots[i] }          # computed index
-slots[i + 1] = 1                      # indexed assignment (in actions)
+object "P" { x = slots[i] }          // computed index
+slots[i + 1] = 1                      // indexed assignment (in actions)
 ```
 
 ## Functions (`fn`)
@@ -78,11 +78,17 @@ Import bundled helpers with `use "<name>"`. They're embedded (no network, no fil
 `.flatpack`, and resolved by the player. Functions are available **bare** and **qualified**
 (`boxHit(…)` or `collision.boxHit(…)` — the qualified form disambiguates collisions).
 
+> **The `use` line is optional**: calling a package function imports its package automatically. A package
+> is a vocabulary, not a module to wire up — `pulse(…)` works because you wrote it. Write `use` when you
+> want the dependency stated, or to pick a side when two packages share a bare name. Your own `fn` of the
+> same name always wins.
+
 ```
 use "collision"   # boxHit(ax,ay,bx,by,hw,hh) · dist(ax,ay,bx,by) · near(ax,ay,bx,by,r)
 use "easing"      # easeIn(t) · easeOut(t) · easeInOut(t) · smooth(t)        (t in 0..1)
 use "gesture"     # snap(v,step) · snapTo(v,target,r) · railT/railX/railY(px,py,ax,ay,bx,by) · angle(cx,cy,px,py) · inZone(px,py,x,y,w,h)
 use "feedback"    # lift(h) · dim(h) · tilt(g) · sink(g) · shake(bad,t) · pulse(since,dur)  (channel reactions)
+                  #   shake/pulse ride the MONOTONE `clock` → capture instants with `clock`, never `time`
 ```
 
 Example:
