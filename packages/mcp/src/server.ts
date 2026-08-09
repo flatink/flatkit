@@ -69,7 +69,7 @@ export function buildServer(c: typeof client = client): McpServer {
       lib: z.string().describe('contents of the .flat file (symbol library)'),
       symbol: z.string().optional().describe('symbol name (default: the first in the lib)'),
       frames: z.array(z.number().int().min(0)).min(1).describe('frame numbers to render (<= 24)'),
-      set: z.record(z.union([z.string(), z.number()])).optional().describe('states / params / recolor to apply'),
+      set: z.record(z.string(), z.union([z.string(), z.number()])).optional().describe('states / params / recolor to apply'),
       engine: z.enum(['flatc', 'player']).optional().describe('"player" to animate spring/velocity; "flatc" by default'),
       scale: z.number().optional().describe('resolution factor (engine "flatc" only)'),
     },
