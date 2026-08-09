@@ -10,9 +10,9 @@
 //  Each gesture emits state, structure and behavior. Not one colour, not one font: `BLANK` proves it.
 //  Coordinates DO appear, and that is not an opinion -- they are the ones the author wrote in the block.
 // ─────────────────────────────────────────────────────────────────────────────
-import type { Gesture } from './index'
+import type { Expansion, Gesture } from './index'
 import { ident } from './ident'
-import { GREYBOX, type Theme } from './theme'
+import { GREYBOX, ROLES, type Role, type Theme } from './theme'
 
 /** Everything a gesture needs beyond the author's text. */
 export type GestureOptions = { theme?: Theme }
@@ -60,10 +60,11 @@ function parsePlace(name: string, body: string): PlaceModel {
   return m
 }
 
-function expandPlace(name: string, body: string, theme: Theme): string {
+function expandPlace(name: string, body: string, theme: Theme): Expansion {
   const m = parsePlace(name, body)
   const n = m.items.length
   const out: string[] = [`// place "${q(name)}" — generated. The expansion is the artefact of record: edit it, or edit the block.`]
+  if (m.prompt) out.push(`// prompt: ${q(m.prompt)}`)
 
   out.push('var progress = 0', 'var done = 0')
   for (const it of m.items) out.push(`var ${it.id}X = ${it.x}`, `var ${it.id}Y = ${it.y}`, `var ${it.id}Placed = 0`)
@@ -95,14 +96,17 @@ function expandPlace(name: string, body: string, theme: Theme): string {
     }
     out.push(`  x = ${it.id}X`, `  y = ${it.id}Y`, '}', '')
   })
-  return out.join('\n')
+  return {
+    flatink: out.join('\n'),
+    meta: { keyword: 'place', name, prompt: m.prompt, items: m.items.map((i) => i.label), targets: m.targets.map((t) => t.label) },
+  }
 }
 
 // ── compose ──────────────────────────────────────────────────────────────────
 // Tap values until they add up to a target. Overshooting resets the total -- the whole point of the
 // exercise is that going over is a mistake you feel, not one you are prevented from making.
 
-function expandCompose(name: string, body: string, theme: Theme): string {
+function expandCompose(name: string, body: string, theme: Theme): Expansion {
   let target = 0
   const chips: { value: string; x: string; y: string }[] = []
   let prompt = ''
@@ -116,7 +120,7 @@ function expandCompose(name: string, body: string, theme: Theme): string {
   if (!target) throw new Error(`compose "${name}": no \`total <n>\` — there is nothing to reach`)
   if (!chips.length) throw new Error(`compose "${name}": no chip — nothing for the learner to tap`)
 
-  const out: string[] = [`// compose "${q(name)}" — generated.`, 'var total = 0', 'var done = 0', '', 'scene {', '  layer "chips" {']
+  const out: string[] = [`// compose "${q(name)}" — generated.`, ...(prompt ? [`// prompt: ${q(prompt)}`] : []), 'var total = 0', 'var done = 0', '', 'scene {', '  layer "chips" {']
   chips.forEach((c, i) => out.push(...container(`C${i}`, c.x, c.y, theme.draw('chip', c.value), theme.size('chip'))))
   out.push('  }', '}', '')
   chips.forEach((c, i) => {
@@ -128,15 +132,14 @@ function expandCompose(name: string, body: string, theme: Theme): string {
     out.push(`        if total == ${target} {`, '          done = 1', '          send "completed"', '        }')
     out.push('      }', '    }', '  }', '}', '')
   })
-  if (prompt) out.push(`// prompt: ${q(prompt)}`)
-  return out.join('\n')
+  return { flatink: out.join('\n'), meta: { keyword: 'compose', name, prompt, items: chips.map((c) => c.value), targets: [] } }
 }
 
 // ── steps ────────────────────────────────────────────────────────────────────
 // A gated sequence: step i only responds when it is the current one. Tapping out of order does nothing
 // at all -- no error, no penalty, which is what makes it usable as an escape-room stage.
 
-function expandSteps(name: string, body: string, theme: Theme): string {
+function expandSteps(name: string, body: string, theme: Theme): Expansion {
   let prompt = ''
   const steps: { label: string; x: string; y: string }[] = []
   for (const line of lines(body)) {
@@ -147,7 +150,7 @@ function expandSteps(name: string, body: string, theme: Theme): string {
   }
   if (!steps.length) throw new Error(`steps "${name}": no step — the sequence is empty`)
 
-  const out: string[] = [`// steps "${q(name)}" — generated.`, 'var step = 0', '', 'scene {', '  layer "steps" {']
+  const out: string[] = [`// steps "${q(name)}" — generated.`, ...(prompt ? [`// prompt: ${q(prompt)}`] : []), 'var step = 0', '', 'scene {', '  layer "steps" {']
   steps.forEach((s, i) => out.push(...container(`S${i}`, s.x, s.y, theme.draw('card', s.label), theme.size('card'))))
   out.push('  }', '}', '')
   steps.forEach((_s, i) => {
@@ -158,28 +161,68 @@ function expandSteps(name: string, body: string, theme: Theme): string {
     // "which one is live" is STATE, not decoration. A theme that disagrees rebinds opacity itself.
     out.push(`  opacity = step == ${i} ? 1 : 0.45`, '}', '')
   })
-  if (prompt) out.push(`// prompt: ${q(prompt)}`)
-  return out.join('\n')
+  return { flatink: out.join('\n'), meta: { keyword: 'steps', name, prompt, items: steps.map((s2) => s2.label), targets: [] } }
 }
 
-/** Build the shipped gestures against a theme. `GREYBOX` unless the caller supplies one. */
+/** `208x118` — the footprint of a role under a theme, for a summary or a prompt. */
+const footprint = (theme: Theme, role: Role): string => {
+  const { w, h } = theme.size(role)
+  return `${w}x${h}`
+}
+
+/**
+ * Build the shipped gestures against a theme. `GREYBOX` unless the caller supplies one.
+ *
+ * Each `summary` carries the FOOTPRINTS of the roles it places, because the author writes positions and
+ * two overlapping surfaces make a drop ambiguous. Measured on ten model-written activities: a prompt
+ * giving only "space them out" produced overlapping hitboxes in 4 of 10; the same prompt with the
+ * numbers, 0 of 10. The sizes were public all along — nothing said you had to go and read them.
+ */
 export function gestures(opts: GestureOptions = {}): Gesture[] {
   const theme = opts.theme ?? GREYBOX
   return [
     {
       keyword: 'place',
-      summary: 'place <name> { prompt "…"  target <T> at x,y  item <i> -> <T> at x,y }  — drag items onto where they belong',
+      summary: `place <name> { prompt "…"  target <T> at x,y  item <i> -> <T> at x,y }  — drag items onto where they belong. Footprints: target ${footprint(theme, 'target')}, item ${footprint(theme, 'item')}; keep centres at least one footprint apart or the drop is ambiguous`,
       expand: (name, body) => expandPlace(name, body, theme),
     },
     {
       keyword: 'compose',
-      summary: 'compose <name> { prompt "…"  total <n>  chip <v> at x,y }  — tap values until they add up; overshooting resets',
+      summary: `compose <name> { prompt "…"  total <n>  chip <v> at x,y }  — tap values until they add up; overshooting resets. Footprint: chip ${footprint(theme, 'chip')}`,
       expand: (name, body) => expandCompose(name, body, theme),
     },
     {
       keyword: 'steps',
-      summary: 'steps <name> { prompt "…"  step "…" at x,y }  — a gated sequence; out-of-order taps do nothing',
+      summary: `steps <name> { prompt "…"  step "…" at x,y }  — a gated sequence; out-of-order taps do nothing. Footprint: card ${footprint(theme, 'card')}`,
       expand: (name, body) => expandSteps(name, body, theme),
     },
   ]
+}
+
+/**
+ * The paste-ready reference for a model writing sugar: the grammar of every gesture, the footprints it
+ * must respect, and the canvas it is laying out on. This is the artefact `summary` was being used as by
+ * hand — assembled here so nobody has to know that the sizes live on the theme.
+ */
+export function sugarCard(opts: GestureOptions & { document?: { width: number; height: number } } = {}): string {
+  const theme = opts.theme ?? GREYBOX
+  const doc = opts.document ?? { width: 760, height: 620 }
+  return [
+    '# FlatInk sugar — one block, one activity',
+    '',
+    `Canvas: ${doc.width}x${doc.height}, origin top-left. Write ONE block, nothing else. Coordinates are the`,
+    'CENTRE of each thing. Anything you do not describe is not drawn.',
+    '',
+    '## Blocks',
+    ...gestures({ theme }).map((g) => `- ${g.summary}`),
+    '',
+    '## Footprints — respect them or two things overlap and the drop becomes ambiguous',
+    ...ROLES.map((role) => `- ${role}: ${footprint(theme, role)}`),
+    '',
+    `A row of targets fits about ${Math.floor(doc.width / (theme.size('target').w + 20))} across; a row of items about ${Math.floor(doc.width / (theme.size('item').w + 20))}.`,
+    'Leave a gap the size of the thing itself between two centres.',
+    '',
+    '## Escape hatch',
+    'raw { … } passes FlatInk through verbatim, beside the block. Use it for anything the block cannot say.',
+  ].join('\n')
 }

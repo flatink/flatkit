@@ -26,6 +26,9 @@ export type Theme = {
   draw(role: Role, label: string): string[]
 }
 
+/** Every role, in a stable order — for a reference card, or to sweep a theme. */
+export const ROLES: Role[] = ['item', 'target', 'card', 'chip']
+
 const SIZES: Record<Role, { w: number; h: number }> = {
   item: { w: 92, h: 92 },
   target: { w: 208, h: 118 },

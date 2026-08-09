@@ -43,10 +43,23 @@ came out looking alike.
 
 Two consequences, both deliberate:
 
-- **`raw { … }` passes through verbatim, always.** A sugar you cannot opt out of stops being scaffolding
-  and becomes a template. Use it beside a gesture to add or override anything.
+- **`raw { … }` passes through verbatim, always** — before or after the block, and so does any plain
+  FlatInk you write beside it. A sugar you cannot opt out of stops being scaffolding and becomes a
+  template.
+- **`raw scene { … }` goes INSIDE the generated scene** — a program may only have one `scene`, so this
+  is the route decor takes. A gesture emits no appearance, which makes this the hatch that matters.
 - **The composition is yours.** A gesture names the objects it drives; you (or a skin) draw them. This is
   how `match` has always worked in the language proper.
+
+```
+place organs { prompt "…"  target Chest at 300,300  item heart -> Chest at 120,140 }
+
+raw scene { layer "backdrop" { rect 0 0 760 620 fill linear(90, 0:#1b2a4a, 1:#4a6fa5) } }
+raw { object "TChest" { opacity = 0.9 } }
+```
+
+One gesture per document: each emits its own `scene`, and a second block is refused with
+`MultipleGesturesError` rather than dropped.
 
 ## What it guarantees
 
@@ -78,7 +91,19 @@ learner makes a mistake and the activity stops responding, at the exact moment t
 | `steps <name> { prompt "…"  step "…" at x,y }` | a gated sequence; out-of-order taps do nothing |
 
 Each emits `send "correct" / "incorrect" / "step" / "completed"` with a record payload naming the index
-(`{ item = 2 }`), so a host reads which one without depending on what the theme drew.
+(`{ item = 2 }`), so a host reads which one without depending on what the theme drew. `desugar()` returns
+the labels behind those indices, and the prompt, in `meta` — the host displays them, the gesture never
+draws them:
+
+```ts
+const { flatink, meta } = desugar(src)
+meta.prompt      // "Put each word under its part of speech"  — the learner's instruction
+meta.items[2]    // the label behind `{ item = 2 }`
+```
+
+For prompting a model, `sugarCard()` assembles the grammar, the canvas and the **footprints** of every
+role. The footprints matter: measured on ten model-written activities, a prompt without them produced
+overlapping hitboxes in 4 of 10, and 0 of 10 with.
 
 **Five gestures came in and three shipped.** `tri`, `ordonner` and `placement` shared one implementation:
 the only thing that differed was whether their targets were drawn as rectangles, squares or dotted discs.
