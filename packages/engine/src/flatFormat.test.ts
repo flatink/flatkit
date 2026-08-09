@@ -442,6 +442,24 @@ describe('flatFormat — .flatink program', () => {
     expect((parseProgramFull(good).layers[0].items[0] as Region).name).toBe('Eclat')
   })
 
+  it('a stroke option written after another item option names the rule instead of "layer expected"', () => {
+    // `dash`/`cap`/`join`/`miter` belong to `stroke` and must FOLLOW it directly. Slipping `nofill` in
+    // between ends the stroke, so `dash` lands where the next item or layer was expected — and the bare
+    // `"layer" expected, "dash" found` reads as a grammar regression (it was reported as one), sending the
+    // author to check `dash` against the docs, where it is correctly documented.
+    const bad = 'size 100 100\nscene { layer "L" { path "M0 0 L10 0" stroke #a08040 2 nofill dash 6,5 } }\n'
+    expect(() => parseProgramFull(bad)).toThrow(/"dash" belongs to `stroke`/)
+    expect(() => parseProgramFull(bad)).toThrow(/directly after/)
+    // The correct order parses and keeps the dash pattern.
+    const good = 'size 100 100\nscene { layer "L" { path "M0 0 L10 0" nofill stroke #a08040 2 dash 6,5 } }\n'
+    expect((parseProgramFull(good).layers[0].items[0] as Region).stroke?.dash).toEqual([6, 5])
+    // Same treatment for the other three options of the same grammar.
+    for (const opt of ['cap round', 'join round', 'miter 4']) {
+      expect(() => parseProgramFull(`size 100 100\nscene { layer "L" { path "M0 0 L10 0" stroke #a08040 2 nofill ${opt} } }\n`))
+        .toThrow(new RegExp(`"${opt.split(' ')[0]}" belongs to \`stroke\``))
+    }
+  })
+
   it('objectTargetDiagnostics: an `object` block on a SHAPE binds to nothing (was silent)', () => {
     const src = [
       'size 100 100',                              // 1

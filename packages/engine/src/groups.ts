@@ -106,7 +106,7 @@ export function itemBBox(doc: Doc, item: Item): BBox | null {
 }
 
 /** Transform a bbox by a matrix (4 corners → min/max). */
-function transformBBox(b: BBox, m: Transform): BBox {
+export function transformBBox(b: BBox, m: Transform): BBox {
   const c = [apply(m, { x: b.minX, y: b.minY }), apply(m, { x: b.maxX, y: b.minY }), apply(m, { x: b.minX, y: b.maxY }), apply(m, { x: b.maxX, y: b.maxY })]
   return { minX: Math.min(...c.map((p) => p.x)), minY: Math.min(...c.map((p) => p.y)), maxX: Math.max(...c.map((p) => p.x)), maxY: Math.max(...c.map((p) => p.y)) }
 }

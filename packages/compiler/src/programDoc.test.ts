@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { scopeProgram, docLintContext, lintDoc, lintDocReport, docStructureWarnings, docHasErrors, docLayoutWarnings } from './programDoc'
 import { compileFlatpack } from './compile'
 import { IDENTITY, translation } from '@flatkit/engine/transform'
-import type { Doc, Group, Image, Interaction, Layer, Paint, Region, SymbolDef, Text } from '@flatkit/types'
+import type { Doc, Group, Image, Instance, Interaction, Layer, Paint, Region, SymbolDef, Text } from '@flatkit/types'
 
 const group = (id: string, name: string): Group => ({ id, kind: 'group', name, transform: IDENTITY, layers: [] })
 const layer = (items: Layer['items']): Layer => ({ id: 'L', name: 'L', visible: true, locked: false, opacity: 1, items })
@@ -177,6 +177,41 @@ describe('programDoc — structural warnings', () => {
     expect(ws[0].diag.message).toMatch(/"never"/)
   })
 
+  // An `instance "X"` naming no symbol keeps its unresolved `@X` marker all the way into the .flatpack,
+  // draws nothing, and said nothing at `--check`. Measured on a real corpus: 96 such refs across 14 of 58
+  // activities passed as `check passed ✓` — a green light on scenes missing most of their artwork.
+  it('an instance resolving to no symbol -> warning naming it', () => {
+    const ghost: Instance = { id: 'i1', kind: 'instance', name: 'Cloud1', transform: IDENTITY, symbolId: '@Nuage' }
+    const d: Doc = { width: 100, height: 100, symbols: [], layers: [layer([ghost])] }
+    const ws = docStructureWarnings(d).filter((w) => /resolves to no symbol/.test(w.diag.message))
+    expect(ws).toHaveLength(1)
+    expect(ws[0].diag.severity).toBe('warning')
+    expect(ws[0].diag.message).toContain('"Nuage"')
+    // A warning, never an error: compiling a program on its own and supplying the libs later is a
+    // legitimate workflow — it must stay exit 0.
+    expect(docHasErrors(d)).toBe(false)
+  })
+
+  it('a RESOLVED instance says nothing', () => {
+    const ok: Instance = { id: 'i1', kind: 'instance', name: 'Cloud1', transform: IDENTITY, symbolId: 's_Nuage' }
+    const d: Doc = { width: 100, height: 100, symbols: [{ id: 's_Nuage', name: 'Nuage', layers: [] }], layers: [layer([ok])] }
+    expect(docStructureWarnings(d).filter((w) => /resolves to no symbol/.test(w.diag.message))).toEqual([])
+  })
+
+  it('finds them inside groups and inside a symbol, and names each missing symbol once', () => {
+    const ghost = (id: string, sym: string): Instance => ({ id, kind: 'instance', name: id, transform: IDENTITY, symbolId: sym })
+    const nested: Group = { id: 'g', kind: 'group', name: 'Sky', transform: IDENTITY, layers: [layer([ghost('a', '@Nuage'), ghost('b', '@Nuage')])] }
+    const d: Doc = {
+      width: 100, height: 100,
+      symbols: [{ id: 's_Deco', name: 'Deco', layers: [layer([ghost('c', '@Vent')])] }],
+      layers: [layer([nested])],
+    }
+    const ws = docStructureWarnings(d).filter((w) => /resolves to no symbol/.test(w.diag.message))
+    expect(ws).toHaveLength(1) // one warning listing the missing symbols, not one per instance
+    expect(ws[0].diag.message).toContain('"Nuage"')
+    expect(ws[0].diag.message).toContain('"Vent"')
+  })
+
   it('`time` in a channel expr + short looping timeline -> warning; `clock` or a long timeline -> nothing', () => {
     const ambient = (expr: string): Group => ({ ...group('cloud', 'Cloud'), expressions: { x: expr } })
     const mk = (expr: string, dur: number): Doc => ({ width: 100, height: 100, symbols: [], layers: [layer([ambient(expr)])], timeline: { fps: 24, durationFrames: dur, tracks: [] } })
@@ -204,6 +239,80 @@ describe('programDoc — structural warnings', () => {
     expect(hit(mk('shadow(2)', [{ name: 'shadow', params: ['time'], kind: 'value', expr: 'sin(time)' }]))).toEqual([])
     // `pulse` now rides `clock`, so the case that started all this is clean by construction.
     expect(hit(mk('pulse(0, 0.9)', []))).toEqual([])
+  })
+})
+
+// The 0.21 → 0.23 migration trap. `pulse`/`shake` moved onto the monotone `clock`, so an instant captured
+// with the OLD idiom (`doneAt = time`) is compared against a clock it never shares: `clock - doneAt` grows
+// without bound and the ramp NEVER fires. Nothing jumps, nothing blinks — the defect is entirely silent,
+// and the `time`-wraps warning above says nothing either (the channel text holds no `time` at all).
+describe('programDoc — an instant captured on `time` and read by pulse/shake', () => {
+  const box = (expr: string): Group => ({ ...group('box', 'Box'), expressions: { scaleX: expr } })
+  const capture = (value: string, name = 'doneAt'): Interaction => ({ id: 'i_box', targetId: 'box', event: 'click', actions: [{ do: 'setVar', name, value }] })
+  const mk = (value: string, expr: string, dur = 60): Doc => ({
+    width: 100, height: 100, symbols: [], variables: { doneAt: -999 },
+    layers: [layer([box(expr)])], interactions: [capture(value)],
+    timeline: { fps: 24, durationFrames: dur, tracks: [] },
+  })
+  const hit = (d: Doc) => docStructureWarnings(d).filter((w) => /captured on `time`/.test(w.diag.message))
+
+  it('flags the silent trap and names both the variable and the reader', () => {
+    const ws = hit(mk('time', '1 + pulse(doneAt, 0.6) * 0.2'))
+    expect(ws).toHaveLength(1)
+    expect(ws[0].diag.severity).toBe('warning')
+    expect(ws[0].diag.message).toContain('"doneAt"')
+    expect(ws[0].diag.message).toContain('pulse')
+    expect(ws[0].diag.message).toMatch(/clock/) // the message must carry the fix
+  })
+
+  it('captured with `clock` -> nothing (the correct idiom stays quiet)', () => {
+    expect(hit(mk('clock', '1 + pulse(doneAt, 0.6) * 0.2'))).toEqual([])
+  })
+
+  it('a LONG timeline does not silence it — unlike the wrap warning, this trap is loop-independent', () => {
+    // `time` wrapping is not the point here: `pulse` compares against `clock`, so the two axes never meet
+    // however long the timeline is. The wrap warning bails out above 120 frames; this one must not.
+    expect(hit(mk('time', '1 + pulse(doneAt, 0.6) * 0.2', 36000))).toHaveLength(1)
+  })
+
+  it('captured on `time` but never read by pulse/shake -> nothing (no false positive)', () => {
+    expect(hit(mk('time', '1 + sin(doneAt) * 0.2'))).toEqual([])
+  })
+
+  it('read by pulse but captured from something else -> nothing', () => {
+    expect(hit(mk('42', '1 + pulse(doneAt, 0.6) * 0.2'))).toEqual([])
+  })
+
+  it('finds a capture nested inside an `if` branch', () => {
+    const d = mk('time', '1 + pulse(doneAt, 0.6) * 0.2')
+    d.interactions = [{ id: 'i_box', targetId: 'box', event: 'click', actions: [{ do: 'if', cond: 'lives == 0', then: [{ do: 'setVar', name: 'doneAt', value: 'time' }] }] }]
+    expect(hit(d)).toHaveLength(1)
+  })
+
+  it('`shake` carries its instant in the SECOND argument', () => {
+    expect(hit(mk('time', 'shake(wrong, doneAt)'))).toHaveLength(1)
+    expect(hit(mk('time', 'shake(doneAt, clock)'))).toEqual([]) // arg 0 is the flag, not an instant
+  })
+
+  it('a nested call does not confuse the argument split', () => {
+    expect(hit(mk('time', 'pulse(max(doneAt, 0), 0.6)'))).toHaveLength(1) // reached through the arg expression
+    expect(hit(mk('time', 'clamp(pulse(0, 1), 0, doneAt)'))).toEqual([]) // doneAt is NOT pulse's instant
+  })
+
+  it('a capture on the timeline (`every frame`) and a read inside an action are both seen', () => {
+    const d: Doc = {
+      width: 100, height: 100, symbols: [], variables: { doneAt: -999, flash: 0 },
+      layers: [layer([group('box', 'Box')])],
+      interactions: [{ id: 'i_box', targetId: 'box', event: 'click', actions: [{ do: 'setVar', name: 'flash', value: 'pulse(doneAt, 1)' }] }],
+      timeline: { fps: 24, durationFrames: 60, tracks: [], onEnterFrame: [{ do: 'setVar', name: 'doneAt', value: 'time' }] },
+    }
+    expect(hit(d)).toHaveLength(1)
+  })
+
+  it('the same variable read by two channels is reported once, not once per reader', () => {
+    const d = mk('time', '1 + pulse(doneAt, 0.6) * 0.2')
+    d.layers = [layer([{ ...group('box', 'Box'), expressions: { scaleX: 'pulse(doneAt, 1)', scaleY: 'pulse(doneAt, 1)' } }])]
+    expect(hit(d)).toHaveLength(1)
   })
 })
 
@@ -296,6 +405,88 @@ describe('programDoc — layout warnings', () => {
   it('text-on-path never triggers the CANVAS-overflow / clipped warnings (box is irrelevant)', () => {
     const ws = docLayoutWarnings(doc([onPath('OVERFLOWING LABEL', 20)]))
     expect(ws.filter((w) => /overflows the canvas|clipped at the canvas edge/.test(w.diag.message))).toEqual([])
+  })
+
+  // Both passes used to read `doc.layers` top-level only, so anything drawn inside a group — which is
+  // MOST of a real scene, since a group is the only thing a behavior block can animate — was never
+  // measured at all. A text spilling out of its frame is the first defect an eye catches.
+  describe('inside groups', () => {
+    const wrapper = (items: Layer['items'], x: number, y: number): Group => ({
+      id: 'g', kind: 'group', name: 'Card', transform: translation(x, y),
+      layers: [{ id: 'GL', name: 'c', visible: true, locked: false, opacity: 1, items }],
+    })
+
+    it('a NESTED item pushed off the canvas is flagged, in world coordinates', () => {
+      const img: Image = { id: 'im', kind: 'image', name: 'Badge', transform: translation(40, 40), assetId: 'x', w: 200, h: 200 }
+      // Group at 700,-190 + item at 40,40 → world 740,-150: off the top edge and past the right one.
+      expect(docLayoutWarnings(doc([wrapper([img], 700, -190)])).some((w) => /Badge.*clipped at the canvas edge/.test(w.diag.message))).toBe(true)
+      // The very same item, inside a group that sits in the canvas, is fine.
+      expect(docLayoutWarnings(doc([wrapper([img], 100, 100)])).filter((w) => /clipped at the canvas edge/.test(w.diag.message))).toEqual([])
+    })
+
+    it('a nested text overflowing the canvas is flagged', () => {
+      const long = 'This instruction is far too long for its little box truly and even more'
+      expect(docLayoutWarnings(doc([wrapper([mkText(long, 40, 300)], 300, 0)])).some((w) => /overflows the canvas/.test(w.diag.message))).toBe(true)
+    })
+
+    it('a group transform is composed, not ignored (an offset parent moves its child)', () => {
+      const img: Image = { id: 'im', kind: 'image', name: 'Badge', transform: translation(40, 40), assetId: 'x', w: 100, h: 100 }
+      const inside = docLayoutWarnings(doc([wrapper([img], 0, 0)])).filter((w) => /clipped/.test(w.diag.message))
+      const straddling = docLayoutWarnings(doc([wrapper([img], 750, 0)])).filter((w) => /clipped/.test(w.diag.message))
+      expect(inside).toEqual([]) // parent at origin → child at 40,40, on canvas
+      expect(straddling).toHaveLength(1) // same child, parent shifted until it crosses the right edge
+      // Parked ENTIRELY off-canvas stays silent, as it already did at the top level — that is the
+      // deliberate "hidden" pattern, not a mistake.
+      expect(docLayoutWarnings(doc([wrapper([img], 1200, 0)])).filter((w) => /clipped/.test(w.diag.message))).toEqual([])
+    })
+  })
+
+  // `wrap` was skipped entirely by the width pass — reasonably, since a wrapped line cannot overflow the
+  // box HORIZONTALLY. What it does overflow is the box's HEIGHT, and that is the same visible defect.
+  describe('wrapped text', () => {
+    const wrapped = (content: string, boxW: number, boxH: number): Text => ({
+      id: 't', kind: 'text', name: 'Label', transform: translation(40, 40), content, wrap: true,
+      font: 'sans-serif', size: 24, align: 'left', lineHeight: 1.2, color: '#000', box: { w: boxW, h: boxH },
+    })
+    const hit = (t: Text) => docLayoutWarnings(doc([t])).filter((w) => /overflows its box/.test(w.diag.message))
+
+    it('more wrapped lines than the box is tall -> warning naming both heights', () => {
+      const ws = hit(wrapped('one two three four five six seven eight nine ten eleven twelve', 200, 40))
+      expect(ws).toHaveLength(1)
+      expect(ws[0].diag.severity).toBe('warning')
+      expect(ws[0].diag.message).toMatch(/line/)
+    })
+
+    it('text that fits its box -> nothing', () => {
+      expect(hit(wrapped('two words', 400, 120))).toEqual([])
+    })
+
+    it('a taller box absorbs the same text -> nothing', () => {
+      const content = 'one two three four five six seven eight nine ten eleven twelve'
+      expect(hit(wrapped(content, 200, 40))).toHaveLength(1)
+      expect(hit(wrapped(content, 200, 600))).toEqual([])
+    })
+
+    it('explicit newlines count as line breaks even in a narrow box', () => {
+      expect(hit(wrapped('a\nb\nc\nd\ne\nf\ng\nh', 400, 40))).toHaveLength(1)
+    })
+
+    it('a single word wider than the box is flagged (it cannot be broken)', () => {
+      const ws = docLayoutWarnings(doc([wrapped('Supercalifragilisticexpialidocious', 80, 400)]))
+      expect(ws.some((w) => /cannot be broken|too wide/.test(w.diag.message))).toBe(true)
+    })
+
+    it('a text WITHOUT wrap is not measured against its box (it may overflow it harmlessly)', () => {
+      expect(hit(mkText('one two three four five six seven eight', 40, 60))).toEqual([])
+    })
+
+    it('wrapped text inside a group is measured too', () => {
+      const g: Group = {
+        id: 'g', kind: 'group', name: 'Card', transform: translation(100, 100),
+        layers: [{ id: 'GL', name: 'c', visible: true, locked: false, opacity: 1, items: [wrapped('one two three four five six seven eight nine ten eleven twelve', 200, 40)] }],
+      }
+      expect(docLayoutWarnings(doc([g])).filter((w) => /overflows its box/.test(w.diag.message))).toHaveLength(1)
+    })
   })
 })
 

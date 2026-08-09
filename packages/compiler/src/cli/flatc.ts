@@ -12,7 +12,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, watch, mkdirSync, copyFileSync } from 'node:fs'
 import { resolve, dirname, basename, extname, join, relative, isAbsolute } from 'node:path'
 import { compileFlatpack, packToJSON, type MediaMap } from '../compile'
-import { parseProgramFull, parseFlatLib, behaviorDiagnostics, objectTargetDiagnostics } from '@flatkit/engine/flatFormat'
+import { parseProgramFull, parseFlatLib } from '@flatkit/engine/flatFormat'
 import { hasPackage } from '@flatkit/engine/stdlib'
 import { parseUnits } from '@flatkit/engine/dsl'
 import { sanitizeDoc } from '@flatkit/engine/validateDoc'
@@ -21,6 +21,7 @@ import { containerBBox, containerBBoxUnion } from '@flatkit/engine/groups'
 import { isInstance, isGroup } from '@flatkit/engine/layers'
 import { IDENTITY } from '@flatkit/engine/transform'
 import { lintDocReport, docHasErrors } from '../programDoc'
+import { formatDiagnostics, programDiagnostics } from '../check'
 import { playHeadless, type Gesture } from '@flatkit/player/debug'
 import type { FuncDef } from '@flatkit/engine/actions'
 import type { Doc, Instance, Item, Layer, SymbolDef } from '@flatkit/types'
@@ -101,7 +102,7 @@ Media referenced by 'asset "id" "path" kind' are embedded (paths relative to the
 /** How media is baked: `inline` = base64 data-URI in the .flatpack; `external` = relative key + sidecar files. */
 type AssetMode = 'inline' | 'external'
 type MediaCopy = { src: string; key: string } // external mode: source file → relative key (forward slashes)
-type BuildResult = { doc: Doc; flatLibs: number; packages: number; media: number; mediaCopies: MediaCopy[]; behaviorDiags: ReturnType<typeof behaviorDiagnostics>; src: string }
+type BuildResult = { doc: Doc; flatLibs: number; packages: number; media: number; mediaCopies: MediaCopy[]; src: string }
 
 /**
  * Reads a `.flatink`, resolves libs/packages/media, compiles → standalone Doc. Throws on compile error.
@@ -164,9 +165,9 @@ function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], 
   if (pkgFunctions.length) doc = { ...doc, functions: [...(doc.functions ?? []), ...pkgFunctions] }
   const stdImports = (doc.imports ?? []).filter(hasPackage)
   doc = { ...doc, imports: stdImports.length ? stdImports : undefined }
-  // Both are source-based (exact positions) and both are ERRORS: a parse-level drop inside a block, and a
-  // block that binds to no animatable item at all.
-  return { doc, flatLibs: flatPaths.size, packages: localResolved.size, media: Object.keys(media).length, mediaCopies, src: programSrc, behaviorDiags: [...behaviorDiagnostics(programSrc), ...objectTargetDiagnostics(programSrc)] }
+  // The source travels with the Doc: the source-level passes (`programDiagnostics`) need the author's text,
+  // since a parse-level drop and an `object` block binding to nothing leave no trace in the compiled Doc.
+  return { doc, flatLibs: flatPaths.size, packages: localResolved.size, media: Object.keys(media).length, mediaCopies, src: programSrc }
 }
 
 /** Compile once (write or --check). Returns the exit code. */
@@ -178,19 +179,19 @@ function compileOnce(programPath: string, explicitFlats: string[], out: string, 
   try { built = buildDocFromProgram(programPath, explicitFlats, assetMode, assetsDir, noLibs) }
   catch (e) { process.stderr.write(`flatc: compile error: ${(e as Error).message}\n`); return 1 }
   const { doc } = built
-  // Behavior parse errors (unknown channels / malformed statements inside `object` blocks) that the
-  // Doc-based linter can't see — they were dropped before reaching the model. Always ERRORS.
-  const behaviorReport = built.behaviorDiags.map(({ scope, diag }) => `[${scope}] ${diag.line}:${diag.col}: error: ${diag.message}`).join('\n')
-  // Dedupe exact-duplicate lines: a scene parse error IS reported by both paths (both now read the source).
-  const report = [...new Set([behaviorReport, lintDocReport(doc, built.src)].flatMap((r) => r.split('\n')).filter(Boolean))].join('\n')
-  const hasErrors = docHasErrors(doc, built.src) || built.behaviorDiags.length > 0
+  // The SAME pass the `checkProgram` API runs — source-level diagnostics (statements the parser dropped,
+  // `object` blocks binding to nothing) merged with the semantic lint of the Doc. Shared on purpose: a
+  // check that lives only in the CLI is a check an integrator has to shell out for.
+  const diagnostics = programDiagnostics(doc, built.src)
+  const report = formatDiagnostics(diagnostics)
+  const hasErrors = diagnostics.some((d) => d.severity === 'error')
   if (checkOnly) {
     if (report) process.stderr.write(report + '\n')
     if (hasErrors) return 1
     // Success line deliberately avoids the word "error" (the report on a FAILURE already prints "error" to
     // stderr + exits ≠0) so a `grep error` over the output can't false-positive — the real signal is the exit
     // code; on success, only warnings remain (non-blocking), surfaced as a count.
-    const warnings = report ? report.split('\n').filter(Boolean).length : 0
+    const warnings = diagnostics.length
     process.stdout.write(`flatc: check passed ✓${warnings ? ` · ${warnings} warning(s)` : ''}\n`)
     return 0
   }

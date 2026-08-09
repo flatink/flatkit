@@ -13,17 +13,19 @@ import type { Doc, EditFrame, Group, Instance } from '@flatkit/types'
 import { printUnits, type Diagnostic } from '@flatkit/engine/dsl'
 import { joinScopeProgram, scopeRegions } from './scopeProgram'
 import { functionsToUnits, importsToUnits, objectToUnits, timelineToUnits, variablesToUnits } from '@flatkit/engine/scriptDoc'
-import { contextLayers, getScopeTimeline, isContainer, isGroup, isText, isImage, isPoseable, isRegion } from '@flatkit/engine/layers'
+import { contextLayers, getScopeTimeline, isContainer, isGroup, isInstance, isText, isImage, isPoseable, isRegion } from '@flatkit/engine/layers'
 import { importedFunctions } from '@flatkit/engine/stdlib'
 import { EXPR_CHANNELS } from '@flatkit/engine/timeline'
 import { objectNames } from '@flatkit/engine/sceneRefs'
 import { behaviorRegions } from '@flatkit/engine/flatFormat'
-import { itemBBox, dropZoneBounds } from '@flatkit/engine/groups'
+import { itemBBox, dropZoneBounds, transformBBox } from '@flatkit/engine/groups'
+import { IDENTITY, apply, compose } from '@flatkit/engine/transform'
 import { makePathSampler } from '@flatkit/engine/path'
 import { bboxIntersects } from '@flatkit/engine/bbox'
 import { lint, localVariables, type LintContext } from './lint'
+import { forEachAction, forEachExpression } from './docWalk'
 import { parseUnits } from '@flatkit/engine/dsl'
-import type { Item, Layer, ParamDef, SymbolDef, Text } from '@flatkit/types'
+import type { Image, Item, Layer, ParamDef, SymbolDef, Text, Transform } from '@flatkit/types'
 
 /** Rebuilds the "program" text of a scope (imports + variables + functions + scene cycle
  *  + one `object "Name" { … }` block per scripted container with a unique name). Pure, round-trip via printUnits. */
@@ -124,6 +126,43 @@ function functionsReadingTime(doc: Doc): string[] {
   }
 }
 
+/** Top-level arguments of every `name(…)` call in `src`. Depth-aware, so a nested call keeps its own
+ *  commas: `pulse(max(a, 0), 1)` reads as two arguments, not three. */
+function callArguments(src: string, name: string): string[][] {
+  const out: string[][] = []
+  const re = new RegExp(`(?<![\\w.])${escapeRe(name)}\\s*\\(`, 'g')
+  let m: RegExpExecArray | null
+  while ((m = re.exec(src))) {
+    const args: string[] = []
+    let depth = 1
+    let start = m.index + m[0].length
+    let i = start
+    for (; i < src.length; i++) {
+      const c = src[i]
+      if (c === '(') depth++
+      else if (c === ')') { depth--; if (depth === 0) break }
+      else if (c === ',' && depth === 1) { args.push(src.slice(start, i)); start = i + 1 }
+    }
+    args.push(src.slice(start, i))
+    out.push(args.map((a) => a.trim()))
+  }
+  return out
+}
+
+/** Which argument of a feedback function is an INSTANT (a timestamp compared against `clock`):
+ *  `pulse(since, dur)` → the 1st; `shake(bad, t)` → the 2nd (the 1st is the flag). */
+const INSTANT_ARG: Record<string, number> = { pulse: 0, shake: 1 }
+
+/** Variables whose value is captured from `time` (`doneAt = time`) — the pre-0.23 timestamp idiom, back
+ *  when `pulse`/`shake` rode `time` too. A capture that already mentions `clock` is the correct one. */
+function timeCapturedVars(doc: Doc): Set<string> {
+  const out = new Set<string>()
+  forEachAction(doc, (a) => {
+    if (a.do === 'setVar' && /\btime\b/.test(a.value) && !/\bclock\b/.test(a.value)) out.add(a.name)
+  })
+  return out
+}
+
 /** STRUCTURAL warnings (non-blocking) of a Doc: phantom drop zones, dead variables. */
 export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnostic }[] {
   const out: { scope: string; diag: Diagnostic }[] = []
@@ -155,6 +194,25 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
       if ((m?.length ?? 0) <= 1) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `global variable "${name}" never used (declared, but neither read nor written)` } })
     }
   }
+  // (b bis) An `instance "X"` that resolved to NO symbol. Compilation keeps the unresolved `@X` marker all
+  //     the way into the .flatpack, the instance draws nothing, and everything else about the file looks
+  //     fine — the same family as the phantom drop zone above: a name that points at nothing. Only a
+  //     warning: compiling a program on its own and supplying its libraries later is a legitimate
+  //     workflow, and it must keep exiting 0.
+  const missing = new Set<string>()
+  const scanRefs = (items: Item[]): void => {
+    for (const it of items) {
+      if (isInstance(it) && it.symbolId.startsWith('@')) missing.add(it.symbolId.slice(1))
+      if (isGroup(it)) for (const l of it.layers) scanRefs(l.items)
+    }
+  }
+  for (const l of doc.layers) scanRefs(l.items)
+  for (const s of doc.symbols ?? []) for (const l of s.layers) scanRefs(l.items)
+  if (missing.size) {
+    const names = [...missing].map((n) => `"${n}"`).join(', ')
+    out.push(warn(`instance resolves to no symbol: ${names} — nothing is drawn where it stands. Pass the .flat library that defines it (\`flatc <program> <lib.flat>\`, or place it beside the program), or fix the name.`))
+  }
+
   // (c) `time` reaching a channel expression + a SHORT looping timeline → the motion JUMPS on each loop
   //     (`time = frame/fps` resets to 0 every `durationFrames`). The monotone `clock` never wraps.
   //     A `time` reached THROUGH A FUNCTION counts: the costliest version of this trap was
@@ -179,6 +237,34 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
     if (culprits.size) {
       const secs = Math.round((dur / fps) * 10) / 10
       out.push(warn(`a channel expression uses ${[...culprits].join(' and ')}, but the timeline loops every ${secs}s (durationFrames ${dur}) — \`time\` resets each loop, so the motion jumps (a one-shot ramp REPLAYS forever). Use the monotone \`clock\` (never wraps), drive it by \`frame/${dur}\`, or set a longer \`timeline\`.`))
+    }
+  }
+  // (d) An instant captured on `time` and handed to `pulse`/`shake`. Both ride the MONOTONE `clock`, so
+  //     `clock - since` grows without bound and the ramp NEVER fires. Unlike (c) this is loop-LENGTH
+  //     independent — the two axes never meet however long the timeline is — and it is entirely SILENT:
+  //     nothing jumps, nothing blinks, and (c) itself stays quiet because the channel text holds no `time`.
+  //     The 0.21 → 0.23 migration trap: back then `pulse` rode `time` and the mismatch at least showed.
+  const captured = timeCapturedVars(doc)
+  if (captured.size) {
+    const readers = new Map<string, Set<string>>() // variable → the feedback functions reading it as an instant
+    forEachExpression(doc, (expr) => {
+      for (const fnName of Object.keys(INSTANT_ARG)) {
+        for (const args of callArguments(expr, fnName)) {
+          const arg = args[INSTANT_ARG[fnName]]
+          if (!arg) continue
+          // The name may sit INSIDE the argument (`pulse(max(doneAt, 0), 1)`) — match it as a whole word.
+          for (const v of captured) {
+            if (!new RegExp(`(?<![\\w-])${escapeRe(v)}(?![\\w-])`).test(arg)) continue
+            const seen = readers.get(v) ?? new Set<string>()
+            seen.add(fnName)
+            readers.set(v, seen)
+          }
+        }
+      }
+    })
+    for (const [v, fns] of readers) {
+      const who = [...fns].map((f) => `\`${f}()\``).join(' and ')
+      out.push(warn(`"${v}" is captured on \`time\` but read as an INSTANT by ${who}, which compares it against the monotone \`clock\` — the two axes never meet, so the ramp never fires and nothing on screen says so. Capture it with \`clock\` instead: \`${v} = clock\`.`))
     }
   }
   out.push(...docPaintParamWarnings(doc))
@@ -258,12 +344,35 @@ export function docPaintParamWarnings(doc: Doc): { scope: string; diag: Diagnost
 
 const warn = (message: string): { scope: string; diag: Diagnostic } => ({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message } })
 const itemLabel = (it: Item): string => ('name' in it && it.name ? it.name : 'kind' in it ? it.kind : 'path')
+/** Mean advance of a proportional glyph at this text's size — the metric both estimators share. */
+const glyphAdvance = (t: Text): number => (t.weight && t.weight >= 700 ? 0.56 : 0.52) * t.size
+
 /** Estimated width of the longest line (approximate metric, without canvas). */
 function estTextWidth(t: Text): number {
-  const advance = (t.weight && t.weight >= 700 ? 0.56 : 0.52) * t.size // mean advance of a proportional glyph
+  const advance = glyphAdvance(t)
   let longest = 0
   for (const line of t.content.split('\n')) longest = Math.max(longest, line.length)
   return longest * advance
+}
+
+/** Greedy word-wrap of a `wrap` text at its box width — the renderer's own rule (break at spaces, and
+ *  only at spaces). Returns the resulting line count and the widest single word, which is what decides
+ *  whether anything spills sideways: a word wider than the box has no break point and runs past it. */
+function wrapMetrics(t: Text): { lines: number; widestWord: number } {
+  const advance = glyphAdvance(t)
+  const width = (s: string) => s.length * advance
+  let lines = 0
+  let widestWord = 0
+  for (const paragraph of t.content.split('\n')) {
+    lines++ // an explicit newline always starts a line, empty ones included (they still take height)
+    let current = ''
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      widestWord = Math.max(widestWord, width(word))
+      const joined = current ? `${current} ${word}` : word
+      if (current && width(joined) > t.box.w) { lines++; current = word } else current = joined
+    }
+  }
+  return { lines, widestWord }
 }
 
 /** LAYOUT warnings (non-blocking): canvas overflow, text too wide, overlapping hitboxes.
@@ -274,33 +383,72 @@ export function docLayoutWarnings(doc: Doc): { scope: string; diag: Diagnostic }
   const TOL = 8 // overflow tolerance (px) before alerting
   const r0 = (n: number) => Math.round(n)
 
+  // An item whose position is written at RUNTIME — bound to an expression, or dragged directly — has a
+  // meaningless static bbox. That rule already existed; what it missed is that it is INHERITED: a label
+  // sitting inside a dragged tile is authored around the tile's origin and only lands somewhere real once
+  // the tile moves. Measuring it where the file happens to leave it (0,0) reports the whole scene as
+  // clipped — the exact noise that would make the pass unusable.
+  const dynamicPos = (it: Item) =>
+    ('expressions' in it && it.expressions && (it.expressions.x != null || it.expressions.y != null || it.expressions.dx != null || it.expressions.dy != null)) ||
+    !!doc.interactors?.some((i) => i.targetId === it.id) // `drag`/`turn`: the pointer decides where it is
+
+  // Every text/image of the scene, paired with the WORLD matrix of its PARENT (the space `itemBBox`
+  // reports in) and whether any ancestor is runtime-positioned. Both passes below used to read
+  // `doc.layers` top level only — and a group is the only thing a behavior block can animate, so most of
+  // a real scene lives inside one and was never measured at all.
+  const placed: { it: Text | Image; parent: Transform; dynamic: boolean }[] = []
+  const collect = (layers: Layer[], matrix: Transform, dynamic: boolean): void => {
+    for (const l of layers) for (const it of l.items) {
+      if (isText(it) || isImage(it)) placed.push({ it, parent: matrix, dynamic: dynamic || dynamicPos(it) })
+      if (isGroup(it)) collect(it.layers, compose(matrix, it.transform), dynamic || dynamicPos(it))
+    }
+  }
+  collect(doc.layers, IDENTITY, false)
+
   // (c) TEXT/IMAGE clipped at the canvas edge. Precise to avoid noise: we ignore `path`/groups
-  //     (decor that "bleeds" on purpose), objects driven by an expression (dynamic position ->
-  //     misleading static bbox), and items PARKED entirely off-screen ("hidden" pattern).
-  const dynamicPos = (it: Item) => 'expressions' in it && it.expressions && (it.expressions.x != null || it.expressions.y != null || it.expressions.dx != null || it.expressions.dy != null)
-  for (const layer of doc.layers) {
-    for (const it of layer.items) {
-      if (!(isText(it) || isImage(it)) || dynamicPos(it) || (isText(it) && it.textPath)) continue // path-laid text → §(f), not a box
-      const b = itemBBox(doc, it)
-      if (!b) continue
-      const visible = b.maxX > 0 && b.minX < W && b.maxY > 0 && b.minY < H // overlaps the canvas (not parked off-screen)
-      const clipped = b.minX < -TOL || b.minY < -TOL || b.maxX > W + TOL || b.maxY > H + TOL
-      if (visible && clipped) {
-        out.push(warn(`"${itemLabel(it)}" clipped at the canvas edge: bbox [${r0(b.minX)},${r0(b.minY)} -> ${r0(b.maxX)},${r0(b.maxY)}] outside 0,0 -> ${W},${H}`))
-      }
+  //     (decor that "bleeds" on purpose), anything positioned at runtime (see above), and items PARKED
+  //     entirely off-screen ("hidden" pattern).
+  for (const { it, parent, dynamic } of placed) {
+    if (dynamic || (isText(it) && it.textPath)) continue // path-laid text → §(f), not a box
+    const local = itemBBox(doc, it)
+    if (!local) continue
+    const b = transformBBox(local, parent) // itemBBox is PARENT-space → compose with the ancestors
+    const visible = b.maxX > 0 && b.minX < W && b.maxY > 0 && b.minY < H // overlaps the canvas (not parked off-screen)
+    const clipped = b.minX < -TOL || b.minY < -TOL || b.maxX > W + TOL || b.maxY > H + TOL
+    if (visible && clipped) {
+      out.push(warn(`"${itemLabel(it)}" clipped at the canvas edge: bbox [${r0(b.minX)},${r0(b.minY)} -> ${r0(b.maxX)},${r0(b.maxY)}] outside 0,0 -> ${W},${H}`))
     }
   }
 
   // (d) Text (without `wrap`) whose estimated width makes it OVERFLOW THE CANVAS -> instruction clipped.
   //     (We do NOT compare against `box.w`: without wrap, a text overflows its box harmlessly as long as it
-  //      fits in the canvas — it is the canvas edge that clips.) Top-level only (x = world).
-  for (const it of doc.layers.flatMap((l) => l.items)) {
-    if (!isText(it) || it.wrap || it.textPath || dynamicPos(it)) continue
+  //      fits in the canvas — it is the canvas edge that clips.)
+  for (const { it, parent, dynamic } of placed) {
+    if (!isText(it) || it.wrap || it.textPath || dynamic) continue
     const estW = estTextWidth(it)
     const left = it.align === 'left' ? 0 : it.align === 'right' ? it.box.w - estW : it.box.w / 2 - estW / 2
-    const wl = it.transform.e + left, wr = wl + estW // left/right edge of the content in world coords
+    const m = compose(parent, it.transform) // the text's own world matrix: its baseline runs in ITS space
+    const p0 = apply(m, { x: left, y: 0 }), p1 = apply(m, { x: left + estW, y: 0 })
+    const wl = Math.min(p0.x, p1.x), wr = Math.max(p0.x, p1.x) // left/right edge of the content in world coords
     if (wr > W + TOL || wl < -TOL) {
       out.push(warn(`text "${it.content.slice(0, 24)}${it.content.length > 24 ? '…' : ''}" overflows the canvas (estimated ~${r0(estW)} px, edge ${r0(wl)}->${r0(wr)} outside 0->${W}) — add "wrap"`))
+    }
+  }
+
+  // (g) WRAPPED text taller than its box. Pass (d) skips `wrap` — rightly, since wrapping cannot overflow
+  //     the box horizontally — but that left wrapped text unmeasured entirely, and what it DOES overflow is
+  //     the box's height. Same visible defect: an instruction spilling out of its frame is the first thing
+  //     an eye catches, and the reason a whole activity had to be re-read by a multimodal model.
+  for (const { it } of placed) {
+    if (!isText(it) || !it.wrap || it.textPath) continue
+    const { lines, widestWord } = wrapMetrics(it)
+    const label = `${it.content.slice(0, 24).replace(/\n/g, ' ')}${it.content.length > 24 ? '…' : ''}`
+    const tall = lines * it.size * it.lineHeight
+    if (tall > it.box.h + TOL) {
+      out.push(warn(`text "${label}" overflows its box: ~${lines} wrapped line(s) ≈ ${r0(tall)} px for a box ${r0(it.box.h)} px tall — raise the box height, shorten the text, or reduce the size`))
+    }
+    if (widestWord > it.box.w + TOL) {
+      out.push(warn(`text "${label}" has a word too wide for its box (~${r0(widestWord)} px > ${r0(it.box.w)} px) — a single word cannot be broken, so it spills past the frame whatever "wrap" says`))
     }
   }
 

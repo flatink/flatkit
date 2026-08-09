@@ -9,6 +9,9 @@
 // --- Compile a program (+ assets) into a playable .flatpack Doc ---------------
 export { compileFlatpack, packToJSON, type MediaMap } from './compile'
 
+// --- Check a program the way the CLI does (source in, diagnostics out) --------
+export { checkProgram, programDiagnostics, formatDiagnostics, type CheckDiagnostic, type CheckOptions, type CheckResult } from './check'
+
 // --- Static analysis: lint a program / a whole Doc ----------------------------
 export { lint, lintReport, localVariables, type LintContext } from './lint'
 export {
@@ -17,10 +20,11 @@ export {
 } from './programDoc'
 
 // --- Manifest / LLM context for a Doc -----------------------------------------
-export { manifestObjects, docToManifest, llmContext, type ManifestObject } from './manifest'
+export { manifestObjects, manifestEvents, docToManifest, llmContext, type ManifestObject } from './manifest'
 
-// --- The language reference card ----------------------------------------------
+// --- The reference cards: behavior (languageCard) and composition (drawingCard) -
 export { languageCard } from './languageCard'
+export { drawingCard } from './drawingCard'
 
 // --- Scope-program helpers (split/join the per-object behavior blocks) ---------
 export { splitScopeProgram, scopeRegions, formatObjectBlock, joinScopeProgram } from './scopeProgram'

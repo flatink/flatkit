@@ -220,6 +220,17 @@ and composes with `self.x`/`self.y` etc. (same `self`).
 - **`use "feedback"` functions** — the same reactions as plain helpers if you want to wire them by
   hand: `lift(h)` · `dim(h)` · `tilt(g)` · `sink(g)` · `shake(bad, t)`. (Settle-bounce is not here
   yet: it needs a release timestamp, so it is not stateless.)
+- ⚠️ **Capture an instant with `clock`, never `time`.** `pulse`/`shake` ride the monotone `clock`, so
+  an instant captured on the looping `time` is compared against an axis it never shares: `clock - since`
+  grows without bound and **the ramp never fires**. Nothing jumps, nothing blinks — the failure is
+  entirely silent, which makes it far more expensive than a visible one. It is the classic leftover of
+  a pre-0.23 codebase, where `pulse` rode `time` too.
+  ```
+  when wrong { shown = clock }        // ✓  monotone — pulse can subtract it
+  when wrong { shown = time }         // ✗  wraps every durationFrames — the ramp never starts
+  opacity = pulse(shown, 4)
+  ```
+  `flatc --check` now names it: *"shown" is captured on `time` but read as an INSTANT by `pulse()`…*
 
 ## Factoring
 

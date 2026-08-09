@@ -41,9 +41,34 @@ flatc <library.flat> [more.flat …] --check   # lint an asset LIB per-symbol (s
 undeclared color param in a paint, unknown functions/objects) run on a lib's symbols — no need to compile a
 preview first.
 
-`--check` also covers approximate **layout** warnings: text overflowing the canvas, clipped items,
-missing/overlapping drop zones, never-used variables, and a `color` param used as a paint (a `fill`/`stroke`,
-a gradient stop `0:teinte@…`, or a `tint`) that the symbol doesn't declare — a silent "dead recolor".
+`--check` also covers approximate **layout** warnings: text overflowing the canvas, **wrapped text taller
+than its box** (or holding a single word too wide to break), clipped items, missing/overlapping drop zones,
+never-used variables, and a `color` param used as a paint (a `fill`/`stroke`, a gradient stop `0:teinte@…`,
+or a `tint`) that the symbol doesn't declare — a silent "dead recolor". The layout passes descend **into
+groups** and measure in world coordinates, and they skip anything positioned at runtime (a bound or dragged
+item, and everything nested under one, has no meaningful static position).
+
+It flags an instant **captured on `time` and read by `pulse`/`shake`** — both ride the monotone `clock`, so
+the two axes never meet and the ramp never fires, with nothing on screen to say so. The costliest kind of
+bug in a codebase migrated from 0.21; see the
+[gotchas](dsl-gotchas.md#feedback-reactions-in-one-line).
+
+### The same pass, from code — `checkProgram`
+
+The compiled Doc is **not enough** to validate a program. A text that is not FlatInk at all compiles to an
+empty Doc nothing distinguishes from a valid one, and an `object` block that binds to nothing leaves no
+trace either: both errors live in the SOURCE. `checkProgram` runs the whole `--check` pass on a string, so
+validating in a service or a browser no longer means spawning `flatc`:
+
+```ts
+import { checkProgram } from '@flatkit/compiler'
+
+const { ok, errors, warnings, report, doc } = checkProgram(srcFromAnLLM, { assetSrcs: [libText] })
+if (!ok) regenerate(report) // the report doubles as the repair prompt
+```
+
+Never throws: a source the parser rejects outright comes back as a diagnostic with `doc: null`. The CLI
+calls the same function, so the two verdicts cannot drift.
 
 It also flags the three **silent drops of a cel layer** (such a layer draws only the current cel's
 `matter` and the containers that cel poses): a bare shape left in the layer, a `pose "X"` naming no roster
@@ -143,6 +168,39 @@ flatc <file> --play --script gestures.json [--trace]
 In the player, `player.startRecording()` / `stopRecording(): Gesture[]` capture gestures you play by
 hand into a script that `--play` replays. (Authoring/CI helpers live in `@flatkit/player/debug`.)
 Pointer only — key presses are not captured; add the `key` gestures to the recorded script yourself.
+
+## Teaching the language to a model
+
+Three pieces, all pure functions — no filesystem, no canvas — so they work in a browser as well as in CI:
+
+```ts
+import { languageCard, drawingCard, docToManifest, llmContext, manifestObjects, manifestEvents } from '@flatkit/compiler'
+
+languageCard()      // BEHAVIOR: events, channels, expressions (function/constant lists interpolated
+                    // from the engine, so they cannot go stale)
+drawingCard()       // COMPOSITION: shapes, paints, filters, text, clipping, and the word order that
+                    // breaks most often. Its examples are compiled by a test — a copied reference drifts
+docToManifest(doc)  // the SCENE MAP alone: the names this scene can reference, and the contract below
+llmContext(doc)     // the bundle: both cards + the map. `{ drawing: false }` drops the drawing half
+```
+
+Pick `docToManifest` when you already inject the references yourself — `llmContext` is the everything-included
+bundle, and calling it in that case ships the cards twice.
+
+The scene map (`docToManifest`) ends with the **binding contract**: for each named object, the events the
+logic handles on it, whether it is dragged, whether it is a drop zone, the channels the logic drives, and
+the state it reads — plus the events the program emits. Deliberately **no coordinates**: that is what lets
+a second skin honour the same logic with a completely different composition.
+
+```
+contract (honour these; the layout is yours):
+  Flask - zone
+  TileH - drag, on drop, driven: x y opacity rotation, reads: xh yh rmix inO
+events: correct, completed, incorrect
+```
+
+Longer, hand-written prompts (a full reference plus one file per role — asset creator, motion designer,
+coder) ship with the package under `prompts/`; see [its README](../packages/compiler/prompts/README.md).
 
 ## See also
 

@@ -50,23 +50,28 @@
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
-        "import": "./dist/index.js"
+        "import": "./dist/index.js",
+        "require": "./dist/index.js"
       },
       "./debug": {
         "types": "./dist/debug.d.ts",
-        "import": "./dist/debug.js"
+        "import": "./dist/debug.js",
+        "require": "./dist/debug.js"
       },
       "./render": {
         "types": "./dist/drawScene.d.ts",
-        "import": "./dist/drawScene.js"
+        "import": "./dist/drawScene.js",
+        "require": "./dist/drawScene.js"
       },
       "./hit": {
         "types": "./dist/hit.d.ts",
-        "import": "./dist/hit.js"
+        "import": "./dist/hit.js",
+        "require": "./dist/hit.js"
       },
       "./browser": {
         "types": "./dist/index.d.ts",
-        "import": "./dist/browser.js"
+        "import": "./dist/browser.js",
+        "require": "./dist/browser.js"
       }
     }
   }

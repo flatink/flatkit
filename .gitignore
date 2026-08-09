@@ -16,8 +16,11 @@ coverage
 *.log
 *.local
 
-# LLM generation prompts (experimental, not shipped yet)
-prompts/
+# Local prompt material: the French translations and the worked examples (with their PNGs). The prompts
+# an integrator actually needs live in packages/compiler/prompts/ — tracked, and SHIPPED in the npm
+# package. Ignoring them here is what forced an integrator to hand-copy the grammar, and a copied
+# reference diverges. Root-anchored so the packaged folder is not swept up by the same pattern.
+/prompts/
 
 # Local agent notes (not shipped)
 CLAUDE.md

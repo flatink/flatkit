@@ -1076,6 +1076,9 @@ function expandHoldCels(cels: Cel[]): void {
   }
 }
 
+/** Options that belong to a `stroke`, not to the item carrying it — see the ordering error in `eat`. */
+const STROKE_OPTIONS = new Set(['cap', 'join', 'miter', 'dash'])
+
 class FlatParser {
   private p = 0
   private cw = 800 // canvas dimensions (updated when parsing `size`) → `at center` anchor
@@ -1099,6 +1102,11 @@ class FlatParser {
       // and a bare `"layer" expected, "as" found` sent the author auditing their layer structure, which was
       // never the problem. State the ordering rule instead.
       if (found === 'as') throw new Error('"as" is out of place: an item names itself RIGHT AFTER its geometry (or, for a text, its content) and BEFORE any style attribute — write `rect 0 0 W H as "Name" fill #fff`, not `rect 0 0 W H fill #fff as "Name"`')
+      // `cap`/`join`/`miter`/`dash` are options OF THE STROKE, not of the item. Any other attribute
+      // (`nofill`, `fill`, `opacity`, `filter`…) ends the stroke, so they land where the next item or
+      // layer was expected — and a bare `"layer" expected, "dash" found` reads as if `dash` did not
+      // exist, which sent an author back to the docs that document it correctly. Name the rule instead.
+      if (STROKE_OPTIONS.has(found)) throw new Error(`"${found}" belongs to \`stroke\` and must come directly after it — write \`stroke <paint> <width> [cap …] [join …] [miter n] [dash a,b]\` with no other attribute in between (\`nofill stroke #888 2 dash 6,5\`, not \`stroke #888 2 nofill dash 6,5\`)`)
       throw new Error(`"${v}" expected, "${found}" found`)
     }
     this.p++

@@ -40,7 +40,8 @@
     "exports": {
       "./*": {
         "types": "./dist/*.d.ts",
-        "import": "./dist/*.js"
+        "import": "./dist/*.js",
+        "require": "./dist/*.js"
       }
     }
   }

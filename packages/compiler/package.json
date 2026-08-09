@@ -33,7 +33,8 @@
   },
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "prompts"
   ],
   "dependencies": {
     "@flatkit/engine": "workspace:*",
@@ -61,15 +62,18 @@
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
-        "import": "./dist/index.js"
+        "import": "./dist/index.js",
+        "require": "./dist/index.js"
       },
       "./compile": {
         "types": "./dist/compile.d.ts",
-        "import": "./dist/compile.js"
+        "import": "./dist/compile.js",
+        "require": "./dist/compile.js"
       },
       "./analysis": {
         "types": "./dist/analysis.d.ts",
-        "import": "./dist/analysis.js"
+        "import": "./dist/analysis.js",
+        "require": "./dist/analysis.js"
       }
     }
   }
