@@ -1,0 +1,104 @@
+# @flatkit/sugarflat
+
+Declarative sugar for FlatInk. A compact block expands into **inspectable `.flatink`** — the expansion is
+the artefact of record, and anything the sugar writes can be written by hand instead.
+
+```
+place natures {
+  prompt "Put each word under its part of speech"
+  target Nouns at 230,470
+  target Verbs at 530,470
+  item cat -> Nouns at 150,150
+  item run -> Verbs at 310,150
+}
+```
+
+```ts
+import { desugar } from '@flatkit/sugarflat'
+import { checkProgram } from '@flatkit/compiler'
+
+const { flatink } = desugar(src)
+const { ok, report } = checkProgram(flatink)   // the expansion is what you ship, and what you read
+if (!ok) retry(report)
+```
+
+## Why it lives in the flatkit repo
+
+Not to put authoring opinions into the language. It is a **separate package**, out of the lockstep
+version group (the same standing as `@flatkit/mcp`), and **`@flatkit/compiler` never depends on it** —
+that direction is the whole guarantee.
+
+It lives here so the two move together: a grammar change breaks these tests in the same CI run. That was
+argued for a long time and then demonstrated — the previous out-of-tree sugar never emitted the format's
+**required** `size` line, on its entire corpus, for months, and nobody noticed because the compiler
+silently defaults it. Every document was laid out for one canvas and drawn on another.
+
+## The line this package does not cross
+
+**No visual opinion.** A gesture emits state and behavior; it never emits a coordinate, a colour or a
+font. The language already ships plenty of *interaction* opinions (`drag`, `when dropped on … at pointer`,
+`hitbox`, `match`, `feedback`, `spring`) — what it has never shipped is a look, and a sugar that shipped
+one would hand every activity built on it the same face. That has happened before, and the activities all
+came out looking alike.
+
+Two consequences, both deliberate:
+
+- **`raw { … }` passes through verbatim, always.** A sugar you cannot opt out of stops being scaffolding
+  and becomes a template. Use it beside a gesture to add or override anything.
+- **The composition is yours.** A gesture names the objects it drives; you (or a skin) draw them. This is
+  how `match` has always worked in the language proper.
+
+## What it guarantees
+
+- **The required header is emitted.** `size` and `timeline`, from a document spec that is *readable*
+  (`DEFAULT_DOCUMENT`) and overridable per call, rather than a literal buried in a generator.
+- **An unknown block is a hard error.** A sugar block nobody claims used to fall through as if it were
+  FlatInk, and failed a hundred lines downstream in a vocabulary that only talks about FlatInk.
+- **Human labels become valid identifiers.** `ident()` folds accents, because FlatInk identifiers are
+  `[A-Za-z0-9_]` and the lexer stops at an accent rather than erroring — one variable silently became two.
+- **Every expansion passes `checkProgram` with ZERO warnings.** Not "it compiles": a warning on generated
+  DSL is a defect in a place nobody is watching.
+
+## Tests: contracts, not goldens
+
+`src/contracts/` states what each gesture **does** — the events a learner's actions produce and the state
+left behind — never the DSL it writes. Text goldens cannot survive a rewrite that changes every emitted
+line; a gesture-replay contract can.
+
+It earned that on day one: replaying the *shipped* implementation showed that the full-canvas `Flash`
+overlay carries no `nohit`, so after a wrong answer it swallows every pointer event for ~40 frames. The
+learner makes a mistake and the activity stops responding, at the exact moment they retry.
+
+## The three gestures
+
+| | |
+|---|---|
+| `place <name> { prompt "…"  target <T> at x,y  item <i> -> <T> at x,y }` | drag items onto where they belong |
+| `compose <name> { prompt "…"  total <n>  chip <v> at x,y }` | tap values until they add up; overshooting resets |
+| `steps <name> { prompt "…"  step "…" at x,y }` | a gated sequence; out-of-order taps do nothing |
+
+Each emits `send "correct" / "incorrect" / "step" / "completed"` with a record payload naming the index
+(`{ item = 2 }`), so a host reads which one without depending on what the theme drew.
+
+**Five gestures came in and three shipped.** `tri`, `ordonner` and `placement` shared one implementation:
+the only thing that differed was whether their targets were drawn as rectangles, squares or dotted discs.
+That is appearance, so it moved to the theme and the three became `place`. A sort and an ordering differ
+in their data — several items on one target, or one each — not in their code.
+
+## Themes
+
+```ts
+import { desugar, gestures, GREYBOX, BLANK, type Theme } from '@flatkit/sugarflat'
+
+desugar(src)                                        // GREYBOX: plain, provisional, playable now
+desugar(src, { gestures: gestures({ theme: mine }) }) // your appearance, same behavior
+```
+
+A theme answers two questions per role (`item`, `target`, `card`, `chip`): how big it is, and what to
+draw inside it. `BLANK` answers "nothing", which is how the no-visual-opinion rule is tested rather than
+promised — expand every gesture with it and the output must not contain one colour, font or stroke.
+
+## Status
+
+New. The three gestures are covered by behavior contracts and by the zero-warning rule; the design record
+for how this package came to exist is internal.

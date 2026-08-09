@@ -1,0 +1,57 @@
+{
+  "name": "@flatkit/sugarflat",
+  "version": "0.1.0",
+  "description": "Declarative sugar for FlatInk: a compact block expands into inspectable .flatink. An authoring tool, never a runtime.",
+  "license": "MIT",
+  "author": "Zwyk Studio",
+  "homepage": "http://flatink.zwyk-studio.com/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flatink/flatkit.git",
+    "directory": "packages/sugarflat"
+  },
+  "bugs": "https://github.com/flatink/flatkit/issues",
+  "keywords": [
+    "flatink",
+    "flatkit",
+    "sugar",
+    "desugar",
+    "dsl",
+    "codegen"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@flatkit/compiler": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json",
+    "prepublishOnly": "pnpm build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.js",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "require": "./dist/index.js"
+      }
+    }
+  },
+  "devDependencies": {
+    "@flatkit/player": "workspace:*",
+    "@flatkit/types": "workspace:*"
+  }
+}

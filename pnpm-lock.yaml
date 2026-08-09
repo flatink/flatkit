@@ -99,6 +99,19 @@ importers:
         specifier: workspace:*
         version: link:../types
 
+  packages/sugarflat:
+    dependencies:
+      '@flatkit/compiler':
+        specifier: workspace:*
+        version: link:../compiler
+    devDependencies:
+      '@flatkit/player':
+        specifier: workspace:*
+        version: link:../player
+      '@flatkit/types':
+        specifier: workspace:*
+        version: link:../types
+
   packages/types: {}
 
 packages:

@@ -9,7 +9,7 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync, rmSync } from 'node:fs'
 
-const PACKAGES = ['types', 'engine', 'player', 'compiler']
+const PACKAGES = ['types', 'engine', 'player', 'compiler', 'sugarflat']
 
 /**
  * Every published subpath must answer `require` as well as `import` — pointing at the SAME ESM file.

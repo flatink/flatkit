@@ -53,6 +53,27 @@ function sourceDiagnostics(src: string): CheckDiagnostic[] {
     .map(({ scope, diag }) => ({ scope, line: diag.line, col: diag.col, severity: 'error' as const, message: diag.message }))
 }
 
+/** `size W H` declared anywhere at the start of a line — the program's canvas. */
+const SIZE_HEADER = /^[ \t]*size[ \t]+-?[\d.]+[ \t]+-?[\d.]+/m
+
+/**
+ * A program that never declares `size`. The line is REQUIRED by the format, yet the compiler defaults it
+ * to 800x600 without a word — so a document laid out for another canvas is drawn on the wrong one and
+ * everything past its edge is clipped away in silence. That silence is not theoretical: a generator
+ * omitted the line across its entire corpus for months, undetected. A WARNING rather than an error,
+ * because checking a fragment on its own is a legitimate thing to do.
+ */
+function missingSizeDiagnostic(src: string, doc: Doc): CheckDiagnostic | null {
+  if (SIZE_HEADER.test(src)) return null
+  return {
+    scope: 'scene',
+    line: 1,
+    col: 1,
+    severity: 'warning',
+    message: `no \`size W H\` line — it is the REQUIRED first statement of a program, and this document silently defaults to ${doc.width}x${doc.height}. Anything laid out past that edge is clipped with nothing to say so. Declare the canvas you drew for.`,
+  }
+}
+
 /**
  * Every diagnostic of a program that HAS compiled: the source-level passes, then the semantic lint of the
  * whole Doc (read against `src`, so positions point into the author's file). Exact-duplicate lines are
@@ -63,6 +84,8 @@ export function programDiagnostics(doc: Doc, src: string): CheckDiagnostic[] {
   const seen = new Set<string>()
   const push = (d: CheckDiagnostic) => { const k = line1(d); if (!seen.has(k)) { seen.add(k); out.push(d) } }
   for (const d of sourceDiagnostics(src)) push(d)
+  const noSize = missingSizeDiagnostic(src, doc)
+  if (noSize) push(noSize)
   for (const { scope, diag } of lintDoc(doc, src)) push({ scope, line: diag.line, col: diag.col, severity: diag.severity === 'warning' ? 'warning' : 'error', message: diag.message })
   return out
 }

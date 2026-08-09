@@ -116,6 +116,24 @@ object "s1" { rotation = 0.1 }
     expect(checkProgram(src).doc?.symbols).toEqual([])
   })
 
+  // `size` is the format's REQUIRED first line, and the compiler silently defaults it to 800x600. That
+  // silence is expensive: a generator omitted it across its whole corpus for months, so every document
+  // was laid out for one canvas and drawn on another — everything past the real width clipped away,
+  // with nothing to say so. A warning, not an error: a fragment being checked on its own is legitimate.
+  it('a program that never declares `size` is warned about, without being blocked', () => {
+    const src = 'scene { layer "a" { rect 0 0 10 10 fill #ff0000 } }\n'
+    const r = checkProgram(src)
+    expect(r.ok).toBe(true)
+    expect(r.errors).toBe(0)
+    expect(r.warnings).toBeGreaterThan(0)
+    expect(r.report).toMatch(/`size W H`/)
+    expect(r.report).toMatch(/800x600|defaults/)
+  })
+
+  it('a program that declares it says nothing', () => {
+    expect(checkProgram(VALID).report).not.toMatch(/`size W H`/)
+  })
+
   it('every diagnostic carries a scope, a position and a severity', () => {
     const r = checkProgram("this is not flatink at all {{{")
     for (const d of r.diagnostics) {
