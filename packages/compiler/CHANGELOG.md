@@ -1,5 +1,23 @@
 # @flatkit/compiler
 
+## 0.25.0
+
+### Minor Changes
+
+- [`c60b730`](https://github.com/flatink/flatkit/commit/c60b7302466c7643824335a28b0f9c1743cc3604) Thanks [@kaelhem](https://github.com/kaelhem)! - Warn when a program never declares `size`.
+
+  The line is REQUIRED by the format, and the compiler silently defaulted it to 800x600 - so a document
+  laid out for one canvas was drawn on another, with everything past the edge clipped away and nothing to
+  say so. Measured cost of that silence: a generator omitted the line across its entire corpus for months,
+  undetected. A warning rather than an error, because checking a fragment on its own is legitimate.
+
+### Patch Changes
+
+- Updated dependencies [[`c60b730`](https://github.com/flatink/flatkit/commit/c60b7302466c7643824335a28b0f9c1743cc3604)]:
+  - @flatkit/engine@0.25.0
+  - @flatkit/player@0.25.0
+  - @flatkit/types@0.25.0
+
 ## 0.24.0
 
 ### Minor Changes
