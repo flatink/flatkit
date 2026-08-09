@@ -4,7 +4,7 @@
 
 ### Minor Changes
 
-- [`79faa20`](https://github.com/flatink/flatkit/commit/79faa206f6180540615b007b2880aec0c8c5a373) Thanks [@kaelhem](https://github.com/kaelhem)! - Close the five frictions found integrating 0.23, and answer the sugar-layer RFC.
+- [`79faa20`](https://github.com/flatink/flatkit/commit/79faa206f6180540615b007b2880aec0c8c5a373) Thanks [@kaelhem](https://github.com/kaelhem)! - Close the frictions found integrating 0.23, and answer the sugar-layer RFC.
 
   - **`--check` catches the silent `time` -> `pulse` trap.** `pulse`/`shake` ride the monotone `clock`, so
     an instant captured with the pre-0.23 idiom (`doneAt = time`) is compared against an axis it never
