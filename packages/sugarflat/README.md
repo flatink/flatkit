@@ -58,8 +58,27 @@ raw scene { layer "backdrop" { rect 0 0 760 620 fill linear(90, 0:#1b2a4a, 1:#4a
 raw { object "TChest" { opacity = 0.9 } }
 ```
 
-One gesture per document: each emits its own `scene`, and a second block is refused with
-`MultipleGesturesError` rather than dropped.
+## Several blocks in one document
+
+```
+place words { prompt "…"  target Nouns at 200,200  item cat -> Nouns at 120,80 }
+compose coins { prompt "…"  total 150  chip 50 at 200,500  chip 100 at 420,500 }
+
+raw scene under { layer "bg" { rect 0 0 760 620 fill #112233 } }
+```
+
+Blocks are laid out in the order you write them, and the decor sits behind all of them. Two things the
+assembly decides:
+
+- **Names are prefixed by the block's name, always** — `words_TNouns`, `coins_C0` — including when a
+  document holds one block. Prefixing only on collision would mean the same source compiles to different
+  names depending on whether a sibling exists, so a skin written against one block would break the day a
+  second arrived. Every id is in `meta[].objects`; nothing has to be guessed.
+- **`completed` belongs to the DOCUMENT.** Each block emits `part` with its own index when its portion is
+  finished, and `completed` fires once, when every block is done. With a single block the two coincide,
+  which is what `completed` always meant.
+
+Two blocks sharing a name raise `DuplicateBlockError` — every name they emit would collide.
 
 ## What it guarantees
 
@@ -97,8 +116,9 @@ draws them:
 
 ```ts
 const { flatink, meta } = desugar(src)
-meta.prompt      // "Put each word under its part of speech"  — the learner's instruction
-meta.items[2]    // the label behind `{ item = 2 }`
+meta[0].prompt      // the learner's instruction for the first block
+meta[0].items[2]    // the label behind `{ block = 0, item = 2 }`
+meta[0].objects     // every id it emitted, prefixed — what a skin binds to
 ```
 
 For prompting a model, `sugarCard()` assembles the grammar, the canvas and the **footprints** of every

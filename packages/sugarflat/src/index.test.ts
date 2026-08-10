@@ -1,31 +1,33 @@
 import { describe, it, expect } from 'vitest'
 import { checkProgram } from '@flatkit/compiler'
-import { desugar, ensureHeader, hasSizeHeader, ident, isIdent, gestures, sugarCard, GESTURES, ROLES, BLANK, GREYBOX, UnknownSugarError, MultipleGesturesError, DEFAULT_DOCUMENT, type Gesture, type Theme } from './index'
+import { desugar, ensureHeader, hasSizeHeader, ident, isIdent, gestures, sugarCard, GESTURES, ROLES, BLANK, GREYBOX, UnknownSugarError, DuplicateBlockError, DEFAULT_DOCUMENT, type Gesture, type Theme } from './index'
 import { CONTRACTS } from './contracts/contracts'
 
 /** A gesture that emits state + behavior and NOT ONE coordinate — the shape every real one must take. */
 const counter: Gesture = {
   keyword: 'compte',
   summary: 'compte <name> { cible <n> }  -- tap a named item to count up to a target',
-  expand: (name, body) => {
+  expand: (name, body, _doc, ctx) => {
     const target = /cible\s+(\d+)/.exec(body)?.[1] ?? '1'
-    const flatink = [
-      'var total = 0',
-      'var done = 0',
-      'scene { layer "a" { group "Bouton" { layer "c" { rect 0 0 10 10 fill #ffffff } } } }',
-      'object "Bouton" {',
-      '  when clicked {',
-      `    if done < 0.5 {`,
-      '      total = total + 1',
-      `      if total == ${target} {`,
-      '        done = 1',
-      '        send "completed"',
-      '      }',
-      '    }',
-      '  }',
-      '}',
-    ].join('\n')
-    return { flatink, meta: { keyword: 'compte', name, prompt: '', items: [], targets: [] } }
+    const p = ctx.prefix
+    return {
+      vars: [`var ${p}total = 0`, `var ${ctx.doneVar} = 0`],
+      layers: [`  layer "${p}l" { group "${p}Bouton" { layer "c" { rect 0 0 10 10 fill #ffffff } } }`],
+      behavior: [
+        `object "${p}Bouton" {`,
+        '  when clicked {',
+        `    if ${ctx.doneVar} < 0.5 {`,
+        `      ${p}total = ${p}total + 1`,
+        `      if ${p}total == ${target} {`,
+        `        ${ctx.doneVar} = 1`,
+        `        send "part", { block = ${ctx.index} }`,
+        '      }',
+        '    }',
+        '  }',
+        '}',
+      ],
+      meta: { keyword: 'compte', name, prompt: '', items: [], targets: [], objects: [`${p}Bouton`], doneVar: ctx.doneVar },
+    }
   },
 }
 
@@ -76,11 +78,13 @@ describe('desugar — the required header is always emitted', () => {
     expect(flatink).toMatch(/^timeline 30 300$/m)
   })
 
-  it('a header the gesture already wrote is not duplicated', () => {
-    const withHeader: Gesture = { ...counter, expand: (name) => ({ flatink: 'size 100 100\ntimeline 24 240\nscene { layer "a" { } }', meta: { keyword: 'compte', name, prompt: '', items: [], targets: [] } }) }
-    const { flatink } = desugar('compte a {\n}\n', { gestures: [withHeader] })
+  it('the header appears exactly once, however many blocks there are', () => {
+    // Gestures return PARTS now, not whole programs — which is precisely what stops two blocks from
+    // contributing two headers, two scenes, or two of anything else the format allows only once.
+    const { flatink } = desugar('compte a {\n  cible 1\n}\n\ncompte b {\n  cible 2\n}\n', { gestures: [counter] })
     expect(flatink.match(/^size /gm)).toHaveLength(1)
     expect(flatink.match(/^timeline /gm)).toHaveLength(1)
+    expect(flatink.match(/^scene \{/gm)).toHaveLength(1)
   })
 
   it('ensureHeader is idempotent', () => {
@@ -107,12 +111,12 @@ describe('desugar — the `raw { … }` escape hatch', () => {
   // compiled, `checkProgram` said ok, and the decor was simply not there.
   it('an author writing raw BESIDE a gesture keeps it, before or after the block', () => {
     const block = 'compte a {\n  cible 2\n}\n'
-    const after = desugar(`${block}\nraw {\nobject "Bouton" { opacity = 0.5 }\n}\n`, { gestures: [counter] })
-    expect(after.flatink).toContain('object "Bouton" { opacity = 0.5 }')
+    const after = desugar(`${block}\nraw {\nobject "a_Bouton" { opacity = 0.5 }\n}\n`, { gestures: [counter] })
+    expect(after.flatink).toContain('object "a_Bouton" { opacity = 0.5 }')
     const before = desugar(`raw {\nvar extra = 1\n}\n\n${block}`, { gestures: [counter] })
     expect(before.flatink).toContain('var extra = 1')
     // …and the expansion is still there beside it, in the author's order.
-    expect(before.flatink.indexOf('var extra')).toBeLessThan(before.flatink.indexOf('object "Bouton"'))
+    expect(before.flatink.indexOf('var extra')).toBeLessThan(before.flatink.indexOf('object "a_Bouton"'))
   })
 
   it('plain FlatInk written beside a block travels too, not just `raw`', () => {
@@ -124,15 +128,23 @@ describe('desugar — the `raw { … }` escape hatch', () => {
   // A second top-level `scene` block is a compile error, which left the escape hatch unable to reach it.
   it('`raw scene { … }` lands INSIDE the generated scene, which is where decor has to be', () => {
     const r = desugar('compte a {\n  cible 2\n}\n\nraw scene {\n  layer "bg" { rect 0 0 40 40 fill #123456 }\n}\n', { gestures: [counter] })
-    const scene = r.flatink.slice(r.flatink.indexOf('scene {'), r.flatink.indexOf('object "Bouton"'))
+    const scene = r.flatink.slice(r.flatink.indexOf('scene {'), r.flatink.indexOf('object "a_Bouton"'))
     expect(scene).toContain('layer "bg"')
     expect(checkProgram(r.flatink).errors).toBe(0)
   })
 
-  it('and a second gesture block is refused loudly rather than dropped', () => {
+  it('two blocks share one document, one scene, one header', () => {
     const two = 'compte a {\n  cible 1\n}\n\ncompte b {\n  cible 2\n}\n'
-    expect(() => desugar(two, { gestures: [counter] })).toThrow(MultipleGesturesError)
-    expect(() => desugar(two, { gestures: [counter] })).toThrow(/only have one/)
+    const r = desugar(two, { gestures: [counter] })
+    expect(r.meta.map((m) => m.name)).toEqual(['a', 'b'])
+    expect(r.kind).toBe('compte+compte')
+    expect(checkProgram(r.flatink).errors).toBe(0)
+  })
+
+  it('two blocks with the SAME name are refused — every name they emit would collide', () => {
+    const clash = 'compte a {\n  cible 1\n}\n\ncompte a {\n  cible 2\n}\n'
+    expect(() => desugar(clash, { gestures: [counter] })).toThrow(DuplicateBlockError)
+    expect(() => desugar(clash, { gestures: [counter] })).toThrow(/own name/)
   })
 })
 
@@ -213,17 +225,17 @@ describe('ident — a human label becomes a usable FlatInk identifier', () => {
 describe('desugar — the host gets what the gesture understood', () => {
   it.each(CONTRACTS.map((c) => [c.keyword, c.source] as const))('%s returns the prompt it parsed', (keyword, source) => {
     const { meta } = desugar(source)
-    expect(meta, 'no meta at all').not.toBeNull()
-    expect(meta!.keyword).toBe(keyword)
-    expect(meta!.prompt.length, `${keyword} parsed a prompt and did not return it`).toBeGreaterThan(0)
+    expect(meta, 'no meta at all').toHaveLength(1)
+    expect(meta[0].keyword).toBe(keyword)
+    expect(meta[0].prompt.length, `${keyword} parsed a prompt and did not return it`).toBeGreaterThan(0)
   })
 
   it('the labels line up with the payload indices, so `{ item = 2 }` can be read back', () => {
     // The payloads are indices on purpose — they must not depend on what a theme drew. That only works
     // if the labels come back beside them.
     const { meta } = desugar(CONTRACTS[0].source)
-    expect(meta!.items).toEqual(['cat', 'run', 'house', 'jump'])
-    expect(meta!.targets).toEqual(['Nouns', 'Verbs'])
+    expect(meta[0].items).toEqual(['cat', 'run', 'house', 'jump'])
+    expect(meta[0].targets).toEqual(['Nouns', 'Verbs'])
   })
 
   it('all three gestures write the prompt into the expansion too, no longer one of them silently', () => {
@@ -231,7 +243,7 @@ describe('desugar — the host gets what the gesture understood', () => {
   })
 
   it('plain FlatInk has no block to have understood anything from', () => {
-    expect(desugar('size 10 10\nscene { layer "a" { } }\n').meta).toBeNull()
+    expect(desugar('size 10 10\nscene { layer "a" { } }\n').meta).toEqual([])
   })
 })
 
@@ -287,7 +299,7 @@ describe('the escape hatch, as the README and sugarCard actually write it', () =
   it('`raw scene under { … }` is drawn BEHIND the gesture, `raw scene { … }` on top', () => {
     const r = run(`${block}\nraw scene under { layer "BG" { rect 0 0 40 40 fill #112233 } }\nraw scene { layer "BANNER" { rect 0 0 10 5 fill #ffffff } }\n`)
     const bg = r.flatink.indexOf('layer "BG"')
-    const own = r.flatink.indexOf('group "Bouton"')
+    const own = r.flatink.indexOf('group "a_Bouton"')
     const banner = r.flatink.indexOf('layer "BANNER"')
     expect(bg).toBeGreaterThan(-1)
     expect(bg).toBeLessThan(own) // behind
@@ -332,7 +344,7 @@ describe('top-level raw lands where its statements are legal', () => {
   })
 
   it('an `object` in raw is accepted too, moved or not — behavior binds by name', () => {
-    const r = run(`${block}\nraw { object "Bouton" { opacity = 0.5 } }\n`)
+    const r = run(`${block}\nraw { object "a_Bouton" { opacity = 0.5 } }\n`)
     expect(checkProgram(r.flatink).errors).toBe(0)
     expect(r.flatink).toContain('opacity = 0.5')
   })

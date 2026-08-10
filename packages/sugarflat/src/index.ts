@@ -17,6 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { DEFAULT_DOCUMENT, ensureHeader, type DocumentSpec } from './document'
 import { gestures } from './gestures'
+import { ident } from './ident'
 
 export { DEFAULT_DOCUMENT, ensureHeader, hasSizeHeader, hasTimelineHeader, type DocumentSpec } from './document'
 export { ident, isIdent } from './ident'
@@ -33,18 +34,40 @@ export { BLANK, GREYBOX, ROLES, type Role, type Theme } from './theme'
  */
 export type GestureMeta = {
   keyword: string
-  /** The block's name. */
+  /** The block's name — also the prefix on every name it emits. */
   name: string
   /** The learner's instruction, verbatim. Drawn by the host or a theme — never by the gesture. */
   prompt: string
-  /** Labels in payload order: `{ item = 2 }` is `items[2]`. */
+  /** Labels in payload order: `{ block = b, item = 2 }` is `blocks[b].items[2]`. */
   items: string[]
   /** Target labels, in the order they were declared. Empty when the gesture has none. */
   targets: string[]
+  /** Every object id it emitted, prefixed — what a skin binds to, without having to guess the scheme. */
+  objects: string[]
+  /** The variable that turns 1 when this block is finished. */
+  doneVar: string
 }
 
-/** What a gesture returns: the DSL, and what it understood. */
-export type Expansion = { flatink: string; meta: GestureMeta }
+/** Where a block sits in the document. Names are prefixed so two blocks never collide. */
+export type GestureContext = {
+  /** 0-based position, and the `block` field of every payload it sends. */
+  index: number
+  /** `<name>_` — put it in front of every var and every object id. */
+  prefix: string
+  /** The variable to set to 1 when the block is done; the document watches it. */
+  doneVar: string
+}
+
+/** What a gesture returns: PARTS, never a finished program — a document has exactly one `scene`. */
+export type Expansion = {
+  /** `var` declarations. They go in the header, where `var` is legal. */
+  vars: string[]
+  /** Layer statements, indented for the inside of `scene { … }`. */
+  layers: string[]
+  /** `object` blocks and scene-wide handlers. */
+  behavior: string[]
+  meta: GestureMeta
+}
 
 /** A sugar block: the keyword that opens it, and how it expands. */
 export type Gesture = {
@@ -53,7 +76,7 @@ export type Gesture = {
   /** One line, for diagnostics and for the reference a model is prompted with. */
   summary: string
   /** `body` is the text between the braces; `name` the block's name. */
-  expand: (name: string, body: string, doc: DocumentSpec) => Expansion
+  expand: (name: string, body: string, doc: DocumentSpec, ctx: GestureContext) => Expansion
 }
 
 export type DesugarOptions = {
@@ -69,9 +92,9 @@ export type DesugarResult = {
   /** Which gesture matched — `raw` for an escape-only source, `null` for plain FlatInk. */
   kind: string | null
   expanded: boolean
-  /** What the gesture understood: the prompt and the labels behind the payload indices. `null` when
+  /** What each block understood, in document order: `{ block = 2 }` refers to `meta[2]`. Empty when
    *  nothing was expanded, since there is no block to have understood anything from. */
-  meta: GestureMeta | null
+  meta: GestureMeta[]
 }
 
 /** Raised when a source opens a block that looks like sugar but no gesture claims it. */
@@ -149,42 +172,96 @@ function blockEnd(text: string, openBrace: number): number {
 
 const RAW_NOTE = '// -- raw (escape hatch: verbatim FlatInk) --'
 
-/** Splice verbatim bodies into the generated `scene`: `under` first (drawn behind), `over` last. */
-function spliceIntoScene(flatink: string, under: string[], over: string[]): string {
-  if (!under.length && !over.length) return flatink
-  const at = flatink.search(/^scene[ \t]*\{/m)
-  if (at < 0) throw new Error('`raw scene { … }` has nowhere to go: this expansion emits no `scene` block — use a plain `raw { … }` instead.')
-  const openBrace = flatink.indexOf('{', at)
-  const close = blockEnd(flatink, openBrace)
-  const head = under.length ? `\n  // -- raw scene under (verbatim, drawn BEHIND the gesture) --\n${under.join('\n')}` : ''
-  const tail = over.length ? `  // -- raw scene (verbatim, drawn ON TOP of the gesture) --\n${over.join('\n')}\n` : ''
-  return `${flatink.slice(0, openBrace + 1)}${head}${flatink.slice(openBrace + 1, close)}${tail}${flatink.slice(close)}`
-}
-
-/** Raised when a source holds more than one gesture block. */
-export class MultipleGesturesError extends Error {
-  constructor(first: string, second: string) {
-    super(
-      `two gesture blocks in one source ("${first}" and "${second}") — a document holds ONE. Each gesture ` +
-      'emits its own `scene`, and a program may only have one, so the second cannot be merged in. ' +
-      'Split them into two documents, or write the extra part by hand in `raw { … }` / `raw scene { … }`.',
-    )
-    this.name = 'MultipleGesturesError'
+/** Raised when two blocks share a name — every name they emit would collide. */
+export class DuplicateBlockError extends Error {
+  constructor(name: string) {
+    super(`two blocks are both named "${name}" — the name prefixes every variable and object a block emits, so they would overwrite each other. Give each block its own name.`)
+    this.name = 'DuplicateBlockError'
   }
 }
+
+/** One gesture block found in the source, with its span so the text around it can be recovered. */
+type Found = { gesture: Gesture; name: string; body: string; start: number; end: number }
+
+/** Every gesture block in `src`, in document order. */
+function findBlocks(src: string, gestures: Gesture[]): Found[] {
+  const re = new RegExp(BLOCK_OPEN.source, 'gm')
+  const found: Found[] = []
+  for (let m = re.exec(src); m; m = re.exec(src)) {
+    const gesture = gestures.find((g) => g.keyword === m![1])
+    if (!gesture) {
+      // A keyword that opens a block at column 0 and is neither sugar nor FlatInk is a block we do not
+      // know — say so with the list, rather than downstream in another vocabulary.
+      if (m[1] !== 'raw' && !FLATINK_BLOCKS.has(m[1])) throw new UnknownSugarError(m[1], gestures.map((g) => g.keyword))
+      continue
+    }
+    const braceAt = m.index + m[0].length - 1
+    const close = blockEnd(src, braceAt)
+    if (close < 0) break
+    found.push({ gesture, name: m[2] ?? m[3] ?? gesture.keyword, body: src.slice(braceAt + 1, close), start: m.index, end: close + 1 })
+    re.lastIndex = close + 1
+  }
+  return found
+}
+
+/**
+ * Assemble the blocks into ONE program.
+ *
+ * A document has exactly one `scene`, one header and one behavior half, so composing gestures is not a
+ * matter of concatenating their output — it is a matter of never producing whole programs in the first
+ * place. Each block contributes parts; this puts them in the three places the format has.
+ *
+ * Two things the assembly decides, and they are the reason "several blocks" is a design and not a loop:
+ *
+ *   • **Names are prefixed by the block's name, always** — including when a document holds one block.
+ *     Prefixing only on collision would mean the same source compiles to different names depending on
+ *     whether a sibling exists, so a skin written against one block would break the day a second arrived.
+ *     Every id is in `meta[].objects`, so nothing has to be guessed.
+ *   • **`completed` belongs to the DOCUMENT.** Each block emits `part` with its own index when its
+ *     portion is finished; `completed` fires once, when every block is done. With a single block the two
+ *     coincide, which is what `completed` always meant.
+ */
+function assemble(blocks: { expansion: Expansion }[], under: string[], over: string[], doc: DocumentSpec): string {
+  const out: string[] = [`size ${doc.width} ${doc.height}`, `timeline ${doc.fps} ${doc.durationFrames}`]
+  const done = blocks.map((b) => b.expansion.meta.doneVar)
+  if (done.length) out.push('var allDone = 0')
+  for (const b of blocks) out.push(...b.expansion.vars)
+
+  out.push('', 'scene {')
+  if (under.length) out.push('  // -- raw scene under (verbatim, drawn BEHIND every block) --', ...under)
+  for (const b of blocks) out.push(...b.expansion.layers)
+  if (over.length) out.push('  // -- raw scene (verbatim, drawn ON TOP of every block) --', ...over)
+  out.push('}', '')
+
+  for (const b of blocks) out.push(...b.expansion.behavior)
+  // `completed` = the whole document. One block: it fires the moment that block does, which is what it
+  // has always meant. Several: only once all of them have. The `allDone` guard matters -- an unguarded
+  // `send` inside `every frame` would emit it again on every frame for the rest of the session.
+  if (done.length) {
+    out.push('every frame {', '  if allDone < 0.5 {', `    if ${done.join(' + ')} >= ${done.length} {`, '      allDone = 1', '      send "completed"', '    }', '  }', '}')
+  }
+  return out.join('\n')
+}
+
+/** Block keywords that belong to FlatINK itself — a source opening with one of these is a program. */
+const FLATINK_BLOCKS = new Set(['scene', 'object', 'symbol', 'layer', 'group', 'match', 'each', 'states', 'params', 'when', 'every', 'repeat', 'fn', 'at'])
 
 /**
  * Expand a sugar source into `.flatink`.
  *
- * Plain FlatInk passes through untouched. A source whose first block matches no gesture RAISES rather
- * than passing through: a silent fall-through sent the author's block downstream as if it were FlatInk,
- * to fail a hundred lines later on messages that only talk about FlatInk.
+ * Plain FlatInk passes through untouched. A block nobody claims RAISES rather than passing through: a
+ * silent fall-through sent the author's block downstream as if it were FlatInk, to fail a hundred lines
+ * later on messages that only talk about FlatInk.
+ *
+ * A document may hold SEVERAL blocks. They are laid out in the order they are written, each keeps its own
+ * state under its own name, and each emits `part` when its portion is finished; `completed` fires once,
+ * when every block is done.
  *
  * ```ts
  * import { desugar } from '@flatkit/sugarflat'
  * import { checkProgram } from '@flatkit/compiler'
  *
- * const { flatink } = desugar(srcFromAnLLM)
+ * const { flatink, meta } = desugar(srcFromAnLLM)
  * const { ok, report } = checkProgram(flatink)   // the expansion is the artefact of record
  * ```
  */
@@ -192,68 +269,54 @@ export function desugar(src: string, opts: DesugarOptions = {}): DesugarResult {
   const doc = opts.document ?? DEFAULT_DOCUMENT
   const gestures = opts.gestures ?? GESTURES
 
-  const open = BLOCK_OPEN.exec(src)
-  const keyword = open?.[1]
-  const gesture = keyword ? gestures.find((g) => g.keyword === keyword) : undefined
-
-  if (gesture) {
-    const name = open?.[2] ?? open?.[3] ?? gesture.keyword
-    const braceAt = open!.index + open![0].length - 1
-    const body = blockBody(src, braceAt)
-    // Everything OUTSIDE the block travels with the expansion. Dropping it made the escape hatch — the
-    // one guard-rail this package rests on — a no-op beside a gesture: an author wrote decor, the
-    // expansion compiled, `checkProgram` said ok, and nothing was there.
-    const before = src.slice(0, open!.index)
-    const after = src.slice(braceAt + 1 + body.length + 1)
-    const other = findGesture(before + '\n' + after, gestures)
-    if (other) throw new MultipleGesturesError(gesture.keyword, other)
-
-    const { flatink, meta } = gesture.expand(name, body, doc)
-    const head = takeRaw(before)
-    const tail = takeRaw(after)
-    const expanded = spliceIntoScene(flatink, [...head.under, ...tail.under], [...head.over, ...tail.over])
-    // Everything top-level goes BEFORE the expansion, wherever the author wrote it. `var` (and `asset`,
-    // `use`, `def`) are header declarations and are a parse error after `scene`, while `object`/`fn` are
-    // accepted on either side -- so the header position is the only one where all of it is valid. Moving
-    // an `object` up changes nothing: behavior binds by name, not by position.
-    const topLevel = (p: RawParts) => [p.rest.trim(), ...(p.top.length ? [RAW_NOTE, ...p.top] : [])].filter(Boolean).join('\n')
-    const whole = [topLevel(head), topLevel(tail), expanded].filter(Boolean).join('\n\n')
-    return { flatink: ensureHeader(whole, doc), kind: gesture.keyword, expanded: true, meta }
+  const found = findBlocks(src, gestures)
+  if (!found.length) {
+    // Plain FlatInk, plus any `raw { … }` used on its own. `raw scene` has no generated scene to splice
+    // into here, so it would silently vanish -- say so instead.
+    const parts = takeRaw(src)
+    if (parts.over.length || parts.under.length) {
+      throw new Error('`raw scene { … }` needs a gesture block to splice into — this source has none. Write a plain `scene { … }` yourself.')
+    }
+    const out = [parts.rest.trim(), ...(parts.top.length ? [RAW_NOTE, ...parts.top] : [])].filter(Boolean).join('\n')
+    return { flatink: parts.top.length ? out : src, kind: parts.top.length ? 'raw' : null, expanded: parts.top.length > 0, meta: [] }
   }
-  // A keyword that opens a block at column 0 and is NOT a FlatInk statement is a sugar block we do not
-  // know — never a program. Say so here, with the list, rather than downstream in another vocabulary.
-  // `raw` is this package's own keyword, handled below.
-  if (keyword && keyword !== 'raw' && !FLATINK_BLOCKS.has(keyword)) throw new UnknownSugarError(keyword, gestures.map((g) => g.keyword))
 
-  // No gesture: plain FlatInk, plus any `raw { … }` the author used on its own. `raw scene` has no
-  // generated scene to splice into here, so it would silently vanish — say so instead.
-  const parts = takeRaw(src)
-  if (parts.over.length || parts.under.length) {
-    throw new Error('`raw scene { … }` needs a gesture block to splice into — this source has none. Write a plain `scene { … }` yourself.')
+  const seen = new Set<string>()
+  for (const b of found) {
+    const key = ident(b.name)
+    if (seen.has(key)) throw new DuplicateBlockError(b.name)
+    seen.add(key)
   }
-  const out = [parts.rest.trim(), ...(parts.top.length ? [RAW_NOTE, ...parts.top] : [])].filter(Boolean).join('\n')
-  return { flatink: parts.top.length ? out : src, kind: parts.top.length ? 'raw' : null, expanded: parts.top.length > 0, meta: null }
-}
 
-/** Block keywords that belong to FlatINK itself — a source opening with one of these is a program. */
-const FLATINK_BLOCKS = new Set(['scene', 'object', 'symbol', 'layer', 'group', 'match', 'each', 'states', 'params', 'when', 'every', 'repeat', 'fn', 'at'])
-
-/** The keyword of the first gesture block in `text`, if any — used to refuse a second one loudly. */
-function findGesture(text: string, gestures: Gesture[]): string | null {
-  const re = new RegExp(BLOCK_OPEN.source, 'gm')
-  for (let m = re.exec(text); m; m = re.exec(text)) {
-    if (gestures.some((g) => g.keyword === m![1])) return m[1]
+  // Everything OUTSIDE the blocks travels with them: `raw` in its three forms, and any plain FlatInk the
+  // author wrote beside them. Dropping it made the escape hatch a no-op -- decor was written, the
+  // expansion compiled, `checkProgram` said ok, and nothing was there.
+  const outside: RawParts = { top: [], over: [], under: [], rest: '' }
+  const absorb = (text: string) => {
+    const part = takeRaw(text)
+    outside.top.push(...part.top)
+    outside.over.push(...part.over)
+    outside.under.push(...part.under)
+    outside.rest += part.rest
   }
-  return null
-}
+  let cursor = 0
+  for (const b of found) { absorb(src.slice(cursor, b.start)); cursor = b.end }
+  absorb(src.slice(cursor))
 
-/** Text between the braces opened at `openIndex`, brace-counting so nested blocks survive. */
-function blockBody(src: string, openIndex: number): string {
-  let depth = 1
-  let i = openIndex + 1
-  for (; i < src.length && depth > 0; i++) {
-    if (src[i] === '{') depth++
-    else if (src[i] === '}') depth--
+  const blocks = found.map((b, index) => {
+    const prefix = `${ident(b.name)}_`
+    return { expansion: b.gesture.expand(b.name, b.body, doc, { index, prefix, doneVar: `${prefix}done` }) }
+  })
+
+  // Top-level content goes in the HEADER position, wherever the author wrote it: `var` (like `asset`,
+  // `use`, `def`) is a header declaration and a parse error after `scene`, while `object`/`fn` are legal
+  // on either side. Moving an `object` up changes nothing -- behavior binds by name, not by position.
+  const header = [outside.rest.trim(), ...(outside.top.length ? [RAW_NOTE, ...outside.top] : [])].filter(Boolean).join('\n')
+  const program = assemble(blocks, outside.under, outside.over, doc)
+  return {
+    flatink: ensureHeader(header ? `${header}\n\n${program}` : program, doc),
+    kind: found.map((b) => b.gesture.keyword).join('+'),
+    expanded: true,
+    meta: blocks.map((b) => b.expansion.meta),
   }
-  return src.slice(openIndex + 1, depth === 0 ? i - 1 : src.length)
 }

@@ -52,18 +52,19 @@ export const CONTRACTS: Contract[] = [
 }
 `,
     script: [
-      { type: 'drag', source: 'Icat', target: 'TVerbs' }, // wrong on purpose: it must go back and stay live
+      { type: 'drag', source: 'natures_Icat', target: 'natures_TVerbs' }, // wrong on purpose: it must go back and stay live
       // Two gestures on the SAME object need a frame between them: the pointer has to be seen up before
       // it can be seen down again. Without it the second drag is a silent no-op — `--play` reports a
       // gesture that did nothing exactly as it reports one that worked, which is worth knowing.
       { type: 'wait', frames: 1 },
-      { type: 'drag', source: 'Icat', target: 'TNouns' },
-      { type: 'drag', source: 'Irun', target: 'TVerbs' },
-      { type: 'drag', source: 'Ihouse', target: 'TNouns' },
-      { type: 'drag', source: 'Ijump', target: 'TVerbs' },
+      { type: 'drag', source: 'natures_Icat', target: 'natures_TNouns' },
+      { type: 'drag', source: 'natures_Irun', target: 'natures_TVerbs' },
+      { type: 'drag', source: 'natures_Ihouse', target: 'natures_TNouns' },
+      { type: 'drag', source: 'natures_Ijump', target: 'natures_TVerbs' },
+      { type: 'wait', frames: 1 },
     ],
-    sends: ['incorrect', 'correct', 'correct', 'correct', 'correct', 'completed'],
-    vars: { progress: 4, done: 1 },
+    sends: ['incorrect', 'correct', 'correct', 'correct', 'correct', 'part', 'completed'],
+    vars: { natures_progress: 4, natures_done: 1 },
   },
   {
     keyword: 'place',
@@ -74,12 +75,13 @@ export const CONTRACTS: Contract[] = [
 }
 `,
     script: [
-      { type: 'drag', source: 'Ionly', target: 'THome' },
+      { type: 'drag', source: 'placed_once_Ionly', target: 'placed_once_THome' },
       { type: 'wait', frames: 1 },
-      { type: 'drag', source: 'Ionly', target: 'THome' }, // already placed: the drag is gated off
+      { type: 'drag', source: 'placed_once_Ionly', target: 'placed_once_THome' }, // already placed: the drag is gated off
+      { type: 'wait', frames: 1 },
     ],
-    sends: ['correct', 'completed'],
-    vars: { progress: 1, done: 1 },
+    sends: ['correct', 'part', 'completed'],
+    vars: { placed_once_progress: 1, placed_once_done: 1 },
   },
   {
     keyword: 'steps',
@@ -91,13 +93,14 @@ export const CONTRACTS: Contract[] = [
 }
 `,
     script: [
-      { type: 'tap', target: 'S1' }, // out of order: gated, must do nothing at all
-      { type: 'tap', target: 'S0' },
-      { type: 'tap', target: 'S1' },
-      { type: 'tap', target: 'S2' },
+      { type: 'tap', target: 'escape_S1' }, // out of order: gated, must do nothing at all
+      { type: 'tap', target: 'escape_S0' },
+      { type: 'tap', target: 'escape_S1' },
+      { type: 'tap', target: 'escape_S2' },
+      { type: 'wait', frames: 1 },
     ],
-    sends: ['step', 'step', 'step', 'completed'],
-    vars: { step: 3 },
+    sends: ['step', 'step', 'step', 'part', 'completed'],
+    vars: { escape_step: 3 },
   },
   {
     keyword: 'compose',
@@ -109,14 +112,15 @@ export const CONTRACTS: Contract[] = [
 }
 `,
     script: [
-      { type: 'tap', target: 'C1' },
-      { type: 'tap', target: 'C1' },
-      { type: 'tap', target: 'C1' }, // 300 > 250: overshoot resets the total
-      { type: 'tap', target: 'C1' },
-      { type: 'tap', target: 'C1' },
-      { type: 'tap', target: 'C0' },
+      { type: 'tap', target: 'coins_C1' },
+      { type: 'tap', target: 'coins_C1' },
+      { type: 'tap', target: 'coins_C1' }, // 300 > 250: overshoot resets the total
+      { type: 'tap', target: 'coins_C1' },
+      { type: 'tap', target: 'coins_C1' },
+      { type: 'tap', target: 'coins_C0' },
+      { type: 'wait', frames: 1 },
     ],
-    sends: ['correct', 'correct', 'incorrect', 'correct', 'correct', 'correct', 'completed'],
-    vars: { total: 250, done: 1 },
+    sends: ['correct', 'correct', 'incorrect', 'correct', 'correct', 'correct', 'part', 'completed'],
+    vars: { coins_total: 250, coins_done: 1 },
   },
 ]
