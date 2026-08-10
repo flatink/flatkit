@@ -116,6 +116,7 @@ describe('prompts — shipped with the package', () => {
 // deep-path workaround the exports map had since closed too.
 describe('prompts and renderer — reachable, not just present', () => {
   const pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as {
+    files: string[]
     exports: Record<string, unknown>
     publishConfig: { exports: Record<string, unknown> }
   }
@@ -123,6 +124,13 @@ describe('prompts and renderer — reachable, not just present', () => {
   it('the prompts are an exported subpath in both dev and published maps', () => {
     expect(Object.keys(pkg.exports)).toContain('./prompts/*')
     expect(Object.keys(pkg.publishConfig.exports)).toContain('./prompts/*')
+  })
+
+  it('the language docs are an exported subpath — a copied reference diverges', () => {
+    // Measured on a neighbouring repo: a 423-line copy of `dsl-gotchas.md`, already drifted from ours.
+    // The file is generated into the package by `scripts/sync-docs.mjs`, so /docs stays the one source.
+    expect(Object.keys(pkg.exports)).toContain('./docs/*')
+    expect(pkg.files).toContain('docs')
   })
 
   it('`./render` is exported, so rendering does not need a subprocess', () => {

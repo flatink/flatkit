@@ -390,3 +390,34 @@ describe('drawScene -- text on a path: side & spacing (phase 2)', () => {
     expect(isRenderStatic(still as never, still.layers[0].items[0])).toBe(true)
   })
 })
+
+// A consumer wrote it in their own source, in capitals: `document` is INDISPENSABLE, or every `filter`
+// and every `tint` is silently ABANDONED at render time -- it compiles, it renders, the effect is gone.
+// Three neighbouring repos drove the player under Node; each rediscovered that the hard way.
+describe('an effect dropped for lack of an off-screen canvas says so', () => {
+  const mkCtx = () => ({
+    save: () => {}, restore: () => {}, setTransform: () => {}, getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+    drawImage: () => {}, fillRect: () => {}, clearRect: () => {}, globalAlpha: 1, filter: '', globalCompositeOperation: '',
+    canvas: { width: 400, height: 300 },
+  }) as unknown as CanvasRenderingContext2D
+  const bbox = { minX: 10, minY: 10, maxX: 60, maxY: 60 }
+  const glow = [{ type: 'glow' as const, blur: 5, color: '#ffffff' }]
+
+  it('warns once, names the shim, and still draws the frame', () => {
+    // No `document` stubbed here on purpose: that IS the situation under Node.
+    const warnings: string[] = []
+    const spy = vi.spyOn(console, 'warn').mockImplementation((m: unknown) => { warnings.push(String(m)) })
+    const draw = vi.fn()
+    try {
+      compositeFiltered(mkCtx(), 1, null, glow, 1, bbox, draw)
+      expect(draw, 'the frame must still draw, just without the effect').toHaveBeenCalledTimes(1)
+      expect(warnings.join('')).toMatch(/dropped/)
+      expect(warnings.join('')).toMatch(/document/)
+      expect(warnings.join('')).toMatch(/createRenderer|renderDocToPng/) // it points at the fix
+      compositeFiltered(mkCtx(), 1, null, glow, 1, bbox, draw)
+      expect(warnings, 'it repeated — once per process, or it becomes noise in a frame loop').toHaveLength(1)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})

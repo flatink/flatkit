@@ -28,7 +28,8 @@
     "./compile": "./src/compile.ts",
     "./analysis": "./src/analysis.ts",
     "./render": "./src/cli/render.ts",
-    "./prompts/*": "./prompts/*"
+    "./prompts/*": "./prompts/*",
+    "./docs/*": "./docs/*"
   },
   "bin": {
     "flatc": "./bin/flatc.mjs"
@@ -36,7 +37,8 @@
   "files": [
     "dist",
     "bin",
-    "prompts"
+    "prompts",
+    "docs"
   ],
   "dependencies": {
     "@flatkit/engine": "workspace:*",
@@ -44,7 +46,7 @@
     "@flatkit/types": "workspace:*"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node ../../scripts/sync-docs.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "prepublishOnly": "pnpm build"
   },
@@ -82,7 +84,8 @@
         "import": "./dist/cli/render.js",
         "require": "./dist/cli/render.js"
       },
-      "./prompts/*": "./prompts/*"
+      "./prompts/*": "./prompts/*",
+      "./docs/*": "./docs/*"
     }
   }
 }

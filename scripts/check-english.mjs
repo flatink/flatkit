@@ -12,7 +12,10 @@ const SELF = fileURLToPath(import.meta.url)
 const ROOT = dirname(dirname(SELF))
 const SCAN_DIRS = ['packages', 'scripts']
 const EXTS = new Set(['.ts', '.tsx', '.mjs', '.js', '.md'])
+// `packages/compiler/docs` is a COPY of /docs made by sync-docs.mjs at build time -- a generated
+// artifact like `dist`, and its source is the same file. Scanning it would flag the same line twice.
 const SKIP = new Set(['node_modules', 'dist', 'coverage', '.git'])
+const SKIP_PATHS = new Set(['packages/compiler/docs'])
 
 // Accented letters used in French (strong signal). ASCII-only English never contains these.
 const ACCENTS = /[àâäçéèêëîïôöùûüÿœæ]/i
@@ -26,7 +29,7 @@ const walk = (dir) => {
   for (const name of readdirSync(dir)) {
     if (SKIP.has(name)) continue
     const p = join(dir, name)
-    if (statSync(p).isDirectory()) walk(p)
+    if (statSync(p).isDirectory()) { if (!SKIP_PATHS.has(relative(ROOT, p))) walk(p) }
     else if (EXTS.has(extname(p))) files.push(p)
   }
 }

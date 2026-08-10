@@ -16,7 +16,7 @@ Layers stack bottom-to-top. A `layer` takes `"name"` and options (`opacity <n>`,
 
 ## Shapes
 
-Sugar primitives (normalized to a `path` on save — no need to hand-compute Béziers):
+Sugar primitives (normalized to a `path` on save — no need to hand-compute Beziers):
 
 ```
 circle  <cx> <cy> <r>

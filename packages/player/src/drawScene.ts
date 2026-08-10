@@ -113,6 +113,27 @@ const scratchPool: HTMLCanvasElement[] = []
 let scratchTop = 0
 const SCRATCH_BUCKET = 256
 type Scratch = { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D }
+/**
+ * Warned ONCE per process when an effect had to be dropped for lack of an off-screen canvas.
+ *
+ * Without a `document`, isolation is impossible and the callers fall back to drawing the content
+ * directly: the frame still renders, and every `filter` and `tint` on it is simply GONE. In a browser
+ * that never happens; under Node it is the default, and it cost a consumer a debugging session that
+ * ended in their source with the word INDISPENSABLE in capitals. `renderDocToPng` installs the shim —
+ * anyone driving the player themselves needs to know they must too.
+ */
+let warnedNoScratch = false
+function warnScratchless(what: string): void {
+  if (warnedNoScratch || typeof console === 'undefined') return
+  warnedNoScratch = true
+  console.warn(
+    `[flatkit] ${what} dropped: isolating one needs an off-screen canvas and there is no \`document\` here. ` +
+    'The frame still draws, without the effect. Under Node, provide a shim before playing — ' +
+    '`globalThis.document = { createElement: (t) => (t === "canvas" ? new Canvas(1, 1) : {}) }` — ' +
+    'or use `renderDocToPng` / `createRenderer` from `@flatkit/compiler/render`, which do it for you.',
+  )
+}
+
 function acquireScratch(w: number, h: number, maxW: number, maxH: number): Scratch | null {
   if (typeof document === 'undefined') return null
   const bw = Math.min(maxW, Math.max(SCRATCH_BUCKET, Math.ceil(w / SCRATCH_BUCKET) * SCRATCH_BUCKET))
@@ -315,7 +336,8 @@ export function compositeFiltered(
     if (ow >= cw && oh >= ch) { ox = 0; oy = 0; ow = cw; oh = ch } // full-screen object -> no gain
   }
   const scratch = acquireScratch(ow, oh, cw, ch)
-  if (!scratch) { // no DOM (tests) -> direct fallback without isolation
+  if (!scratch) { // no DOM -> direct fallback WITHOUT isolation: the filters/tint are lost, so say so
+    warnScratchless(filters?.length ? 'filter' : 'tint')
     ctx.save(); ctx.globalAlpha *= opacity; draw(ctx); ctx.restore(); return
   }
   const octx = scratch.ctx
@@ -398,7 +420,7 @@ function compositeMasked(
     if (ow >= cw && oh >= ch) { ox = 0; oy = 0; ow = cw; oh = ch }
   }
   const scratch = acquireScratch(ow, oh, cw, ch)
-  if (!scratch) { ctx.save(); ctx.globalAlpha *= opacity; drawContent(ctx); ctx.restore(); return }
+  if (!scratch) { warnScratchless('mask'); ctx.save(); ctx.globalAlpha *= opacity; drawContent(ctx); ctx.restore(); return }
   const octx = scratch.ctx
   try {
     const dev = ctx.getTransform()

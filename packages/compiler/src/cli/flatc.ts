@@ -85,7 +85,8 @@ Usage:
   --bbox all|frame0 (with --preview) auto-size to the UNION over all frames (default 'all', no clipping of
                     drifting/rotating/growing motion) or just frame 0 ('frame0', the old behavior)
   --pad N           (with --preview) padding in px around the symbol's bounds (default 24)
-  --set p=v[,p2=v2] (with --preview) set the symbol's exposed params; a state param takes a state NAME
+  --set p=v[,p2=v2] set a SYMBOL's exposed params (works with --preview AND --render); a state param
+                    takes a state NAME
                     or a number (e.g. --set door=open), others take a number → baked into the preview
   --frame N         (with --render) target frame (default 0)
   --at k=v[,k2=v2]  (with --render) force variables → capture a given state (e.g. a step of an escape)
@@ -306,10 +307,10 @@ function autoScale(w: number, h: number): number {
 }
 
 /** Renders a Doc to a PNG file (headless skia). Async (SVG decode + raster). Shared by --render and --preview. */
-async function renderDocToFile(doc: Doc, outPath: string, frame: number, vars: Record<string, number>, scale: number, steps: number): Promise<number> {
+async function renderDocToFile(doc: Doc, outPath: string, frame: number, vars: Record<string, number>, scale: number, steps: number, params: Record<string, string> = {}): Promise<number> {
   try {
     const { renderDocToPng } = await import('./render')
-    const png = await renderDocToPng(doc, { frame, vars: Object.keys(vars).length ? vars : undefined, scale, steps: steps || undefined })
+    const png = await renderDocToPng(doc, { frame, vars: Object.keys(vars).length ? vars : undefined, scale, steps: steps || undefined, params: Object.keys(params).length ? params : undefined })
     writeFileSync(outPath, png)
   } catch (e) {
     process.stderr.write(`flatc: render failed: ${(e as Error).message}\n`)
@@ -321,7 +322,7 @@ async function renderDocToFile(doc: Doc, outPath: string, frame: number, vars: R
 }
 
 /** --render: renders the file to PNG (headless skia). Async (SVG decode + raster). */
-async function renderOnce(filePath: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, scaleAuto: boolean, noLibs = false): Promise<number> {
+async function renderOnce(filePath: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, scaleAuto: boolean, noLibs = false, params: Record<string, string> = {}): Promise<number> {
   let doc: Doc
   // `--no-libs` was parsed and then not passed on, so `--render` still auto-discovered the neighbouring
   // .flat files -- and failed on one, advising the very flag that had been given. Same hole in `--play`.
@@ -331,7 +332,7 @@ async function renderOnce(filePath: string, out: string, frame: number, vars: Re
   const dur = doc.timeline?.durationFrames ?? 0
   if (dur > 0 && frame >= dur) process.stderr.write(`flatc: --frame ${frame} is past the timeline (durationFrames ${dur}); the playhead WRAPS, so this renders frame ${frame % dur}\n`)
   const outPath = out ? resolve(out) : join(dirname(filePath), basename(filePath, extname(filePath)) + '.png')
-  return renderDocToFile(doc, outPath, frame, vars, scaleAuto ? autoScale(doc.width, doc.height) : scale, steps)
+  return renderDocToFile(doc, outPath, frame, vars, scaleAuto ? autoScale(doc.width, doc.height) : scale, steps, params)
 }
 
 const gcd = (a: number, b: number): number => { a = Math.abs(a); b = Math.abs(b); while (b) { const t = a % b; a = b; b = t } return a || 1 }
@@ -502,7 +503,7 @@ export function run(argv: string[]): number | Promise<number> {
 
   const explicitFlats = positional.slice(1)
   if (doPreview) return previewOnce(filePath, symbolName, out, frame, vars, scale, steps, doRender, pad, bboxMode, setSpec, scaleAuto)
-  if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps, scaleAuto, noLibs)
+  if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps, scaleAuto, noLibs, setSpec)
   if (doPlay) return playOnce(filePath, scriptPath, doTrace, noLibs)
   // `--check <library>.flat`: a `.flat` first positional is an asset LIB, not a program → lint via parseFlatLib
   // (the following positionals are more `.flat` libs to merge). Every other path is unchanged.

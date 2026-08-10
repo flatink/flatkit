@@ -53,6 +53,33 @@ the two axes never meet and the ramp never fires, with nothing on screen to say 
 bug in a codebase migrated from 0.21; see the
 [gotchas](dsl-gotchas.md#feedback-reactions-in-one-line).
 
+### Rendering from code — one frame, or three hundred
+
+`renderDocToPng(doc, opts)` draws one image. For a GIF, an MP4, a contact sheet or a loop check, hold a
+renderer OPEN instead: the expensive setup — the `skia-canvas` import, writing and registering the
+embedded fonts, decoding every image asset, building the player, installing the Node globals — is paid
+once rather than per frame.
+
+```ts
+import { createRenderer } from '@flatkit/compiler/render'
+
+const r = await createRenderer(doc, { scale: 2, params: { door: 'open' } })
+try {
+  for (let f = 0; f < 300; f++) writeFileSync(`out/${f}.png`, await r.frame(f))
+} finally {
+  r.close()   // restores the globals and drops the temp fonts — not optional
+}
+```
+
+`params` sets a SYMBOL's exposed params before rendering — a state NAME or a number, the same spelling
+`--set` accepts, and now available on `--render` too (`flatc --render p.flatink --set door=open`). It was
+`--preview`-only, which is why anyone wanting to render a program in a given state wrote their own
+harness.
+
+> **Driving the player yourself under Node?** You need a `document` shim, or every `filter` and `tint` is
+> dropped — the frame still draws, the effect is simply gone. The player warns once when that happens.
+> `createRenderer` installs the shims for you; prefer it.
+
 ### The same pass, from code — `checkProgram`
 
 The compiled Doc is **not enough** to validate a program. A text that is not FlatInk at all compiles to an
