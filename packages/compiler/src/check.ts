@@ -16,12 +16,14 @@
 //  The CLI calls the same function, so the two cannot drift.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Doc } from '@flatkit/types'
-import { behaviorDiagnostics, duplicateBindingDiagnostics, objectTargetDiagnostics, sceneOnlyUnitDiagnostics, itemOnlyUnitDiagnostics } from '@flatkit/engine/flatFormat'
+import type { TextEdit } from '@flatkit/engine/dsl'
+import { FlatSyntaxError, behaviorDiagnostics, duplicateBindingDiagnostics, objectTargetDiagnostics, sceneOnlyUnitDiagnostics, itemOnlyUnitDiagnostics } from '@flatkit/engine/flatFormat'
 import { compileFlatpack, type MediaMap } from './compile'
 import { lintDoc } from './programDoc'
 
-/** One diagnostic, positioned in the AUTHOR'S source. `scope` is `scene` or `object "Name"`. */
-export type CheckDiagnostic = { scope: string; line: number; col: number; severity: 'error' | 'warning'; message: string }
+/** One diagnostic, positioned in the AUTHOR'S source. `scope` is `scene` or `object "Name"`. `fix` is
+ *  present only when the repair is MECHANICAL -- see `TextEdit`. */
+export type CheckDiagnostic = { scope: string; line: number; col: number; severity: 'error' | 'warning'; message: string; fix?: TextEdit }
 
 export type CheckOptions = {
   /** Text of each `.flat` symbol library the program draws on — the CLI auto-discovers them beside the file. */
@@ -50,7 +52,7 @@ export const formatDiagnostics = (diagnostics: CheckDiagnostic[]): string => dia
 /** The two SOURCE-level passes, which read the author's text rather than the compiled Doc. Always errors. */
 function sourceDiagnostics(src: string): CheckDiagnostic[] {
   return [...behaviorDiagnostics(src), ...objectTargetDiagnostics(src), ...sceneOnlyUnitDiagnostics(src), ...itemOnlyUnitDiagnostics(src)]
-    .map(({ scope, diag }) => ({ scope, line: diag.line, col: diag.col, severity: 'error' as const, message: diag.message }))
+    .map(({ scope, diag }) => ({ scope, line: diag.line, col: diag.col, severity: 'error' as const, message: diag.message, ...(diag.fix ? { fix: diag.fix } : {}) }))
 }
 
 /** Statements that belong to the COMPOSITION half — they are only legal inside `scene { … }`. */
@@ -123,7 +125,7 @@ export function programDiagnostics(doc: Doc, src: string): CheckDiagnostic[] {
   const noSize = missingSizeDiagnostic(src, doc)
   if (noSize) push(noSize)
   for (const { scope, diag } of duplicateBindingDiagnostics(src)) push({ scope, line: diag.line, col: diag.col, severity: 'warning', message: diag.message })
-  for (const { scope, diag } of lintDoc(doc, src)) push({ scope, line: diag.line, col: diag.col, severity: diag.severity === 'warning' ? 'warning' : 'error', message: diag.message })
+  for (const { scope, diag } of lintDoc(doc, src)) push({ scope, line: diag.line, col: diag.col, severity: diag.severity === 'warning' ? 'warning' : 'error', message: diag.message, ...(diag.fix ? { fix: diag.fix } : {}) })
   // Collapse LAST: the same "unexpected statement" is reported by the source pass and by the Doc lint,
   // so folding one of them alone leaves the other's copy behind.
   return collapseMissingScene(out, src)
@@ -148,9 +150,44 @@ export function checkProgram(src: string, opts: CheckOptions = {}): CheckResult 
   try {
     doc = compileFlatpack(src, opts.assetSrcs ?? [], opts.media ?? {})
   } catch (e) {
-    // The parser gives up without a position (it stops at the offending token, not at a line) — report it
-    // at the top of the file rather than inventing coordinates.
-    return tally([{ scope: 'scene', line: 1, col: 1, severity: 'error', message: `compile error: ${(e as Error).message}` }], null)
+    // A `FlatSyntaxError` knows where it happened and sometimes how to repair itself; anything else still
+    // lands at the top of the file rather than inventing coordinates.
+    const f = e instanceof FlatSyntaxError ? e : null
+    return tally([{ scope: 'scene', line: f?.line ?? 1, col: f?.col ?? 1, severity: 'error', message: `compile error: ${(e as Error).message}`, ...(f?.fix ? { fix: f.fix } : {}) }], null)
   }
   return tally(programDiagnostics(doc, src), doc)
+}
+
+/** Applies every MECHANICAL repair a diagnostic carries, and returns the new source with how many landed.
+ *  Bottom-up so earlier positions stay valid, and overlapping edits are skipped rather than merged --
+ *  two fixes touching one line means at least one was computed against text the other rewrote.
+ *
+ *  A multi-line replacement inherits the INDENTATION of the line it replaces: the parser knows the shape
+ *  of the repair, not how deep the author nests. This is the one rule to know about the output.
+ *
+ *  Meant to run BEFORE handing a failing program back to a model: a missing comma should not cost a whole
+ *  regeneration. Re-check the result -- `applyFixes` never claims the program is now valid, only that the
+ *  edits it knew about were applied. */
+export function applyFixes(src: string, diagnostics: CheckDiagnostic[]): { text: string; applied: number } {
+  const lines = src.split('\n')
+  const edits = diagnostics
+    .map((d) => d.fix)
+    .filter((f): f is TextEdit => !!f)
+    .sort((a, b) => b.line - a.line || b.col - a.col)
+  let applied = 0
+  const touched = new Set<number>()
+  for (const e of edits) {
+    if (e.line < 1 || e.endLine > lines.length) continue
+    let overlaps = false
+    for (let l = e.line; l <= e.endLine; l++) if (touched.has(l)) overlaps = true
+    if (overlaps) continue
+    const indent = /^[ \t]*/.exec(lines[e.line - 1])![0]
+    const body = e.replacement.split('\n').map((l, i) => (i === 0 ? l : indent + l)).join('\n')
+    const head = lines[e.line - 1].slice(0, e.col - 1)
+    const tail = lines[e.endLine - 1].slice(e.endCol - 1)
+    lines.splice(e.line - 1, e.endLine - e.line + 1, ...(head + body + tail).split('\n'))
+    for (let l = e.line; l <= e.endLine; l++) touched.add(l)
+    applied++
+  }
+  return { text: lines.join('\n'), applied }
 }

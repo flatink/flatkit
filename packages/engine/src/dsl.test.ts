@@ -712,3 +712,28 @@ describe('the code inside a diagnostic is valid FlatInk', () => {
     expect(parseUnits(dedented).diagnostics).toEqual([])
   })
 })
+
+// An auto-fix that is WRONG is worse than none: it changes code silently. So a diagnostic carries a `fix`
+// only when the repair is the single possible reading of the text -- a missing separator, never a guess
+// at intent. These two are the mechanical ones the parser already knows how to repair, because it knows
+// exactly where the boundary it was looking for should have been.
+describe('diagnostics that carry their own repair', () => {
+  it('a run-on interactor line is repaired into one option per line', () => {
+    const { diagnostics } = parseUnits('dragX cx { confine to Rail  snap 26 }\n')
+    const fix = diagnostics[0].fix!
+    expect(fix).toBeDefined()
+    expect(fix.replacement).toBe('dragX cx {\n  confine to Rail\n  snap 26\n}')
+    expect(parseUnits(fix.replacement + '\n').diagnostics).toEqual([]) // the repair must itself parse
+  })
+
+  it('the repair covers the whole offending line', () => {
+    const src = 'x = 1\ndragX cx { confine to Rail  snap 26 }\n'
+    const fix = parseUnits(src).diagnostics[0].fix!
+    expect([fix.line, fix.col, fix.endLine]).toEqual([2, 1, 2]) // col 1: the line has no indentation here
+    expect(fix.endCol).toBe('dragX cx { confine to Rail  snap 26 }'.length + 1)
+  })
+
+  it('a diagnostic with no unambiguous repair carries no fix', () => {
+    expect(parseUnits('when clicced {\n  x = 1\n}\n').diagnostics[0].fix).toBeUndefined()
+  })
+})

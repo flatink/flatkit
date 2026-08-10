@@ -551,7 +551,14 @@ export function lintDoc(doc: Doc, src?: string): { scope: string; diag: Diagnost
     const regions = src && editPath.length === 0
       ? behaviorRegions(src)
       : scopeRegions(scopeProgram(doc, editPath)).map((r) => ({ scope: label, body: r.body, line: r.line }))
-    for (const r of regions) for (const d of lint(r.body, ctx)) out.push({ scope: r.scope, diag: { ...d, line: d.line + r.line - 1 } })
+    for (const r of regions)
+      for (const d of lint(r.body, ctx)) {
+        const shift = r.line - 1
+        // The `fix` carries its own positions, relative to the region text exactly like `d.line`. Shift
+        // both or the repair lands somewhere else in the file -- and applies cleanly there, silently.
+        const fix = d.fix && { ...d.fix, line: d.fix.line + shift, endLine: d.fix.endLine + shift }
+        out.push({ scope: r.scope, diag: { ...d, line: d.line + shift, ...(fix ? { fix } : {}) } })
+      }
   }
   out.push(...docStructureWarnings(doc))
   out.push(...docModifierWarnings(doc))

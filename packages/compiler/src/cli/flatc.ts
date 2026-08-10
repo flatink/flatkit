@@ -21,7 +21,8 @@ import { containerBBox, containerBBoxUnion } from '@flatkit/engine/groups'
 import { isInstance, isGroup } from '@flatkit/engine/layers'
 import { IDENTITY } from '@flatkit/engine/transform'
 import { lintDocReport, docHasErrors } from '../programDoc'
-import { formatDiagnostics, programDiagnostics } from '../check'
+import { applyFixes, formatDiagnostics, programDiagnostics } from '../check'
+import { FlatSyntaxError } from '@flatkit/engine/flatFormat'
 import { playHeadless, type Gesture } from '@flatkit/player/debug'
 import type { FuncDef } from '@flatkit/engine/actions'
 import type { Doc, Instance, Item, Layer, SymbolDef } from '@flatkit/types'
@@ -65,6 +66,8 @@ Usage:
                     play with sameOriginAssetResolver(<flatpackUrl>))
   --check           semantic lint only (no .flatpack); exits ≠0 on ERROR (warnings do not stop). Lints a
                     program .flatink OR an asset library .flat (per-symbol; several .flat are merged)
+  --fix             apply the MECHANICAL repairs the diagnostics carry (missing separator, run-on line)
+                    and re-check; writes only if the error count drops. Implies --check.
   --no-libs         do NOT auto-discover the .flat files sitting next to the program (use it in a working
                     folder, where a neighbouring scratch file is not a dependency)
   --watch           recompile on every change in the folder (agent → player loop)
@@ -172,13 +175,28 @@ function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], 
 }
 
 /** Compile once (write or --check). Returns the exit code. */
-function compileOnce(programPath: string, explicitFlats: string[], out: string, checkOnly: boolean, assetMode: AssetMode = 'inline', noLibs = false): number {
+function compileOnce(programPath: string, explicitFlats: string[], out: string, checkOnly: boolean, assetMode: AssetMode = 'inline', noLibs = false, doFix = false, fixPass = 0): number {
   const outPath = out ? resolve(out) : join(dirname(programPath), basename(programPath, extname(programPath)) + '.flatpack')
   // External mode: sidecar folder next to the .flatpack, e.g. `game.flatpack` → `game.assets/`.
   const assetsDir = assetMode === 'external' ? basename(outPath, extname(outPath)) + '.assets' : ''
   let built: BuildResult
   try { built = buildDocFromProgram(programPath, explicitFlats, assetMode, assetsDir, noLibs) }
-  catch (e) { process.stderr.write(`flatc: compile error: ${(e as Error).message}\n`); return 1 }
+  catch (e) {
+    // A source the parser REJECTS never reaches the diagnostics pass below — and that is exactly where a
+    // mechanical repair earns its keep, because there is no partial result to work from. When the syntax
+    // error carries its own fix, apply it and try again (bounded: each pass must consume one repair).
+    if (doFix && e instanceof FlatSyntaxError && e.fix && fixPass < 10) {
+      const original = readFileSync(programPath, 'utf8')
+      const { text, applied } = applyFixes(original, [{ scope: 'scene', line: e.line, col: e.col, severity: 'error', message: e.message, fix: e.fix }])
+      if (applied) {
+        writeFileSync(programPath, text)
+        process.stderr.write(`flatc: --fix: repaired \`${e.message.split(':')[0]}\` in ${basename(programPath)}\n`)
+        return compileOnce(programPath, explicitFlats, out, checkOnly, assetMode, noLibs, doFix, fixPass + 1)
+      }
+    }
+    process.stderr.write(`flatc: compile error: ${(e as Error).message}\n`)
+    return 1
+  }
   const { doc } = built
   // The SAME pass the `checkProgram` API runs — source-level diagnostics (statements the parser dropped,
   // `object` blocks binding to nothing) merged with the semantic lint of the Doc. Shared on purpose: a
@@ -186,6 +204,38 @@ function compileOnce(programPath: string, explicitFlats: string[], out: string, 
   const diagnostics = programDiagnostics(doc, built.src)
   const report = formatDiagnostics(diagnostics)
   const hasErrors = diagnostics.some((d) => d.severity === 'error')
+  // `--fix` applies the MECHANICAL repairs the diagnostics carry (a missing separator, a run-on line),
+  // then re-checks. Two rules make it safe to run unattended:
+  //   • it ITERATES, because repairing one error unmasks the next — a run-on interactor line swallows the
+  //     statements under it, and their own diagnostics only appear once it is split;
+  //   • it writes only if the error count strictly DROPS at each pass. An auto-fix that makes things worse
+  //     must not survive, and the honest way to know is to run the same check again on the result.
+  if (doFix) {
+    const original = readFileSync(programPath, 'utf8')
+    const errs = (ds: typeof diagnostics) => ds.filter((d) => d.severity === 'error').length
+    let text = original
+    let total = 0
+    let before = errs(diagnostics)
+    const first = before
+    let current = diagnostics
+    for (let pass = 0; pass < 5; pass++) {
+      const step = applyFixes(text, current)
+      if (!step.applied) break
+      writeFileSync(programPath, step.text)
+      let after: typeof diagnostics
+      try { after = programDiagnostics(buildDocFromProgram(programPath, explicitFlats, assetMode, assetsDir, noLibs).doc, step.text) }
+      catch { writeFileSync(programPath, text); break } // the repair broke the parse outright → keep the last good text
+      if (errs(after) >= before) { writeFileSync(programPath, text); break }
+      text = step.text; total += step.applied; before = errs(after); current = after
+    }
+    if (!total) {
+      writeFileSync(programPath, original)
+      process.stderr.write(`flatc: --fix: nothing to repair mechanically${hasErrors ? ' — the remaining errors need a decision, not a separator\n' : '\n'}`)
+    } else {
+      process.stderr.write(`flatc: --fix: ${total} repair(s) applied to ${basename(programPath)} · errors ${first} → ${before}\n`)
+      return compileOnce(programPath, explicitFlats, out, checkOnly, assetMode, noLibs, false)
+    }
+  }
   if (checkOnly) {
     if (report) process.stderr.write(report + '\n')
     if (hasErrors) return 1
@@ -465,7 +515,7 @@ async function previewOnce(flatPath: string, symbolName: string, out: string, fr
 export function run(argv: string[]): number | Promise<number> {
   const args = argv.slice(2)
   let out = '', scriptPath = '', symbolName = ''
-  let checkOnly = false, doWatch = false, doPlay = false, doRender = false, doTrace = false, doPreview = false, noLibs = false
+  let checkOnly = false, doFix = false, doWatch = false, doPlay = false, doRender = false, doTrace = false, doPreview = false, noLibs = false
   let frame = 0, scale = 2, steps = 0, pad = 24
   let scaleAuto = false
   let bboxMode: 'all' | 'frame0' = 'all'
@@ -479,6 +529,7 @@ export function run(argv: string[]): number | Promise<number> {
     else if (a === '--script') scriptPath = resolve(args[++i] ?? '')
     else if (a === '--assets') assetMode = args[++i] === 'external' ? 'external' : 'inline'
     else if (a === '--check') checkOnly = true
+    else if (a === '--fix') { doFix = true; checkOnly = true }
     else if (a === '--no-libs') noLibs = true
     else if (a === '--watch') doWatch = true
     else if (a === '--play') doPlay = true
@@ -509,7 +560,7 @@ export function run(argv: string[]): number | Promise<number> {
   // (the following positionals are more `.flat` libs to merge). Every other path is unchanged.
   const action: () => number = checkOnly && filePath.endsWith('.flat')
     ? () => checkFlatLibs([filePath, ...explicitFlats])
-    : () => compileOnce(filePath, explicitFlats, out, checkOnly, assetMode, noLibs)
+    : () => compileOnce(filePath, explicitFlats, out, checkOnly, assetMode, noLibs, doFix)
   if (doWatch) {
     const code = action()
     const baseDir = dirname(filePath)

@@ -27,7 +27,7 @@ import { compileExpr, evalExpr, exprScope } from './expr'
 import { isGroup, isInstance, isText, isImage, isPoseable, isRegion, folderPath } from './layers'
 import { itemBoundsByName } from './groups'
 import type { BBox } from './bbox'
-import { printUnits, parseUnits, type Diagnostic, type ScriptUnit } from './dsl'
+import { printUnits, parseUnits, type Diagnostic, type ScriptUnit, type TextEdit } from './dsl'
 import { timelineToUnits, unitsToTimeline, objectToUnits, unitsToObject, functionsToUnits, unitsToFunctions } from './scriptDoc'
 import { providingPackage } from './stdlib'
 
@@ -358,7 +358,8 @@ export function printProgram(doc: Program): string {
 
 /** Parses the COMPOSITION of a `.flatink` program (`@Name` refs, resolved at compile time). */
 export function parseProgram(src: string): Program {
-  const parser = new FlatParser(tokenize(expandSceneRepeats(src)))
+  const expanded = expandSceneRepeats(src)
+  const parser = new FlatParser(tokenize(expanded), expanded)
   const prog = parser.program()
   resolveAligns(prog, parser.pendingAligns) // `align …` anchors: bbox computable once the scene is built
   resolveTextPaths(prog, parser.pendingTextPaths) // `along "<id>"`: bake the shape outline into textPath
@@ -897,7 +898,14 @@ function extractBehavior(expanded: string): { sceneText: string; tailAt: number;
 export function behaviorDiagnostics(src: string): { scope: string; diag: Diagnostic }[] {
   const out: { scope: string; diag: Diagnostic }[] = []
   for (const r of behaviorRegions(src))
-    for (const d of parseUnits(r.body).diagnostics) out.push({ scope: r.scope, diag: { ...d, line: d.line + r.line - 1 } })
+    for (const d of parseUnits(r.body).diagnostics) {
+      const shift = r.line - 1 // the region's own line 1 sits on this line of the author's file
+      // The fix carries its OWN positions, and they are relative to the region text just like `d.line`.
+      // Forgetting to shift them lands the repair at the top of the file -- silently, since the edit still
+      // applies cleanly to whatever happens to be there.
+      const fix = d.fix && { ...d.fix, line: d.fix.line + shift, endLine: d.fix.endLine + shift }
+      out.push({ scope: r.scope, diag: { ...d, line: d.line + shift, ...(fix ? { fix } : {}) } })
+    }
   return out
 }
 
@@ -1116,8 +1124,21 @@ export function parseProgramFull(src: string): Program {
   return result
 }
 
+/** A parse error that knows WHERE it happened, and sometimes how to repair itself. The flat parser used
+ *  to throw a bare `Error`, so every syntax error was reported at 1:1 -- `checkProgram` said as much in a
+ *  comment. `fix` follows the same rule as everywhere: only when the repair is the single possible
+ *  reading. */
+export class FlatSyntaxError extends Error {
+  constructor(message: string, readonly line: number, readonly col: number, readonly fix?: TextEdit) {
+    super(message)
+    this.name = 'FlatSyntaxError'
+  }
+}
+
 // ── Parse (text → model) — tokenizer + recursive descent. ──────────────────────
-type Tok = { k: 'id' | 'num' | 'str' | 'color' | 'punc'; v: string }
+/** A token, WITH the offset it starts at. Without it every parse error was reported at 1:1 -- accurate
+ *  about the token, useless about where to look -- and no repair could name a range to replace. */
+type Tok = { k: 'id' | 'num' | 'str' | 'color' | 'punc'; v: string; at: number }
 
 function tokenize(src: string): Tok[] {
   const out: Tok[] = []
@@ -1127,24 +1148,25 @@ function tokenize(src: string): Tok[] {
     const c = src[i]
     if (c === ' ' || c === '\t' || c === '\n' || c === '\r') { i++; continue }
     if (c === '/' && src[i + 1] === '/') { while (i < N && src[i] !== '\n') i++; continue }
+    const start = i
     if (c === '"') {
       let v = ''
       i++
       while (i < N && src[i] !== '"') { if (src[i] === '\\') { i++; v += src[i] === 'n' ? '\n' : src[i] } else v += src[i]; i++ }
       i++
-      out.push({ k: 'str', v })
+      out.push({ k: 'str', v, at: start })
       continue
     }
-    if (c === '#') { let j = i + 1; while (j < N && /[0-9a-fA-F]/.test(src[j])) j++; out.push({ k: 'color', v: src.slice(i, j) }); i = j; continue }
+    if (c === '#') { let j = i + 1; while (j < N && /[0-9a-fA-F]/.test(src[j])) j++; out.push({ k: 'color', v: src.slice(i, j), at: start }); i = j; continue }
     if (c === '-' || c === '.' || (c >= '0' && c <= '9')) {
       let j = i + 1
       while (j < N && /[0-9.eE+-]/.test(src[j]) && !(src[j] === '-' && !/[eE]/.test(src[j - 1]))) j++
-      out.push({ k: 'num', v: src.slice(i, j) })
+      out.push({ k: 'num', v: src.slice(i, j), at: start })
       i = j
       continue
     }
-    if (/[a-zA-Z_]/.test(c)) { let j = i + 1; while (j < N && /[\w-]/.test(src[j])) j++; out.push({ k: 'id', v: src.slice(i, j) }); i = j; continue }
-    if ('{}(),:=[]@'.includes(c)) { out.push({ k: 'punc', v: c }); i++; continue } // `@` = alpha marker in a param gradient stop (`0:teinte@0.8`)
+    if (/[a-zA-Z_]/.test(c)) { let j = i + 1; while (j < N && /[\w-]/.test(src[j])) j++; out.push({ k: 'id', v: src.slice(i, j), at: start }); i = j; continue }
+    if ('{}(),:=[]@'.includes(c)) { out.push({ k: 'punc', v: c, at: start }); i++; continue } // `@` = alpha marker in a param gradient stop (`0:teinte@0.8`)
     i++
   }
   return out
@@ -1195,7 +1217,41 @@ class FlatParser {
   // Color-param defaults of the symbol being parsed (name → default hex) — the fallback color for a stop/tint
   // bound to a param (`0:teinte@…`, `tint teinte …`), so it renders even outside an instance scope.
   private colorDefaults = new Map<string, string>()
-  constructor(private readonly t: Tok[]) {}
+  constructor(private readonly t: Tok[], private readonly src = '') {}
+
+  /** 1-based line/column of a source OFFSET, in the text the parser was handed. */
+  private posAt(off: number): { line: number; col: number } {
+    const upTo = this.src.slice(0, off)
+    const nl = upTo.lastIndexOf('\n')
+    return { line: upTo.split('\n').length, col: off - nl }
+  }
+
+  /** Throws at the CURRENT token, with an optional mechanical repair. */
+  private fail(message: string, fix?: TextEdit): never {
+    const off = this.t[this.p]?.at ?? this.src.length
+    const { line, col } = this.posAt(off)
+    throw new FlatSyntaxError(message, line, col, fix)
+  }
+
+  /** Replaces the source range [from, to) with `replacement`, as a TextEdit. */
+  private edit(from: number, to: number, replacement: string): TextEdit {
+    const a = this.posAt(from), b = this.posAt(to)
+    return { line: a.line, col: a.col, endLine: b.line, endCol: b.col, replacement }
+  }
+
+  /** The offset with the run of spaces/tabs before it consumed -- so an inserted separator replaces the
+   *  gap instead of sitting after it (`at 12 -16` -> `at 12,-16`, not `at 12 ,-16`). */
+  private backOverSpace(off: number): number {
+    let i = off
+    while (i > 0 && (this.src[i - 1] === ' ' || this.src[i - 1] === '\t')) i--
+    return i
+  }
+
+  /** The rest of the line the offset sits on. */
+  private restOfLine(off: number): string {
+    const nl = this.src.indexOf('\n', off)
+    return this.src.slice(off, nl === -1 ? this.src.length : nl)
+  }
   private peek() { return this.t[this.p] }
   private next() { return this.t[this.p++] }
   private is(v: string) { const k = this.t[this.p]; return !!k && k.v === v }
@@ -1215,8 +1271,14 @@ class FlatParser {
       // `#` opens a COLOUR, and a bare one lands wherever a comment was intended. It survives the header
       // half of a program and breaks in the composition half, on a message about layers that points
       // nowhere near it — so name the character rather than the statement it displaced.
-      if (found === '#') throw new Error('"#" opens a colour (`#ffcc00`), and this one starts nothing — if it was meant as a comment, FlatInk comments with `//` to end of line, everywhere')
-      throw new Error(`"${v}" expected, "${found}" found`)
+      if (found === '#') {
+        // Only offer `//` when the rest of the line holds no brace: `scene { # c }` would comment out the
+        // closing brace, turning one clear error into a structural one. There, the author decides.
+        const at = this.t[this.p]!.at
+        const safe = !/[{}]/.test(this.restOfLine(at + 1))
+        this.fail('"#" opens a colour (`#ffcc00`), and this one starts nothing — if it was meant as a comment, FlatInk comments with `//` to end of line, everywhere', safe ? this.edit(at, at + 1, '//') : undefined)
+      }
+      this.fail(`"${v}" expected, "${found}" found`)
     }
     this.p++
   }
@@ -1668,7 +1730,11 @@ class FlatParser {
       const x = this.coord(true)
       // A SPACE where the comma goes is the reflex of anyone who has written SVG, and the generic
       // `"," expected` names the token, not the rule. Say the rule, with both spellings side by side.
-      if (!this.is(',')) throw new Error(`at <x>,<y> takes a COMMA between the two coordinates: write "at ${x},${this.t[this.p]?.v ?? '<y>'}", not "at ${x} ${this.t[this.p]?.v ?? '<y>'}"`)
+      if (!this.is(',')) {
+        const y = this.t[this.p]
+        this.fail(`at <x>,<y> takes a COMMA between the two coordinates: write "at ${x},${y?.v ?? '<y>'}", not "at ${x} ${y?.v ?? '<y>'}"`,
+          y ? this.edit(this.backOverSpace(y.at), y.at, ',') : undefined)
+      }
       this.eat(','); const y = this.coord(false)
       return { a: 1, b: 0, c: 0, d: 1, e: x, f: y }
     }
@@ -1801,7 +1867,7 @@ function resolveInstanceNames(symbols: SymbolDef[]): void {
 
 /** Parses a `.flat` library → symbols + folders (ids regenerated; instances resolved by name). */
 export function parseFlatLib(src: string): { symbols: SymbolDef[]; folders: Folder[] } {
-  const parser = new FlatParser(tokenize(src))
+  const parser = new FlatParser(tokenize(src), src)
   const symbols = parser.parse()
   resolveInstanceNames(symbols)
   return { symbols, folders: parser.parsedFolders }

@@ -10,7 +10,8 @@
 export { compileFlatpack, packToJSON, type MediaMap } from './compile'
 
 // --- Check a program the way the CLI does (source in, diagnostics out) --------
-export { checkProgram, programDiagnostics, formatDiagnostics, type CheckDiagnostic, type CheckOptions, type CheckResult } from './check'
+export { checkProgram, programDiagnostics, formatDiagnostics, applyFixes, type CheckDiagnostic, type CheckOptions, type CheckResult } from './check'
+export type { TextEdit } from '@flatkit/engine/dsl'
 
 // --- Static analysis: lint a program / a whole Doc ----------------------------
 export { lint, lintReport, localVariables, type LintContext } from './lint'

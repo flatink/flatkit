@@ -37,6 +37,42 @@ flatc <program.flatink> --watch      # recompile on every change in the folder
 flatc <library.flat> [more.flat …] --check   # lint an asset LIB per-symbol (several .flat are merged)
 ```
 
+### Repairing the mechanical slips — `--fix`
+
+Some errors have exactly ONE possible repair: a separator the author left out. Those diagnostics now
+**carry the edit**, and `flatc --fix` applies it, iterating (repairing one error unmasks the next — a
+run-on interactor line swallows the statements under it) and re-checking after each pass. It writes only
+if the error count strictly DROPS; otherwise it reverts and says so. An auto-fix that is wrong is worse
+than none, because it changes code silently.
+
+```
+flatc game.flatink --fix --no-libs
+flatc: --fix: repaired `at <x>,<y> takes a COMMA between the two coordinates` in game.flatink
+flatc: --fix: 2 repair(s) applied to game.flatink · errors 4 → 0
+flatc: check passed ✓
+```
+
+Four slips are repaired today, all of them a missing separator: `at 12 -16` (the comma), `#` used as a
+comment (`//`, and only when the rest of the line holds no brace — otherwise it would comment out the
+closing one), two statements on one line, and a run-on interactor block. Anything needing a DECISION — an
+unknown event name, a `when <condition>`, a binding at the program level that must name its object — is
+reported and left alone.
+
+**From code**, the same repairs without a subprocess — this is the point of carrying them:
+
+```ts
+import { checkProgram, applyFixes } from '@flatkit/compiler'
+
+const first = checkProgram(srcFromAnLLM)
+const { text, applied } = applyFixes(srcFromAnLLM, first.diagnostics)
+const after = checkProgram(text)          // ALWAYS re-check: applyFixes never claims the result is valid
+if (!after.ok) regenerate(after.report)   // only now does it cost a model round-trip
+```
+
+A missing comma should not cost a whole regeneration. `CheckDiagnostic.fix` is present only when the
+repair is the single possible reading; a multi-line replacement inherits the indentation of the line it
+replaces.
+
 `--check` lints a program **or** an asset library (`.flat`): the same per-symbol checks (params-in-`expr`,
 undeclared color param in a paint, unknown functions/objects) run on a lib's symbols — no need to compile a
 preview first.

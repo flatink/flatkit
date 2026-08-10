@@ -40,8 +40,15 @@ export type ScriptUnit =
   | { kind: 'interactor'; axis: 'xy' | 'x' | 'y' | 'turn' | 'turnDeg' | 'trace' | 'reveal' | 'link'; varX?: string; varY?: string; varT?: string; confine?: string; grid?: number; enabled?: string; pivot?: { x: number; y: number } }
   | { kind: 'drop'; over: string; atPointer?: boolean; body: Action[] } // when dropped on Zone [at pointer] { … } — released over a named zone
 
+/** A mechanical repair carried BY the diagnostic: replace [line,col -> endLine,endCol) with `replacement`
+ *  (1-based, end EXCLUSIVE). Emitted ONLY when the repair is the single possible reading of the text -- a
+ *  separator the author left out, never a guess at intent. An auto-fix that is wrong is worse than no
+ *  auto-fix, because it changes code silently. When `replacement` spans several lines, every line after
+ *  the first inherits the INDENTATION of the line being replaced. */
+export type TextEdit = { line: number; col: number; endLine: number; endCol: number; replacement: string }
+
 /** Parse diagnostic (1-based line/column, message text). Missing `severity` = error. */
-export type Diagnostic = { line: number; col: number; message: string; severity?: 'error' | 'warning' }
+export type Diagnostic = { line: number; col: number; message: string; severity?: 'error' | 'warning'; fix?: TextEdit }
 
 /**
  * Site annotated with its source position, for the linter (batch L3): an expression to
@@ -252,8 +259,32 @@ class Parser {
     this.line = m.line
     this.col = m.col
   }
-  private err(message: string, m?: Mark) {
-    this.diags.push({ line: m?.line ?? this.line, col: m?.col ?? this.col, message })
+  private err(message: string, m?: Mark, fix?: TextEdit) {
+    this.diags.push({ line: m?.line ?? this.line, col: m?.col ?? this.col, message, ...(fix ? { fix } : {}) })
+  }
+
+  /** The whole line the cursor sits on, as a TextEdit target: [start of line -> end of line). */
+  private lineEdit(replacement: string): TextEdit {
+    const start = this.s.lastIndexOf('\n', this.i - 1) + 1
+    const nl = this.s.indexOf('\n', this.i)
+    const end = nl === -1 ? this.s.length : nl
+    // Start the edit AFTER the indentation: the author's leading whitespace survives untouched, and the
+    // continuation lines inherit it (cf. TextEdit). Replacing from column 1 would flatten the first line.
+    const indent = /^[ \t]*/.exec(this.s.slice(start, end))![0].length
+    return { line: this.line, col: indent + 1, endLine: this.line, endCol: end - start + 1, replacement }
+  }
+
+  /** `dragX cx { confine to Rail  snap 26 }` -> the same statement, one option per line. Determinate: the
+   *  slot keywords are a closed set and each starts a statement, so the split points are not a guess. */
+  private oneSlotPerLine(): TextEdit | undefined {
+    const start = this.s.lastIndexOf('\n', this.i - 1) + 1
+    const nl = this.s.indexOf('\n', this.i)
+    const text = this.s.slice(start, nl === -1 ? this.s.length : nl).trim()
+    const m = /^(.*?\{)(.*?)\}\s*$/.exec(text)
+    if (!m) return undefined
+    const slots = m[2].trim().split(/\s+(?=(?:confine|snap|enabled)\b)/).map((t) => t.trim()).filter(Boolean)
+    if (slots.length < 2) return undefined
+    return this.lineEdit(`${m[1].trim()}\n${slots.map((t) => '  ' + t).join('\n')}\n}`)
   }
 
   // ── whitespace / comments ──
@@ -424,7 +455,8 @@ class Parser {
     // Inside an interactor block the options are STATEMENTS, one per line — but the reference listings
     // separate them with a decorative `·`, so a reader writes `{ confine to Zone  snap 20 }` on one
     // line and gets `end of line expected` pointing at a column that says nothing about the rule.
-    this.err(INTERACTOR_SLOT.test(this.s.slice(this.i, this.s.indexOf('\n', this.i) + 1 || undefined)) ? 'one option per LINE inside an interactor block — `confine to …`, `snap …` and `enabled …` are statements, not a comma list. Put each on its own line.' : 'end of line expected')
+    const runOn = INTERACTOR_SLOT.test(this.s.slice(this.i, this.s.indexOf('\n', this.i) + 1 || undefined))
+    this.err(runOn ? 'one option per LINE inside an interactor block — `confine to …`, `snap …` and `enabled …` are statements, not a comma list. Put each on its own line.' : 'end of line expected', undefined, runOn ? this.oneSlotPerLine() : undefined)
     this.skipLine()
   }
 

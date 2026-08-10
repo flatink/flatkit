@@ -15,7 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { analyzeExpr, STD_CONSTANTS, STD_FUNCTIONS, STD_IDS, STD_OBJECTS } from '@flatkit/engine/expr'
 import { packageFunctionNames } from '@flatkit/engine/stdlib'
-import { parseUnits, type Diagnostic, type ScriptUnit } from '@flatkit/engine/dsl'
+import { parseUnits, type Diagnostic, type ScriptUnit, type TextEdit } from '@flatkit/engine/dsl'
 import type { Action } from '@flatkit/engine/actions'
 
 export type LintContext = {
@@ -67,6 +67,28 @@ const SECOND_ASSIGN = /[\w\]]\s*=(?![=])/
  *  RESERVED words (cf. ident.ts), so none can legitimately appear as a name inside an expression. */
 const SECOND_ACTION = /\b(send|play|pause|sound|set|go|repeat)\b/
 
+/** Where the swallowed SECOND statement begins inside the expression text, or -1. `send`-style actions
+ *  start at their keyword; a swallowed assignment starts at the identifier its `=` belongs to. */
+function splitPoint(text: string): number {
+  const act = SECOND_ACTION.exec(text)
+  if (act) return act.index
+  const asg = SECOND_ASSIGN.exec(text)
+  if (!asg) return -1
+  const upTo = text.slice(0, asg.index + 1) // the char before `=` is the last of the identifier
+  const id = /[A-Za-z_$][\w$]*\s*$/.exec(upTo)
+  return id ? upTo.length - id[0].length : -1
+}
+
+/** The `fix` half of the two-statements diagnostic: replace the expression text with its two lines. */
+function withSplit(s: { text: string; line: number; col: number }): { fix?: TextEdit } {
+  const at = splitPoint(s.text)
+  if (at <= 0) return {}
+  const left = s.text.slice(0, at).trimEnd()
+  const right = s.text.slice(at).trim()
+  if (!left || !right) return {}
+  return { fix: { line: s.line, col: s.col, endLine: s.line, endCol: s.col + s.text.length, replacement: `${left}\n${right}` } }
+}
+
 /** Analyze a DSL source and return all diagnostics (syntax + semantic). */
 export function lint(src: string, ctx: LintContext = {}): Diagnostic[] {
   const { units, diagnostics, sites } = parseUnits(src)
@@ -103,7 +125,9 @@ export function lint(src: string, ctx: LintContext = {}): Diagnostic[] {
         const message = leftover
           ? `two statements on one line — ${leftover} was swallowed into the expression before it. FlatInk ends a statement at the NEWLINE: put each action on its own line.`
           : `invalid expression: ${a.error}`
-        out.push({ line: s.line, col: s.col, message })
+        // The repair is mechanical: the boundary is where the SECOND statement starts, and the parser
+        // already located it to name it. Split there; anything else about the line stays untouched.
+        out.push({ line: s.line, col: s.col, message, ...(leftover ? withSplit(s) : {}) })
         continue
       }
       for (const fn of a.refs.calls) if (!knownFns.has(fn)) out.push({ line: s.line, col: s.col, message: `unknown function "${fn}"` })

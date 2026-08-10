@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { checkProgram, formatDiagnostics } from './check'
+import { checkProgram, formatDiagnostics, applyFixes } from './check'
 import { compileFlatpack } from './compile'
 import { docHasErrors, lintDoc } from './programDoc'
 import { run } from './cli/flatc'
@@ -239,4 +239,148 @@ describe('checkProgram — parity with `flatc --check`', () => {
       expect(api.ok).toBe(cli.code === 0)
     })
   }
+})
+
+// The point of carrying the repair is that a consumer can apply it WITHOUT a model round-trip: a missing
+// separator should not cost a whole regeneration. Measured on the Moiki pipeline: 1 program in 4 compiled,
+// and the three failures were three DIFFERENT grammar slips.
+describe('applyFixes', () => {
+  const scene = 'size 100 100\nscene { layer "a" { group "Box" at 50,50 pivot 0,0 { layer "c" { rect -5 -5 10 10 fill #ffffff } } } }\n'
+
+  it('repairs a run-on interactor line, and the result checks clean', () => {
+    const src = scene + 'object "Box" {\n  dragX cx { confine to Box  snap 26 }\n  x = cx\n}\n'
+    const before = checkProgram(src)
+    expect(before.ok).toBe(false)
+    const { text, applied } = applyFixes(src, before.diagnostics)
+    expect(applied).toBe(1)
+    expect(text).toContain('    confine to Box\n    snap 26\n')
+    expect(checkProgram(text).ok).toBe(true)
+  })
+
+  it('a multi-line replacement inherits the indentation of the line it replaces', () => {
+    const src = scene + 'object "Box" {\n      dragX cx { confine to Box  snap 26 }\n  x = cx\n}\n'
+    const { text } = applyFixes(src, checkProgram(src).diagnostics)
+    expect(text).toContain('      dragX cx {\n        confine to Box\n        snap 26\n      }\n')
+  })
+
+  it('leaves the source untouched when nothing carries a fix', () => {
+    const src = scene + 'object "Nowhere" {\n  x = 1\n}\n'
+    const r = applyFixes(src, checkProgram(src).diagnostics)
+    expect(r).toEqual({ text: src, applied: 0 })
+  })
+
+  it('applies several fixes bottom-up, so earlier line numbers stay valid', () => {
+    const src = scene + 'object "Box" {\n  dragX cx { confine to Box  snap 26 }\n}\nobject "Box" {\n  dragY cy { confine to Box  snap 13 }\n}\n'
+    const { applied, text } = applyFixes(src, checkProgram(src).diagnostics)
+    expect(applied).toBe(2)
+    expect(text).toContain('    snap 26\n')
+    expect(text).toContain('    snap 13\n')
+  })
+})
+
+// The #1 footgun, and it is mechanical: the parser knows exactly where the second statement begins,
+// because that is the token it choked on. Reported from real use -- `rendu = 1   send "success"`.
+describe('applyFixes — two statements on one line', () => {
+  const scene = 'size 100 100\nscene { layer "a" { group "Box" at 50,50 pivot 0,0 { layer "c" { rect -5 -5 10 10 fill #ffffff } } } }\n'
+
+  it('splits an action swallowed into the expression before it', () => {
+    const src = scene.replace('size 100 100\n', 'size 100 100\nvar rendu = 0\n') + 'object "Box" {\n  when clicked {\n    rendu = 1  send "success"\n  }\n}\n'
+    const before = checkProgram(src)
+    expect(before.ok).toBe(false)
+    const { text, applied } = applyFixes(src, before.diagnostics)
+    expect(applied).toBe(1)
+    expect(text).toContain('    rendu = 1\n    send "success"\n')
+    expect(checkProgram(text).ok).toBe(true)
+  })
+
+  // Not every pair on one line is broken: `a = 1  b = 2` PARSES -- the statement parser splits at the
+  // boundary on its own. Only an ACTION keyword gets swallowed into the expression before it, because the
+  // expression parser eats it first. So there is nothing to repair here, and nothing to report.
+  it('says nothing about two assignments on one line, which parse', () => {
+    const src = scene.replace('size 100 100\n', 'size 100 100\nvar a = 0\nvar b = 0\n') + 'object "Box" {\n  when clicked {\n    a = 1  b = 2\n  }\n}\n'
+    expect(checkProgram(src).diagnostics).toEqual([])
+    expect(applyFixes(src, []).applied).toBe(0)
+  })
+})
+
+// The flat parser used to give up "without a position" -- every syntax error landed at 1:1, which is
+// accurate about the token and useless about where to look. Now it names the line, and the two mechanical
+// slips carry their repair.
+describe('applyFixes — syntax slips the flat parser can repair', () => {
+  it('`at 12 -16` gets its comma, and the error is positioned', () => {
+    const src = 'size 200 200\nscene { layer "a" {\n  group "G" at 12 -16 pivot 0,0 { layer "c" { rect 0 0 4 4 fill #ffffff } }\n} }\n'
+    const before = checkProgram(src)
+    expect(before.ok).toBe(false)
+    expect(before.diagnostics[0].line).toBe(3)
+    const { text, applied } = applyFixes(src, before.diagnostics)
+    expect(applied).toBe(1)
+    expect(text).toContain('at 12,-16')
+    expect(checkProgram(text).ok).toBe(true)
+  })
+
+  it('`#` used as a comment becomes `//`', () => {
+    const src = 'size 200 200\nscene { layer "a" {\n  # a remark\n  rect 0 0 4 4 fill #ffffff\n} }\n'
+    const before = checkProgram(src)
+    expect(before.ok).toBe(false)
+    const { text, applied } = applyFixes(src, before.diagnostics)
+    expect(applied).toBe(1)
+    expect(text).toContain('  // a remark\n')
+    expect(checkProgram(text).ok).toBe(true)
+  })
+
+  it('but NOT when the rest of the line would be swallowed', () => {
+    // `scene { # c }` -> `scene { // c }` comments out the closing brace. The repair is only offered when
+    // the remainder of the line holds no brace; otherwise the author decides.
+    const src = 'size 200 200\nscene { layer "a" { rect 0 0 4 4 fill #ffffff # note } }\n'
+    expect(checkProgram(src).diagnostics[0].fix).toBeUndefined()
+  })
+})
+
+// `flatc --fix` end to end. Two rules make it safe unattended: it ITERATES (repairing one error unmasks
+// the next -- a run-on interactor line swallows the statements under it), and it reverts unless the error
+// count strictly drops.
+describe('flatc --fix', () => {
+  it('repairs a program with several slips, iterating, and leaves it checking clean', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flatc-fix-'))
+    const file = join(dir, 'p.flatink')
+    const src = [
+      'size 200 200',
+      'var rendu = 0',
+      'var cx = 0',
+      'scene { layer "a" {',
+      '  group "Rail" at 100,150 pivot 0,0 hitbox 200 20 { layer "c" { rect -100 -5 200 10 fill #333333 } }',
+      '  group "P" at 20 60 pivot 0,0 hitbox 40 40 { layer "c" { circle 0 0 15 fill #ff0000 } }',
+      '} }',
+      'object "P" {',
+      '  dragX cx { confine to Rail  snap 26 }',
+      '  x = cx',
+      '  when clicked {',
+      '    rendu = 1  send "success"',
+      '  }',
+      '}',
+      '',
+    ].join('\n')
+    writeFileSync(file, src)
+    try {
+      expect(checkProgram(src).ok).toBe(false)
+      const code = await run(['node', 'flatc', file, '--fix', '--no-libs'])
+      expect(code).toBe(0)
+      const after = readFileSync(file, 'utf8')
+      expect(after).toContain('at 20,60')
+      expect(after).toContain('    confine to Rail\n    snap 26\n')
+      expect(after).toContain('    rendu = 1\n    send "success"\n')
+      expect(checkProgram(after).ok).toBe(true)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('leaves the file untouched when nothing is mechanical', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flatc-fix-'))
+    const file = join(dir, 'p.flatink')
+    const src = 'size 200 200\nscene { layer "a" { group "G" at 10,10 pivot 0,0 { layer "c" { rect 0 0 4 4 fill #ffffff } } } }\nobject "Absent" {\n  x = 1\n}\n'
+    writeFileSync(file, src)
+    try {
+      expect(await run(['node', 'flatc', file, '--fix', '--no-libs'])).toBe(1)
+      expect(readFileSync(file, 'utf8')).toBe(src)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
 })
