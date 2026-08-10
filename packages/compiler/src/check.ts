@@ -16,7 +16,7 @@
 //  The CLI calls the same function, so the two cannot drift.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Doc } from '@flatkit/types'
-import { behaviorDiagnostics, objectTargetDiagnostics } from '@flatkit/engine/flatFormat'
+import { behaviorDiagnostics, duplicateBindingDiagnostics, objectTargetDiagnostics } from '@flatkit/engine/flatFormat'
 import { compileFlatpack, type MediaMap } from './compile'
 import { lintDoc } from './programDoc'
 
@@ -122,6 +122,7 @@ export function programDiagnostics(doc: Doc, src: string): CheckDiagnostic[] {
   for (const d of sourceDiagnostics(src)) push(d)
   const noSize = missingSizeDiagnostic(src, doc)
   if (noSize) push(noSize)
+  for (const { scope, diag } of duplicateBindingDiagnostics(src)) push({ scope, line: diag.line, col: diag.col, severity: 'warning', message: diag.message })
   for (const { scope, diag } of lintDoc(doc, src)) push({ scope, line: diag.line, col: diag.col, severity: diag.severity === 'warning' ? 'warning' : 'error', message: diag.message })
   // Collapse LAST: the same "unexpected statement" is reported by the source pass and by the Doc lint,
   // so folding one of them alone leaves the other's copy behind.

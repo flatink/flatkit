@@ -920,6 +920,30 @@ export function behaviorRegions(src: string): { scope: string; body: string; lin
  *  handlers got a dangling `@name` target that no hit-test ever resolves — the program compiled, ran, and the
  *  animation simply did not exist. It is always a typo or a misconception (a SHAPE or a LAYER named where a
  *  group is required), never intentional → ERROR, and the message names what the author actually hit. */
+/** Two `object "X"` blocks binding the SAME channel: the later one wins and the earlier is lost. Blocks
+ *  that bind DIFFERENT channels merge cleanly and say nothing — that is the normal way a skin adds a
+ *  wobble to something the rules already move. */
+export function duplicateBindingDiagnostics(src: string): { scope: string; diag: Diagnostic }[] {
+  const expanded = expandProgramSugar(src)
+  const { objects } = extractBehavior(expanded)
+  const lineAt = (off: number) => expanded.slice(0, off).split('\n').length
+  const bound = new Map<string, Map<string, number>>() // item name -> channel -> line of the first binding
+  const out: { scope: string; diag: Diagnostic }[] = []
+  for (const ob of objects) {
+    const { expressions } = unitsToObject(parseUnits(ob.body).units)
+    const seen = bound.get(ob.name) ?? new Map<string, number>()
+    for (const ch of Object.keys(expressions)) {
+      const first = seen.get(ch)
+      if (first !== undefined) {
+        out.push({ scope: `object "${ob.name}"`, diag: { line: lineAt(ob.at), col: 1, severity: 'warning',
+          message: `"${ob.name}" binds \`${ch}\` here and already did on line ${first} — the blocks MERGE, so this one wins and the earlier binding is lost. Bind a different channel (\`dx\`/\`dy\` add to a position instead of replacing it), or write one block.` } })
+      } else seen.set(ch, lineAt(ob.at))
+    }
+    bound.set(ob.name, seen)
+  }
+  return out
+}
+
 export function objectTargetDiagnostics(src: string): { scope: string; diag: Diagnostic }[] {
   const expanded = expandProgramSugar(src)
   const { objects } = extractBehavior(expanded)
@@ -1000,8 +1024,13 @@ export function parseProgramFull(src: string): Program {
     const item = byName.get(ob.name)
     const targetId = item?.id ?? '@' + ob.name
     const { events, drops, interactor, expressions, modifiers } = unitsToObject(parseUnits(ob.body).units)
-    if (item && isPoseable(item) && Object.keys(expressions).length) item.expressions = expressions
-    if (item && isPoseable(item) && Object.keys(modifiers).length) item.modifiers = modifiers
+    // MERGE, never replace. Handlers from several `object "X"` blocks already accumulate, so bindings
+    // that replaced each other made one construct behave two ways for its two halves — and the loss was
+    // silent. A generated activity lost its `drag` bindings to a second block that only added a wobble:
+    // the interactor still wrote the variables, nothing read them any more, and the piece stopped
+    // following the finger with `--check` reporting a clean program. Later block wins per CHANNEL.
+    if (item && isPoseable(item) && Object.keys(expressions).length) item.expressions = { ...item.expressions, ...expressions }
+    if (item && isPoseable(item) && Object.keys(modifiers).length) item.modifiers = { ...item.modifiers, ...modifiers }
     for (const ev of events) interactions.push({ id: uid('int'), targetId, event: ev.event, actions: ev.actions })
     for (const d of drops) interactions.push({ id: uid('int'), targetId, event: 'drop', over: d.over, ...(d.atPointer ? { atPointer: true } : {}), actions: d.actions })
     if (interactor) interactors.push({ targetId, ...interactor })

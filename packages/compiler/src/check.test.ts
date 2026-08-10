@@ -166,6 +166,47 @@ object "B" { x = speed + 1 }
     expect(r.report).not.toMatch(/no `scene/)
   })
 
+  // Reported from a generated activity: the pieces stopped following the finger during a drag. Two
+  // `object "X"` blocks — the gesture's, carrying `drag` + `x`/`y`, and a skin pass adding a wobble —
+  // and the second REPLACED the first's bindings. Handlers from several blocks already accumulated, so
+  // the same construct behaved two ways for its two halves, and the loss was silent: the interactor
+  // still wrote the variables, nothing read them, `--check` reported a clean program.
+  it('two `object` blocks MERGE their bindings, they do not replace', () => {
+    const src = `size 400 400
+var ix = 0
+var iy = 0
+scene { layer "a" { group "It" at 100,100 { layer "c" { circle 0 0 34 fill #ff0000 } } } }
+object "It" {
+  drag ix, iy
+  x = ix
+  y = iy
+}
+object "It" {
+  dy = 3 * sin(clock)
+}
+`
+    const r = checkProgram(src)
+    expect(r.errors).toBe(0)
+    const item = r.doc!.layers[0].items[0] as { expressions?: Record<string, string> }
+    expect(item.expressions, 'the drag bindings were dropped by the second block').toEqual({
+      x: 'ix', y: 'iy', dy: '3 * sin(clock)',
+    })
+    expect(r.report, 'different channels merge cleanly — nothing to say').toBe('')
+  })
+
+  it('but binding the SAME channel twice warns, because one of them is lost', () => {
+    const src = `size 400 400
+var ix = 0
+scene { layer "a" { group "It" at 100,100 { layer "c" { circle 0 0 34 fill #ff0000 } } } }
+object "It" { x = ix }
+object "It" { x = 42 }
+`
+    const r = checkProgram(src)
+    expect(r.ok).toBe(true) // a warning, not a refusal
+    expect(r.report).toMatch(/binds `x` here and already did on line 4/)
+    expect(r.report).toMatch(/dx.*dy|add to a position/) // it points at the additive way out
+  })
+
   it('every diagnostic carries a scope, a position and a severity', () => {
     const r = checkProgram("this is not flatink at all {{{")
     for (const d of r.diagnostics) {
