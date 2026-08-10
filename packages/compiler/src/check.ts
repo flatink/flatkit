@@ -16,7 +16,7 @@
 //  The CLI calls the same function, so the two cannot drift.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Doc } from '@flatkit/types'
-import { behaviorDiagnostics, duplicateBindingDiagnostics, objectTargetDiagnostics } from '@flatkit/engine/flatFormat'
+import { behaviorDiagnostics, duplicateBindingDiagnostics, objectTargetDiagnostics, sceneOnlyUnitDiagnostics } from '@flatkit/engine/flatFormat'
 import { compileFlatpack, type MediaMap } from './compile'
 import { lintDoc } from './programDoc'
 
@@ -49,7 +49,7 @@ export const formatDiagnostics = (diagnostics: CheckDiagnostic[]): string => dia
 
 /** The two SOURCE-level passes, which read the author's text rather than the compiled Doc. Always errors. */
 function sourceDiagnostics(src: string): CheckDiagnostic[] {
-  return [...behaviorDiagnostics(src), ...objectTargetDiagnostics(src)]
+  return [...behaviorDiagnostics(src), ...objectTargetDiagnostics(src), ...sceneOnlyUnitDiagnostics(src)]
     .map(({ scope, diag }) => ({ scope, line: diag.line, col: diag.col, severity: 'error' as const, message: diag.message }))
 }
 

@@ -27,7 +27,7 @@ import { compileExpr, evalExpr, exprScope } from './expr'
 import { isGroup, isInstance, isText, isImage, isPoseable, isRegion, folderPath } from './layers'
 import { itemBoundsByName } from './groups'
 import type { BBox } from './bbox'
-import { printUnits, parseUnits, type Diagnostic } from './dsl'
+import { printUnits, parseUnits, type Diagnostic, type ScriptUnit } from './dsl'
 import { timelineToUnits, unitsToTimeline, objectToUnits, unitsToObject, functionsToUnits, unitsToFunctions } from './scriptDoc'
 import { providingPackage } from './stdlib'
 
@@ -920,6 +920,43 @@ export function behaviorRegions(src: string): { scope: string; body: string; lin
  *  handlers got a dangling `@name` target that no hit-test ever resolves — the program compiled, ran, and the
  *  animation simply did not exist. It is always a typo or a misconception (a SHAPE or a LAYER named where a
  *  group is required), never intentional → ERROR, and the message names what the author actually hit. */
+/** The `ScriptUnit` kinds `unitsToObject` DROPS: an `object` block carries PER-ITEM behavior, and
+ *  everything below is scene-wide. Each compiled clean and then did nothing at all -- no binding, no
+ *  handler, no trace in the Doc. `when loaded` is the costly one: drawing a hidden value ONCE at start is
+ *  what every guess-the-rule game is built on, and the parser's own unknown-event message lists `loaded`
+ *  among the events an object block accepts. `find` locates the line once the parser has confirmed the
+ *  kind is really there, so a comment or a string that merely reads "every frame" says nothing. */
+const SCENE_ONLY: { kind: (u: ScriptUnit) => boolean; find: RegExp; what: string }[] = [
+  { kind: (u) => u.kind === 'event' && u.event === 'load', find: /^\s*when\s+loaded\b/, what: '`when loaded { … }`' },
+  { kind: (u) => u.kind === 'event' && u.event === 'enterFrame', find: /^\s*every\s+frame\b/, what: '`every frame { … }`' },
+  { kind: (u) => u.kind === 'frameActions', find: /^\s*at\s+frame\b/, what: '`at frame <n> { … }`' },
+  { kind: (u) => u.kind === 'label', find: /^\s*label\b/, what: '`label <n> "…"`' },
+  { kind: (u) => u.kind === 'each', find: /^\s*each\b/, what: '`each "Symbol" as i { … }`' },
+  { kind: (u) => u.kind === 'use', find: /^\s*use\b/, what: '`use "…"`' },
+  { kind: (u) => u.kind === 'func', find: /^\s*fn\b/, what: '`fn …`' },
+  { kind: (u) => u.kind === 'declare', find: /^\s*let\b/, what: '`let …`' },
+]
+
+/** Scene-wide constructs written INSIDE an `object` block -- silently dropped, so ERROR. The message names
+ *  the construct and says where it belongs; the position is the offending LINE, not the block. */
+export function sceneOnlyUnitDiagnostics(src: string): { scope: string; diag: Diagnostic }[] {
+  const out: { scope: string; diag: Diagnostic }[] = []
+  for (const r of behaviorRegions(src)) {
+    if (r.scope === 'scene') continue // there they RUN -- that is the whole point
+    const units = parseUnits(r.body).units
+    const lines = r.body.split('\n')
+    for (const { kind, find, what } of SCENE_ONLY) {
+      if (!units.some(kind)) continue
+      lines.forEach((text, i) => {
+        if (find.test(text))
+          out.push({ scope: r.scope, diag: { line: r.line + i, col: 1, severity: 'error',
+            message: `${what} is scene-wide and does NOTHING inside an \`object\` block -- it is dropped, which is why nothing happened. Move it to the TOP LEVEL of the program, outside any \`object\`. An \`object\` block holds bindings, \`when clicked\`/\`when dropped\` and one interactor.` } })
+      })
+    }
+  }
+  return out.sort((a, b) => a.diag.line - b.diag.line)
+}
+
 /** Two `object "X"` blocks binding the SAME channel: the later one wins and the earlier is lost. Blocks
  *  that bind DIFFERENT channels merge cleanly and say nothing — that is the normal way a skin adds a
  *  wobble to something the rules already move. */

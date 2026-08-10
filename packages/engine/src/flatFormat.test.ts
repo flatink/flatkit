@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { printFlat, parseFlat, parseFlatLib, pathToData, printProgram, parseProgram, printProgramFull, parseProgramFull, behaviorDiagnostics, objectTargetDiagnostics, expandFeedback, type Program } from './flatFormat'
+import { printFlat, parseFlat, parseFlatLib, pathToData, printProgram, parseProgram, printProgramFull, parseProgramFull, behaviorDiagnostics, objectTargetDiagnostics, expandFeedback, sceneOnlyUnitDiagnostics, type Program } from './flatFormat'
 import { parsePathData, circlePath, ellipsePath, rectPath } from './svgPath'
 import { folderPath } from './layers'
 import type { Folder, Group, Image, Instance, Region, SymbolDef, Text } from '@flatkit/types'
@@ -1544,5 +1544,39 @@ describe('flatFormat — param colors in gradient stops + tint', () => {
       { offset: 0, color: '#ffe9a8' },
       { offset: 1, color: '#000000' },
     ])
+  })
+})
+
+// `object "X" { when loaded { … } }` compiles clean and does NOTHING: `unitsToObject` keeps only the
+// per-item events, and drops `load`, `enterFrame`, `at frame` and `each` on the floor. Found while
+// writing a hidden-state mini-game — drawing the hidden value once at start is the one thing every
+// "guess the rule" game needs, and it was silently a no-op. The parser makes it worse: its
+// unknown-event message LISTS `loaded` as valid inside an object block.
+describe('scene-only constructs inside an object block', () => {
+  const scene = 'size 100 100\nscene { layer "a" { group "Box" at 50,50 pivot 0,0 { layer "c" { rect -5 -5 10 10 fill #fff } } } }\n'
+
+  it('flags `when loaded` and names the fix', () => {
+    const d = sceneOnlyUnitDiagnostics(scene + 'object "Box" {\n  when loaded { x = 1 }\n}\n')
+    expect(d).toHaveLength(1)
+    expect(d[0].diag.severity).toBe('error')
+    expect(d[0].diag.message).toMatch(/when loaded/)
+    expect(d[0].diag.message).toMatch(/top level|outside/i)
+    expect(d[0].scope).toBe('object "Box"')
+  })
+
+  it('flags `every frame`, `at frame` and `each` too', () => {
+    const d = sceneOnlyUnitDiagnostics(scene + 'object "Box" {\n  every frame { x = 1 }\n  at frame 3 { x = 2 }\n}\n')
+    expect(d.map((e) => e.diag.message).join(' ')).toMatch(/every frame/)
+    expect(d.map((e) => e.diag.message).join(' ')).toMatch(/at frame/)
+    expect(d).toHaveLength(2)
+  })
+
+  it('says nothing about the same constructs at the top level, where they run', () => {
+    expect(sceneOnlyUnitDiagnostics(scene + 'when loaded { }\nevery frame { }\nobject "Box" {\n  x = 1\n}\n')).toEqual([])
+  })
+
+  it('points at the offending line, not the block', () => {
+    const d = sceneOnlyUnitDiagnostics(scene + 'object "Box" {\n  x = 1\n  when loaded { x = 2 }\n}\n')
+    expect(d[0].diag.line).toBe(5) // `when loaded`, not the `object` line
   })
 })
