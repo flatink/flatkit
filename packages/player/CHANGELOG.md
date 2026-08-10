@@ -1,5 +1,29 @@
 # @flatkit/player
 
+## 0.29.1
+
+### Patch Changes
+
+- [`83bea35`](https://github.com/flatink/flatkit/commit/83bea35551dd84ab48cba834df815502a9766664) Thanks [@kaelhem](https://github.com/kaelhem)! - Interactor options are one per LINE, and the error now says so.
+
+  `dragX cx { confine to Rail  snap 26 }` on a single line failed with `end of line expected` at a column,
+  which names nothing. Four reference listings (flatink-core, flatink-lite, role-coder, behavior-and-interactions)
+  separated the options with a decorative middle dot, so that is exactly what a reader -- or a model prompted
+  with them -- writes. The listings now show the one-per-line form, and a run-on line names the rule.
+
+- [`8f9837e`](https://github.com/flatink/flatkit/commit/8f9837ee38755d4e1cf1836f021d3089a115b710) Thanks [@kaelhem](https://github.com/kaelhem)! - Scene-wide constructs inside an `object` block were dropped in silence -- now an error.
+
+  `object "X" { when loaded { … } }` compiled clean and did nothing: `unitsToObject` keeps the per-item
+  events and drops `load`, `enterFrame`, `at frame`, `label`, `each`, `use`, `fn` and `let` on the floor.
+  The parser made it worse -- its unknown-event message lists `loaded` among the events an object block
+  accepts. `when loaded` is the costly one: drawing a hidden value ONCE at start (`secret = floor(random() *
+3)`) is what every guess-the-rule activity is built on, and it was a no-op with nothing on screen to say
+  so. `--check` now names the construct and says to move it to the top level.
+
+- Updated dependencies [[`83bea35`](https://github.com/flatink/flatkit/commit/83bea35551dd84ab48cba834df815502a9766664), [`8f9837e`](https://github.com/flatink/flatkit/commit/8f9837ee38755d4e1cf1836f021d3089a115b710)]:
+  - @flatkit/types@0.29.1
+  - @flatkit/engine@0.29.1
+
 ## 0.29.0
 
 ### Minor Changes
