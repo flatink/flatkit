@@ -119,7 +119,7 @@ export type BindChannel = ExprChannel | OffsetChannel
 /** A STATEFUL channel modifier: instead of a pure expression, the channel INTEGRATES over time toward
  *  `target` (a normal expression). State lives per (instance, channel) in the player, advanced at a fixed
  *  step, independent of `onEnterFrame`/input; on random access (seek/render) it snaps to `target` (the rest
- *  pose). Pure & bounded — cannot diverge. See docs/design-channel-modifiers-spike.md. */
+ *  pose). Pure and bounded by construction — it cannot diverge. */
 export type ChannelModifier =
   | { kind: 'smooth'; target: string; k: number } //                       1st-order lag (exponential approach)
   | { kind: 'spring'; target: string; stiffness: number; damping: number } // 2nd-order spring (overshoot/settle)

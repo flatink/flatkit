@@ -1,3 +1,4 @@
+<!-- english-check-ignore-file — the sample string is deliberately accented: it is what this page is about (an embedded face rendering accented glyphs). -->
 # Embedding the player: loading embedded fonts
 
 A `.flatink` can **embed its fonts** so a deck is self-contained:

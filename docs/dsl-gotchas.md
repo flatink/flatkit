@@ -48,7 +48,7 @@
   - `circle <cx> <cy> <r>`
   - `ellipse <cx> <cy> <rx> <ry>`
   - `rect <x> <y> <w> <h>` · `… <r>` (uniform rounded corners) · `… <rx> <ry>`
-  No more hand-computing the k = 0.5523·r Bézier constant.
+  No more hand-computing the k = 0.5523·r Bezier constant.
 - **`filter` on a path**: accepted (`path "…" fill #000 filter glow 6 #fff`). No need to wrap
   in a `group` just to add a shadow/glow. (Also works on group/image/text.)
 - **`linear(angle, …)` gradient**: `0` = → (left to right), `90` = ↓ (top to bottom).

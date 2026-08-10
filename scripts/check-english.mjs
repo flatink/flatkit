@@ -10,7 +10,10 @@ import { dirname, extname, join, relative } from 'node:path'
 
 const SELF = fileURLToPath(import.meta.url)
 const ROOT = dirname(dirname(SELF))
-const SCAN_DIRS = ['packages', 'scripts']
+// Everything PUBLIC must be English. `docs` was left out of the scan for a long time and three whole
+// French design notes accumulated there unnoticed — they were internal working material and now live in
+// the gitignored `private/`. Scanning docs is what keeps that from happening again.
+const SCAN_DIRS = ['packages', 'scripts', 'docs']
 const EXTS = new Set(['.ts', '.tsx', '.mjs', '.js', '.md'])
 // `packages/compiler/docs` is a COPY of /docs made by sync-docs.mjs at build time -- a generated
 // artifact like `dist`, and its source is the same file. Scanning it would flag the same line twice.
