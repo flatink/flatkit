@@ -71,7 +71,8 @@ Actions (one per line): `<var> = <expr>` · `arr[i] = <expr>` · `if/else if/els
 `repeat i from a to b {}` · `play`/`pause` · `go to frame n [and play]` · `send "evt" [, <expr> | , text("id") | , { a = <expr>, b }]` · `sound "id"`.
 Drag/interactors (write into your vars; all take `{ enabled <expr> }`):
 ```
-drag x, y [{ confine to <Zone> · snap <grid> }]    // then USE them: x = px  y = py
+drag x, y [{ confine to <Zone>
+             snap <grid> }]   // ONE OPTION PER LINE. Then USE them: x = px, y = py
 turn <angle> around x,y    ·    trace <progress> along <Group>    ·    reveal <progress>
 link endX,endY,target to <Group>     // target = hit index 1..n (0=none), WORLD coords
 ```

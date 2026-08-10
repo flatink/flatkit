@@ -76,7 +76,10 @@ Functions: `fn dist(ax,ay,bx,by) = hypot(ax-bx, ay-by)` (value) · `fn reset() {
 
 ```
 object "Piece" {
-  drag px, py { confine to Board · snap 20 }     // dragX / dragY for one axis
+  drag px, py {
+    confine to Board
+    snap 20
+  }                                               // one option per LINE. dragX / dragY for one axis
   x = px   y = py                                 // USE the vars it writes
   when dropped on Slot at pointer { placed = 1 }
 }

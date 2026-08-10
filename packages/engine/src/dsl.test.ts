@@ -655,3 +655,25 @@ describe('dsl — setParam (Name.param = value)', () => {
     expect(r.units[0]).toEqual({ kind: 'event', event: 'click', body: [{ do: 'setParam', target: 'Gauge', param: 'level', value: 'score / 100' }] })
   })
 })
+
+// Found while writing a real mini-game: `dragX cx { confine to Rail  snap 26 }` on one line. The
+// reference listings separate the options with a decorative `·`, so that is what a reader — or a model
+// prompted with them — writes, and `end of line expected` at a column says nothing about the rule.
+describe('interactor options are statements, one per line', () => {
+  it('a run-on line names the rule instead of pointing at a column', () => {
+    const { diagnostics } = parseUnits('dragX cx { confine to Rail  snap 26 }\n')
+    expect(diagnostics.length).toBeGreaterThan(0)
+    expect(diagnostics[0].message).toMatch(/one option per LINE/)
+    expect(diagnostics[0].message).toMatch(/confine|snap|enabled/)
+  })
+
+  it('one per line parses clean', () => {
+    const { diagnostics } = parseUnits('dragX cx {\n  confine to Rail\n  snap 26\n}\n')
+    expect(diagnostics).toEqual([])
+  })
+
+  it('a genuine trailing-token error still says `end of line expected`', () => {
+    const { diagnostics } = parseUnits('x = 1 nonsense\n')
+    expect(diagnostics.map((d) => d.message).join(' ')).not.toMatch(/one option per LINE/)
+  })
+})

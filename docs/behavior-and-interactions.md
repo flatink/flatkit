@@ -115,7 +115,15 @@ object "Piece" {
 ```
 
 - `drag x, y` / `dragX x` / `dragY y` — the gesture writes the position into your variables.
-- `{ confine to <Zone> }` clamp · `{ snap <grid> }` pixel-snap · `{ enabled <expr> }` active only while the expression ≠ 0 (a dynamic lock — no ternary needed).
+- **One option per LINE** inside the block — they are statements, not a comma list:
+  ```
+  drag px, py {
+    confine to Board
+    snap 20
+    enabled locked == 0
+  }
+  ```
+  `confine to <Zone>` clamps to a named item, `snap <grid>` snaps in pixels, `enabled <expr>` is active only while the expression is not 0 (a dynamic lock — no ternary needed).
 - ⚠️ **`enabled` gates the GESTURE, not the handlers.** Once it is off the object stops being draggable, but
   `when pressed` / `when released` / `when clicked` **still fire** on it. Guard the handler body yourself
   (`when released { if done == 0 { … } }`) whenever it must run only while the gesture is live. (A `link`'s

@@ -171,7 +171,9 @@ Actions (one per line): `<var> = <expr>` · `arr[i] = <expr>` · `if/else if/els
 
 Drag & interactors (each writes into your vars; all accept `{ enabled <expr> }`):
 ```
-drag x, y [{ confine to <Zone> · snap <grid> · enabled <expr> }]   // dragX / dragY too
+drag x, y [{ confine to <Zone>
+             snap <grid>
+             enabled <expr> }]   // ONE OPTION PER LINE. dragX / dragY too
 turn    <angle> around <x>,<y> [{ snap <deg> }]    // → <angle> in RADIANS → rotation = <angle> directly
 turnDeg <angle> around <x>,<y> [{ snap <deg> }]    // → <angle> in DEGREES → pair with rotationDeg = <angle>
 trace <progress> along <Group> [{ tolerance <px> }]// follow a path → 0..1 monotone

@@ -207,6 +207,9 @@ const stripComment = (s: string) => {
 
 type Mark = { i: number; line: number; col: number }
 
+/** Option keywords of an interactor block — used to explain a run-on line instead of naming a column. */
+const INTERACTOR_SLOT = /^[^\n]*\b(confine|snap|enabled)\b/
+
 class Parser {
   private i = 0
   private line = 1
@@ -415,7 +418,10 @@ class Parser {
       return
     }
     if (c === '}') return
-    this.err('end of line expected')
+    // Inside an interactor block the options are STATEMENTS, one per line — but the reference listings
+    // separate them with a decorative `·`, so a reader writes `{ confine to Zone  snap 20 }` on one
+    // line and gets `end of line expected` pointing at a column that says nothing about the rule.
+    this.err(INTERACTOR_SLOT.test(this.s.slice(this.i, this.s.indexOf('\n', this.i) + 1 || undefined)) ? 'one option per LINE inside an interactor block — `confine to …`, `snap …` and `enabled …` are statements, not a comma list. Put each on its own line.' : 'end of line expected')
     this.skipLine()
   }
 
