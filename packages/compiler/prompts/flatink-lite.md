@@ -75,6 +75,8 @@ drag x, y [{ confine to <Zone>
              snap <grid> }]   // ONE OPTION PER LINE. Then USE them: x = px, y = py
 turn <angle> around x,y    ·    trace <progress> along <Group>    ·    reveal <progress>
 link endX,endY,target to <Group>     // target = hit index 1..n (0=none), WORLD coords
+  // link draws NO thread. A bar drawn from its own origin, then:
+  //   rotation = angle(srcX, srcY, endX, endY)   scaleX = dist(srcX, srcY, endX, endY) / <drawn length>
 ```
 Self-state & feedback: `self.hovered self.grabbed self.pressed` (0/1) ·
 `feedback lift tilt dim shake(<expr>)`.

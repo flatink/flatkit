@@ -181,6 +181,45 @@ reveal <progress> [{ brush <px> }]                 // scratch/wipe → 0..1 cumu
 link  <endX>,<endY>,<target> to <Group>            // elastic thread → target = hit index 1..n (0=none)
 ```
 
+**`link` gives you the end point and the target index -- it does NOT draw the thread.** Nobody writes
+anything but these two lines, so here they are, as a program that compiles:
+
+```flatink
+size 480 320
+use "gesture"     // angle(cx, cy, px, py) -> radians
+use "collision"   // dist(ax, ay, bx, by)  -> length
+var ex = 0
+var ey = 0
+var hit = 0
+
+scene {
+  layer "fils" {
+    // Drawn FROM its own origin: scaleX stretches the far end, not both ends.
+    group "Fil" at 90,160 pivot 0,0 { layer "c" { rect 0 -1 100 2 fill #3355ff } }
+  }
+  layer "jeu" {
+    group "Mot" at 90,160 pivot 0,0 hitbox 60 40 { layer "c" { circle 0 0 18 fill #3355ff } }
+    group "Cibles" at 0,0 pivot 0,0 {
+      layer "c" {
+        group "C1" at 380,100 pivot 0,0 hitbox 60 40 { layer "c" { circle 0 0 18 fill #cc8844 } }
+        group "C2" at 380,220 pivot 0,0 hitbox 60 40 { layer "c" { circle 0 0 18 fill #cc8844 } }
+      }
+    }
+  }
+}
+
+object "Mot" { link ex, ey, hit to Cibles }
+
+object "Fil" {
+  opacity  = self.grabbed                  // only while the thread is being pulled
+  rotation = angle(90, 160, ex, ey)
+  scaleX   = dist(90, 160, ex, ey) / 100   // 100 = the bar's DRAWN length
+}
+```
+
+Two things make it work: the bar is drawn **from its own origin**, and the divisor is its drawn length.
+With the source at a variable position, replace the two literals with its coordinates.
+
 State & helpers:
 ```
 var x = 0    var arr = [0,0,0]    var z = fill(8, 0)     // runtime state (arrays via fill)
