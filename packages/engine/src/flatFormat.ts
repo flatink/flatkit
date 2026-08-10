@@ -1107,6 +1107,10 @@ class FlatParser {
       // layer was expected — and a bare `"layer" expected, "dash" found` reads as if `dash` did not
       // exist, which sent an author back to the docs that document it correctly. Name the rule instead.
       if (STROKE_OPTIONS.has(found)) throw new Error(`"${found}" belongs to \`stroke\` and must come directly after it — write \`stroke <paint> <width> [cap …] [join …] [miter n] [dash a,b]\` with no other attribute in between (\`nofill stroke #888 2 dash 6,5\`, not \`stroke #888 2 nofill dash 6,5\`)`)
+      // `#` opens a COLOUR, and a bare one lands wherever a comment was intended. It survives the header
+      // half of a program and breaks in the composition half, on a message about layers that points
+      // nowhere near it — so name the character rather than the statement it displaced.
+      if (found === '#') throw new Error('"#" opens a colour (`#ffcc00`), and this one starts nothing — if it was meant as a comment, FlatInk comments with `//` to end of line, everywhere')
       throw new Error(`"${v}" expected, "${found}" found`)
     }
     this.p++

@@ -6,30 +6,29 @@ and the declarative factoring sugar. You wire behavior to named scene items.
 **Output contract:** a `.flatink` program. Emit **only the code** in a fenced block. Verify and test
 headlessly (no browser):
 ```
-flatc game.flatink --check                              # semantic + layout lint (exit ≠0 on ERROR)
-flatc game.flatink --play --script gestures.json --trace # replay gestures, see sends + var diffs
+flatc game.flatink --check                              // semantic + layout lint (exit ≠0 on ERROR)
+flatc game.flatink --play --script gestures.json --trace // replay gestures, see sends + var diffs
 ```
 
 ## File shape — TWO grammars, one file
 
 ```
-size 480 320              # REQUIRED, first line
+size 480 320              // REQUIRED, first line
 background #0a0e1c
-use "collision"           # stdlib: collision | easing | gesture | feedback
-var score = 0             # global runtime state (top of file)
+use "collision"           // stdlib: collision | easing | gesture | feedback
+var score = 0             // global runtime state (top of file)
 
-scene {                   # ── HALF 1: composition (what you see) ──
+scene {                   // -- HALF 1: composition (what you see) --
   layer "game" {
-    circle 240 160 40 fill #ffcc00 as "Sun"   # `as` names an item for behavior
-    instance "Card" as "C1" at 100,100
+    group "Sun" at 240,160 { layer "art" { circle 0 0 40 fill #ffcc00 } }
   }
 }
 
-object "Sun" {            # ── HALF 2: behavior, attaches by name ──
+object "Sun" {            // -- HALF 2: behavior, attaches by name --
   when clicked { score = score + 1 }
-  rotation = time * 90    # channel binding, evaluated every frame
+  rotationDeg = clock * 90   // channel binding, evaluated every frame
 }
-every frame { if (score >= 10) { send "win" } }
+every frame { if score >= 10 { send "win" } }
 ```
 **Drawing keywords (`circle`, `path`, `group`…) live ONLY in `scene`. Logic keywords (`var`, `when`,
 `object`, `fn`, `if`) live ONLY after it.** They don't share a grammar.
@@ -37,16 +36,16 @@ every frame { if (score >= 10) { send "win" } }
 ## State, events, actions
 
 ```
-var score = 0    var slots = [0,0,0]    var seen = fill(8, 0)     # arrays via literal or fill(n,v)
+var score = 0    var slots = [0,0,0]    var seen = fill(8, 0)     // arrays via literal or fill(n,v)
 ```
 Events (in `object "Name"`): `when clicked | hovered | unhovered | pressed | released | dragged | held
 | dropped on <Zone> [at pointer]`. Scene-wide: `when loaded`, `every frame`, `at frame <n>`.
 
 Actions — **one per line**:
 ```
-<var> = <expr>          arr[<expr>] = <expr>          # `set` keyword optional; nested indices ok
+<var> = <expr>          arr[<expr>] = <expr>          // `set` keyword optional; nested indices ok
 if <c> { … } [else if <c> { … }] [else { … }]
-repeat <n> times { … }          repeat i from a to b { … }      # RUNTIME loops (bounded)
+repeat <n> times { … }          repeat i from a to b { … }      // RUNTIME loops (bounded)
 play   pause   go to frame <n> [and play|and pause]   go to "<label>" [and play]
 send "<evt>" [, <expr> | , text("<id>") | , { a = <expr>, b }]   sound "<assetId>"   <fn>(<args>)
 ```
@@ -57,14 +56,14 @@ Drive `x y scaleX scaleY rotation opacity` (absolute) every frame, plus `dx dy` 
 offsets, `pos = at + (dx, dy)`:
 ```
 object "Needle" {
-  rotation = atan2(mouse.y - 160, mouse.x - 240)   # RADIANS
+  rotation = atan2(mouse.y - 160, mouse.x - 240)   // RADIANS
   opacity  = lit ? 1 : 0.3
-  dx = 30 * sin(clock)                             # sways AROUND its declared at — no base to re-inject
+  dx = 30 * sin(clock)                             // sways AROUND its declared at — no base to re-inject
 }
 ```
 Chase a target with inertia instead of snapping to it:
 ```
-object "Dial" { spring rotation = aim { stiffness 0.08 damping 0.86 } }   # smooth y = target { k 0.15 }
+object "Dial" { spring rotation = aim { stiffness 0.08 damping 0.86 } }   // smooth y = target { k 0.15 }
 ```
 Pure numeric expressions (no booleans — logic/compares yield `1`/`0`). Operators `?: || && == != < >
 <= >= + - * / % - ! . [] fn()`. Built-ins: `sin cos tan atan2 abs sqrt pow exp log floor ceil round
@@ -77,15 +76,15 @@ Functions: `fn dist(ax,ay,bx,by) = hypot(ax-bx, ay-by)` (value) · `fn reset() {
 
 ```
 object "Piece" {
-  drag px, py { confine to Board · snap 20 }     # dragX / dragY for one axis
-  x = px   y = py                                 # USE the vars it writes
+  drag px, py { confine to Board · snap 20 }     // dragX / dragY for one axis
+  x = px   y = py                                 // USE the vars it writes
   when dropped on Slot at pointer { placed = 1 }
 }
-turn    <angle> around x,y [{ snap <deg> }]       # → RADIANS → rotation = <angle> directly
-turnDeg <angle> around x,y [{ snap <deg> }]       # → DEGREES → pair with rotationDeg = <angle>
-trace <progress> along <Group> [{ tolerance <px> }]  # follow path → 0..1 monotone
-reveal <progress> [{ brush <px> }]                # scratch/wipe grabbed area → 0..1 cumulative
-link  endX,endY,target to <Group>                 # elastic thread; target = hit index 1..n (0=none), WORLD coords
+turn    <angle> around x,y [{ snap <deg> }]       // → RADIANS → rotation = <angle> directly
+turnDeg <angle> around x,y [{ snap <deg> }]       // → DEGREES → pair with rotationDeg = <angle>
+trace <progress> along <Group> [{ tolerance <px> }]  // follow path → 0..1 monotone
+reveal <progress> [{ brush <px> }]                // scratch/wipe grabbed area → 0..1 cumulative
+link  endX,endY,target to <Group>                 // elastic thread; target = hit index 1..n (0=none), WORLD coords
 ```
 
 ## Feedback (reactions without handlers)
@@ -93,7 +92,7 @@ link  endX,endY,target to <Group>                 # elastic thread; target = hit
 ```
 object "Tile" {
   x = tx   y = ty
-  feedback lift tilt dim shake(wrongZone)   # lift=hover grow · tilt=grab squash · dim=hover dim · shake=wobble
+  feedback lift tilt dim shake(wrongZone)   // lift=hover grow · tilt=grab squash · dim=hover dim · shake=wobble
 }
 ```
 Or read state directly: `scaleX = self.hovered ? 1.06 : 1`, `scaleY = self.grabbed ? 0.94 : 1`.
@@ -102,19 +101,19 @@ Or read state directly: `scaleX = self.hovered ? 1.06 : 1`, `scaleY = self.grabb
 
 ```
 def gap = 70
-repeat i from 0 to 4 { circle $(40 + i*gap) 80 6 fill #ffd98a }      # $(…) = compile-time math
+repeat i from 0 to 4 { circle $(40 + i*gap) 80 6 fill #ffd98a }      // $(…) = compile-time math
 symbol "Key"(label) { layer "c" { rect -28 -28 56 56 fill #e8e8e8
   text "$(label)" font "sans-serif" size 24 align center line 1.2 color #111 box 56 56 } }
 scene { layer "Pad" {
   repeat i from 0 to 8 { instance "Key"($(i+1)) as "K$(i)" at $(70 + (i%3)*80),$(80 + floor(i/3)*80) }
 } }
-each "Key" as i { when clicked { input = input*10 + (i+1) } }        # one handler per generated instance
+each "Key" as i { when clicked { input = input*10 + (i+1) } }        // one handler per generated instance
 ```
 `match` factors a whole drag+drop matching activity:
 ```
 match Word1, Word2 onto Good, Bad {
   correct Word1 -> Good, Word2 -> Bad
-  lock on wrong                              # optional; absent = retryable
+  lock on wrong                              // optional; absent = retryable
   on correct as it { send "found", text(it) }
   on done { send "win" }
 }

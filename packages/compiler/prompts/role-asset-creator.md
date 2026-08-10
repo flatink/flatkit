@@ -11,10 +11,10 @@ Author verifies with `flatc --preview Asset.flat --render -o out.png`.
 
 ```
 symbol "Mug" {
-  layer "back" { ellipse 0 30 26 8 fill #00000022 }     # layers stack bottom → top
+  layer "back" { ellipse 0 30 26 8 fill #00000022 }     // layers stack bottom → top
   layer "body" {
     path "M-22 -28 L22 -28 L18 28 L-18 28 Z" fill #e8553a stroke #b23a24 3 join round
-    path "M22 -18 a14 14 0 0 1 0 28" nofill stroke #b23a24 5 cap round   # handle
+    path "M22 -18 a14 14 0 0 1 0 28" nofill stroke #b23a24 5 cap round   // handle
   }
 }
 ```
@@ -26,20 +26,20 @@ symbol "Mug" {
 
 ```
 circle  cx cy r              ellipse cx cy rx ry
-rect    x y w h [r | rx ry]  path "M… L… C… Z"      # raw SVG path data
+rect    x y w h [r | rx ry]  path "M… L… C… Z"      // raw SVG path data
 text    "Hi" font "sans-serif" size 24 align center line 1.2 color #fff box 200 40 [bold] [italic]
-image   "id" w h at -w/2,-h/2     # needs: asset "id" "file.png" image  (declared in the .flatink that uses it)
+image   "id" w h at -w/2,-h/2     // needs: asset "id" "file.png" image  (declared in the .flatink that uses it)
 ```
 
 Paint & finish:
 ```
 fill #rrggbb | nofill
 stroke #rrggbb <width> [cap butt|round|square] [join round|bevel|miter] [miter n] [dash a,b]
-opacity 0..1                                          # or 8-digit hex alpha #rrggbbaa
-fill linear(90, 0:#bdecff, 1:#2f8fe0)                 # angle 0 = →, 90 = ↓
-fill radial(0.5, 0.5, 0.5, 0:#fff, 1:#000)            # cx, cy, r in 0..1, then stops
+opacity 0..1                                          // or 8-digit hex alpha #rrggbbaa
+fill linear(90, 0:#bdecff, 1:#2f8fe0)                 // angle 0 = →, 90 = ↓
+fill radial(0.5, 0.5, 0.5, 0:#fff, 1:#000)            // cx, cy, r in 0..1, then stops
 filter glow <blur> <color> | shadow <dx> <dy> <blur> <color> | blur <r> | adjust <b> <c> <s> <h>
-tint <color> <amount(0..1)>      nohit                # nohit = drawn but click-through
+tint <color> <amount(0..1)>      nohit                // nohit = drawn but click-through
 ```
 
 ## Repetition without copy-paste (compile-time)
@@ -47,7 +47,7 @@ tint <color> <amount(0..1)>      nohit                # nohit = drawn but click-
 ```
 def n = 6
 layer "rays" {
-  repeat i from 0 to n { rect -2 -40 4 16 fill #ffd24d }   # $(…) interpolates compile-time math
+  repeat i from 0 to n { rect -2 -40 4 16 fill #ffd24d }   // $(…) interpolates compile-time math
 }
 ```
 `$(expr)` injects arithmetic into any coordinate: `circle $(60 + i*40) 80 6 …`. Nested loops = grids.
@@ -64,8 +64,8 @@ symbol "Boat" {
     bool  flag = true              "Show the pennant"
   }
   layer "body" {
-    path "M-40 0 L40 0 L24 20 L-24 20 Z" fill hull       # a color param used as a fill…
-    path "M0 -50 L0 0 L26 -10 Z"          fill sail       # …or stroke <param> <width>
+    path "M-40 0 L40 0 L24 20 L-24 20 Z" fill hull       // a color param used as a fill…
+    path "M0 -50 L0 0 L26 -10 Z"          fill sail       // …or stroke <param> <width>
   }
 }
 ```

@@ -222,7 +222,14 @@ export function sugarCard(opts: GestureOptions & { document?: { width: number; h
     `A row of targets fits about ${Math.floor(doc.width / (theme.size('target').w + 20))} across; a row of items about ${Math.floor(doc.width / (theme.size('item').w + 20))}.`,
     'Leave a gap the size of the thing itself between two centres.',
     '',
-    '## Escape hatch',
-    'raw { … } passes FlatInk through verbatim, beside the block. Use it for anything the block cannot say.',
+    '## Escape hatch — three forms, and they are not interchangeable',
+    'The block draws NOTHING beyond the pieces above. Everything else goes through one of these:',
+    '',
+    'raw scene under { layer "bg" { … } }   <- BACKGROUND and decor. Drawn BEHIND the activity.',
+    'raw scene { layer "banner" { … } }     <- overlays drawn ON TOP: a title, a frame, a caption.',
+    'raw { var lives = 3   object "X" { … } }  <- header and behavior: var, fn, asset, object blocks.',
+    '',
+    'A `layer` written in a plain `raw { … }` lands OUTSIDE the scene and is a compile error — anything',
+    'that is drawn belongs in one of the two `raw scene` forms. Either may be written on one line.',
   ].join('\n')
 }

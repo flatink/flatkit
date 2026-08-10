@@ -92,41 +92,70 @@ export const GESTURES: Gesture[] = gestures()
 /** A block opens at column 0: `<keyword> <name> {`. The name may be quoted (so it can hold spaces). */
 const BLOCK_OPEN = /^([a-zA-Z][\w-]*)[ \t]+(?:"([^"]+)"|([^\s{"]+))[ \t]*\{/m
 
-/** `raw { … }` (both braces at column 0) passes through VERBATIM — the escape hatch, kept deliberately.
- *  A sugar that cannot be opted out of stops being scaffolding and becomes a cage: the previous
- *  generation of this idea flattened every activity into the same shape until the template was pulled
- *  apart. Anything a gesture writes must remain writable by hand, beside it. */
-const RAW_BLOCK = /^raw[ \t]*\{\r?\n([\s\S]*?)\r?\n\}/gm
+/**
+ * The escape hatch, in three forms. A sugar that cannot be opted out of stops being scaffolding and
+ * becomes a cage: the previous generation of this idea flattened every activity into the same shape
+ * until the template was pulled apart. Anything a gesture writes must remain writable by hand, beside it.
+ *
+ *   raw { … }              verbatim at TOP LEVEL — header (`asset`, `var`, `fn`) and `object` blocks
+ *   raw scene { … }        verbatim inside the generated scene, ON TOP of it — banners, overlays
+ *   raw scene under { … }  verbatim inside the generated scene, UNDERNEATH it — backgrounds
+ *
+ * `under` is not a nicety. A gesture emits no appearance by design, so a background is the FIRST thing
+ * any skin needs — and spliced on top, an opaque full-canvas rect hides the entire activity while
+ * `checkProgram` reports a clean program. Ten activities shipped that way, read as broken assets.
+ */
+const RAW_OPEN = /^raw(?:[ \t]+scene(?:[ \t]+(under))?)?[ \t]*\{/gm
 
-/** `raw scene { … }` — verbatim INSIDE the expansion's `scene`. A gesture emits no appearance by
- *  design, so this is the only route decor has: a second top-level `scene` block is a compile error,
- *  and without this the escape hatch cannot reach the one place a background has to sit. */
-const RAW_SCENE = /^raw[ \t]+scene[ \t]*\{\r?\n([\s\S]*?)\r?\n\}/gm
+type RawParts = { top: string[]; over: string[]; under: string[]; rest: string }
 
-const unwrapRaw = (src: string): string =>
-  src.replace(RAW_BLOCK, (_m, body: string) => `// -- raw (escape hatch: verbatim FlatInk) --\n${body}`)
-
-/** Pull every `raw scene { … }` body out of `text`, returning them and the text without them. */
-function takeRawScene(text: string): { scene: string[]; rest: string } {
-  const scene: string[] = []
-  const rest = text.replace(RAW_SCENE, (_m, body: string) => { scene.push(body); return '' })
-  return { scene, rest }
+/**
+ * Pull every `raw …` block out of `text`. Brace-counted rather than line-anchored, so the one-line form
+ * works — the README and `sugarCard()` both write `raw { … }` on one line, and a regex demanding a
+ * newline after `{` left the keyword to travel on to the compiler, which reported `unexpected statement
+ * "raw"`: a sugar defect described in FlatInk's vocabulary, the very thing `UnknownSugarError` fixed.
+ */
+function takeRaw(text: string): RawParts {
+  const out: RawParts = { top: [], over: [], under: [], rest: '' }
+  let cursor = 0
+  RAW_OPEN.lastIndex = 0
+  for (let m = RAW_OPEN.exec(text); m; m = RAW_OPEN.exec(text)) {
+    const openBrace = m.index + m[0].length - 1
+    const end = blockEnd(text, openBrace)
+    if (end < 0) break // unbalanced: leave it alone, the compiler will say so
+    const body = text.slice(openBrace + 1, end).replace(/^\r?\n/, '').replace(/\r?\n[ \t]*$/, '')
+    const bucket = m[0].includes('scene') ? (m[1] ? out.under : out.over) : out.top
+    bucket.push(body)
+    out.rest += text.slice(cursor, m.index)
+    cursor = end + 1
+    RAW_OPEN.lastIndex = cursor
+  }
+  out.rest += text.slice(cursor)
+  return out
 }
 
-/** Insert lines just before the closing brace of the expansion's `scene { … }`. */
-function spliceIntoScene(flatink: string, body: string[]): string {
-  if (!body.length) return flatink
+/** Index of the `}` closing the brace at `openBrace`, or -1 if unbalanced. */
+function blockEnd(text: string, openBrace: number): number {
+  let depth = 1
+  for (let i = openBrace + 1; i < text.length; i++) {
+    if (text[i] === '{') depth++
+    else if (text[i] === '}' && --depth === 0) return i
+  }
+  return -1
+}
+
+const RAW_NOTE = '// -- raw (escape hatch: verbatim FlatInk) --'
+
+/** Splice verbatim bodies into the generated `scene`: `under` first (drawn behind), `over` last. */
+function spliceIntoScene(flatink: string, under: string[], over: string[]): string {
+  if (!under.length && !over.length) return flatink
   const at = flatink.search(/^scene[ \t]*\{/m)
   if (at < 0) throw new Error('`raw scene { … }` has nowhere to go: this expansion emits no `scene` block — use a plain `raw { … }` instead.')
   const openBrace = flatink.indexOf('{', at)
-  let depth = 1
-  let i = openBrace + 1
-  for (; i < flatink.length && depth > 0; i++) {
-    if (flatink[i] === '{') depth++
-    else if (flatink[i] === '}') depth--
-  }
-  const close = i - 1
-  return `${flatink.slice(0, close)}  // -- raw scene (escape hatch: verbatim, inside the generated scene) --\n${body.join('\n')}\n${flatink.slice(close)}`
+  const close = blockEnd(flatink, openBrace)
+  const head = under.length ? `\n  // -- raw scene under (verbatim, drawn BEHIND the gesture) --\n${under.join('\n')}` : ''
+  const tail = over.length ? `  // -- raw scene (verbatim, drawn ON TOP of the gesture) --\n${over.join('\n')}\n` : ''
+  return `${flatink.slice(0, openBrace + 1)}${head}${flatink.slice(openBrace + 1, close)}${tail}${flatink.slice(close)}`
 }
 
 /** Raised when a source holds more than one gesture block. */
@@ -177,18 +206,26 @@ export function desugar(src: string, opts: DesugarOptions = {}): DesugarResult {
     if (other) throw new MultipleGesturesError(gesture.keyword, other)
 
     const { flatink, meta } = gesture.expand(name, body, doc)
-    const head = takeRawScene(before)
-    const tail = takeRawScene(after)
-    const expanded = spliceIntoScene(unwrapRaw(flatink), [...head.scene, ...tail.scene])
-    const whole = [unwrapRaw(head.rest).trim(), expanded, unwrapRaw(tail.rest).trim()].filter(Boolean).join('\n\n')
+    const head = takeRaw(before)
+    const tail = takeRaw(after)
+    const expanded = spliceIntoScene(flatink, [...head.under, ...tail.under], [...head.over, ...tail.over])
+    const topLevel = (p: RawParts) => [p.rest.trim(), ...(p.top.length ? [RAW_NOTE, ...p.top] : [])].filter(Boolean).join('\n')
+    const whole = [topLevel(head), expanded, topLevel(tail)].filter(Boolean).join('\n\n')
     return { flatink: ensureHeader(whole, doc), kind: gesture.keyword, expanded: true, meta }
   }
   // A keyword that opens a block at column 0 and is NOT a FlatInk statement is a sugar block we do not
   // know — never a program. Say so here, with the list, rather than downstream in another vocabulary.
-  if (keyword && !FLATINK_BLOCKS.has(keyword)) throw new UnknownSugarError(keyword, gestures.map((g) => g.keyword))
+  // `raw` is this package's own keyword, handled below.
+  if (keyword && keyword !== 'raw' && !FLATINK_BLOCKS.has(keyword)) throw new UnknownSugarError(keyword, gestures.map((g) => g.keyword))
 
-  const out = unwrapRaw(src)
-  return { flatink: out, kind: out === src ? null : 'raw', expanded: out !== src, meta: null }
+  // No gesture: plain FlatInk, plus any `raw { … }` the author used on its own. `raw scene` has no
+  // generated scene to splice into here, so it would silently vanish — say so instead.
+  const parts = takeRaw(src)
+  if (parts.over.length || parts.under.length) {
+    throw new Error('`raw scene { … }` needs a gesture block to splice into — this source has none. Write a plain `scene { … }` yourself.')
+  }
+  const out = [parts.rest.trim(), ...(parts.top.length ? [RAW_NOTE, ...parts.top] : [])].filter(Boolean).join('\n')
+  return { flatink: parts.top.length ? out : src, kind: parts.top.length ? 'raw' : null, expanded: parts.top.length > 0, meta: null }
 }
 
 /** Block keywords that belong to FlatINK itself — a source opening with one of these is a program. */

@@ -26,7 +26,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./compile": "./src/compile.ts",
-    "./analysis": "./src/analysis.ts"
+    "./analysis": "./src/analysis.ts",
+    "./render": "./src/cli/render.ts",
+    "./prompts/*": "./prompts/*"
   },
   "bin": {
     "flatc": "./bin/flatc.mjs"
@@ -74,7 +76,13 @@
         "types": "./dist/analysis.d.ts",
         "import": "./dist/analysis.js",
         "require": "./dist/analysis.js"
-      }
+      },
+      "./render": {
+        "types": "./dist/cli/render.d.ts",
+        "import": "./dist/cli/render.js",
+        "require": "./dist/cli/render.js"
+      },
+      "./prompts/*": "./prompts/*"
     }
   }
 }

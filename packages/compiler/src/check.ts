@@ -53,6 +53,42 @@ function sourceDiagnostics(src: string): CheckDiagnostic[] {
     .map(({ scope, diag }) => ({ scope, line: diag.line, col: diag.col, severity: 'error' as const, message: diag.message }))
 }
 
+/** Statements that belong to the COMPOSITION half — they are only legal inside `scene { … }`. */
+const COMPOSITION = new Set(['group', 'layer', 'rect', 'circle', 'ellipse', 'path', 'text', 'image', 'instance', 'mask'])
+
+const UNEXPECTED = /^unexpected statement "([a-z]+)"/
+
+/**
+ * One missing `scene { … }` produces one error per composition line — measured at 72 on a 75-line file,
+ * and not one of them contains the word `scene`. Every message is accurate: at that point `group` really
+ * is not expected. But they describe the SYMPTOM, and the repair pass they are fed cannot infer the cause
+ * from seventy-two of them, so it returns the same program. Collapse them into the cause, once.
+ *
+ * Only when the block is genuinely absent — with a `scene` present, each precise position is what helps.
+ */
+function collapseMissingScene(diagnostics: CheckDiagnostic[], src: string): CheckDiagnostic[] {
+  if (/^[ \t]*scene[ \t]*\{/m.test(src)) return diagnostics
+  const stray = diagnostics.filter((d) => COMPOSITION.has(UNEXPECTED.exec(d.message)?.[1] ?? ''))
+  if (!stray.length) return diagnostics
+  // Once composition is loose at the root, every parse-level complaint in that scope is a knock-on of
+  // the same omission — the braces the block would have owned, the lines it would have contained.
+  // Semantic findings (an unknown variable, a dead global) are NOT knock-ons and are left alone.
+  const knockOn = diagnostics.filter((d) => d.severity === 'error' && /^unexpected statement |^declaration expected/.test(d.message))
+  const words = [...new Set(stray.map((d) => UNEXPECTED.exec(d.message)![1]))]
+  const first = stray[0]
+  const cause: CheckDiagnostic = {
+    scope: first.scope,
+    line: first.line,
+    col: first.col,
+    severity: 'error',
+    message:
+      `${words.map((w) => `\`${w}\``).join(', ')} ${words.length > 1 ? 'are SCENE declarations' : 'is a SCENE declaration'}, ` +
+      `and this program has no \`scene { … }\` block. Composition lives inside it; everything after it is behavior. ` +
+      `Wrap the ${stray.length} statement(s) it rejected: \`scene {\\n  layer "art" { … }\\n}\`.`,
+  }
+  return [cause, ...diagnostics.filter((d) => !knockOn.includes(d))]
+}
+
 /** `size W H` declared anywhere at the start of a line — the program's canvas. */
 const SIZE_HEADER = /^[ \t]*size[ \t]+-?[\d.]+[ \t]+-?[\d.]+/m
 
@@ -87,7 +123,9 @@ export function programDiagnostics(doc: Doc, src: string): CheckDiagnostic[] {
   const noSize = missingSizeDiagnostic(src, doc)
   if (noSize) push(noSize)
   for (const { scope, diag } of lintDoc(doc, src)) push({ scope, line: diag.line, col: diag.col, severity: diag.severity === 'warning' ? 'warning' : 'error', message: diag.message })
-  return out
+  // Collapse LAST: the same "unexpected statement" is reported by the source pass and by the Doc lint,
+  // so folding one of them alone leaves the other's copy behind.
+  return collapseMissingScene(out, src)
 }
 
 const tally = (diagnostics: CheckDiagnostic[], doc: Doc | null): CheckResult => {

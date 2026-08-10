@@ -18,25 +18,25 @@ A `.flatink` is split in **two halves with different grammars**:
 ## `.flatink` skeleton
 
 ```
-size 480 320              # REQUIRED, must be the very first line (canvas units)
-background #0a0e1c        # optional
-timeline 30 300           # optional root timeline: fps, duration(frames). default 24 fps / 60 frames
-use "collision"           # optional stdlib/local packages
-asset "logo" "logo.svg" image   # optional media declarations
-var score = 0             # optional global state
+size 480 320              // REQUIRED, must be the very first line (canvas units)
+background #0a0e1c        // optional
+timeline 30 300           // optional root timeline: fps, duration(frames). default 24 fps / 60 frames
+use "collision"           // optional stdlib/local packages
+asset "logo" "logo.svg" image   // optional media declarations
+var score = 0             // optional global state
 
 scene {
   layer "bg"   { rect 0 0 480 320 fill #0a0e1c }
   layer "game" {
-    circle 240 160 40 fill #ffcc00 as "Sun"
+    group "Sun" at 240,160 { layer "art" { circle 0 0 40 fill #ffcc00 } }
   }
 }
 
-object "Sun" {
+object "Sun" {                  // behavior attaches BY NAME, to a group -- never to a bare shape
   when clicked { score = score + 1 }
-  rotation = time * 30
+  rotationDeg = clock * 30      // degrees; `clock` is monotone, `time` restarts every loop
 }
-every frame { if (score >= 10) { send "win" } }
+every frame { if score >= 10 { send "win" } }
 ```
 
 ## Drawing (inside `scene`/`symbol` layers)
@@ -46,24 +46,24 @@ Coordinates are plain numbers; canvas origin is **top-left**. Layers stack botto
 ```
 circle  <cx> <cy> <r>
 ellipse <cx> <cy> <rx> <ry>
-rect    <x> <y> <w> <h>  [<r> | <rx> <ry>]      # optional rounded corners
-path    "M0 0 L10 0 L10 10 Z"                    # raw SVG path data
+rect    <x> <y> <w> <h>  [<r> | <rx> <ry>]      // optional rounded corners
+path    "M0 0 L10 0 L10 10 Z"                    // raw SVG path data
 text    "Hi" font "sans-serif" size 24 align center line 1.2 color #fff box 200 40
-image   "logo" 80 80 at -40,-40                  # origin = top-left → center with at -w/2,-h/2
-group   "Name" at x,y pivot px,py { layer "c" { … } }   # nests its own layers
-instance "Symbol" as "Name" at x,y              # place a symbol from a .flat lib
+image   "logo" 80 80 at -40,-40                  // origin = top-left → center with at -w/2,-h/2
+group   "Name" at x,y pivot px,py { layer "c" { … } }   // nests its own layers
+instance "Symbol" as "Name" at x,y              // place a symbol from a .flat lib
 ```
 
 Paint / style (work on shapes; most on text & groups too):
 ```
 fill #rrggbb | nofill
 stroke #rrggbb <width> [cap butt|round|square] [join …] [miter n] [dash a,b,…]
-opacity 0..1                                       # also 8-digit hex alpha #rrggbbaa
-fill linear(90, 0:#bdecff, 1:#2f8fe0)              # angle 0 = →, 90 = ↓ ; stops offset:color
-fill radial(0.5, 0.5, 0.5, 0:#fff, 1:#000)         # cx, cy, r (0..1), then stops
+opacity 0..1                                       // also 8-digit hex alpha #rrggbbaa
+fill linear(90, 0:#bdecff, 1:#2f8fe0)              // angle 0 = →, 90 = ↓ ; stops offset:color
+fill radial(0.5, 0.5, 0.5, 0:#fff, 1:#000)         // cx, cy, r (0..1), then stops
 filter glow <blur> <color> | shadow <dx> <dy> <blur> <color> | blur <r> | adjust <b> <c> <s> <h>
-tint <color> <amount(0..1)>                        # Flash-style tint
-nohit                                              # drawn but ignored by hit-test
+tint <color> <amount(0..1)>                        // Flash-style tint
+nohit                                              // drawn but ignored by hit-test
 ```
 
 ## Animation — timeline / cel / pose (in a `symbol`)
@@ -74,13 +74,13 @@ the **poses** of containers declared once in the layer roster, plus (optionally)
 
 ```
 symbol "Wheel" {
-  timeline 24 24                          # fps, durationFrames
+  timeline 24 24                          // fps, durationFrames
   layer "spin" {
-    group "Rim" at 100,100 pivot 0,0 {    # roster: declared ONCE, posed by the cels below
+    group "Rim" at 100,100 pivot 0,0 {    // roster: declared ONCE, posed by the cels below
       layer "art" { circle 0 0 40 nofill stroke #333 8 }
     }
     cel 0 tween { pose "Rim" rotate 0 }
-    cel 24       { pose "Rim" rotate 360 }   # one full turn around the pivot, in DEGREES
+    cel 24       { pose "Rim" rotate 360 }   // one full turn around the pivot, in DEGREES
   }
 }
 
@@ -117,9 +117,9 @@ Additive position offsets: `dx dy` → **`pos = at + (dx, dy)`** (binding-only; 
 
 ```
 object "Needle" {
-  rotation = atan2(mouse.y - 160, mouse.x - 240)   # RADIANS
+  rotation = atan2(mouse.y - 160, mouse.x - 240)   // RADIANS
   opacity  = lit ? 1 : 0.3
-  dx = 30 * sin(clock)                             # sways AROUND its declared at — no base to re-inject
+  dx = 30 * sin(clock)                             // sways AROUND its declared at — no base to re-inject
 }
 ```
 Or bind a channel on a symbol container directly: `group "Fan" pivot 0,0 expr rotation "turns(time)" { … }`.
@@ -128,9 +128,9 @@ Or bind a channel on a symbol container directly: `group "Fan" pivot 0,0 expr ro
 snapping to it. Per instance, zero cost when unused, and it snaps to the target on a seek (so tune it by
 PLAYING the preview, not by scrubbing).
 ```
-group "Cable" spring rotation "hookX" stiffness 0.08 damping 0.86 { … }   # in a .flat: overshoot, settle
-group "Panel" smooth y "target" k 0.15 { … }                              # 1st order: no overshoot
-object "Dial" { spring rotation = aim { stiffness 0.08 damping 0.86 } }   # scene-side form, in .flatink
+group "Cable" spring rotation "hookX" stiffness 0.08 damping 0.86 { … }   // in a .flat: overshoot, settle
+group "Panel" smooth y "target" k 0.15 { … }                              // 1st order: no overshoot
+object "Dial" { spring rotation = aim { stiffness 0.08 damping 0.86 } }   // scene-side form, in .flatink
 ```
 The quoted target's names must EXIST in that scope (a symbol `param`, a scene `var`) or `--check` errors.
 
@@ -145,37 +145,37 @@ Actions (one per line): `<var> = <expr>` · `arr[i] = <expr>` · `if/else if/els
 
 Drag & interactors (each writes into your vars; all accept `{ enabled <expr> }`):
 ```
-drag x, y [{ confine to <Zone> · snap <grid> · enabled <expr> }]   # dragX / dragY too
-turn    <angle> around <x>,<y> [{ snap <deg> }]    # → <angle> in RADIANS → rotation = <angle> directly
-turnDeg <angle> around <x>,<y> [{ snap <deg> }]    # → <angle> in DEGREES → pair with rotationDeg = <angle>
-trace <progress> along <Group> [{ tolerance <px> }]# follow a path → 0..1 monotone
-reveal <progress> [{ brush <px> }]                 # scratch/wipe → 0..1 cumulative
-link  <endX>,<endY>,<target> to <Group>            # elastic thread → target = hit index 1..n (0=none)
+drag x, y [{ confine to <Zone> · snap <grid> · enabled <expr> }]   // dragX / dragY too
+turn    <angle> around <x>,<y> [{ snap <deg> }]    // → <angle> in RADIANS → rotation = <angle> directly
+turnDeg <angle> around <x>,<y> [{ snap <deg> }]    // → <angle> in DEGREES → pair with rotationDeg = <angle>
+trace <progress> along <Group> [{ tolerance <px> }]// follow a path → 0..1 monotone
+reveal <progress> [{ brush <px> }]                 // scratch/wipe → 0..1 cumulative
+link  <endX>,<endY>,<target> to <Group>            // elastic thread → target = hit index 1..n (0=none)
 ```
 
 State & helpers:
 ```
-var x = 0    var arr = [0,0,0]    var z = fill(8, 0)     # runtime state (arrays via fill)
-fn dist(ax,ay,bx,by) = hypot(ax-bx, ay-by)              # value fn
-fn reset() { score = 0  go to frame 0 }                  # procedure fn
-self.hovered self.grabbed self.pressed                   # own interaction state (0/1)
-feedback lift tilt dim shake(<expr>)                     # one-liner reactions (auto use "feedback")
+var x = 0    var arr = [0,0,0]    var z = fill(8, 0)     // runtime state (arrays via fill)
+fn dist(ax,ay,bx,by) = hypot(ax-bx, ay-by)              // value fn
+fn reset() { score = 0  go to frame 0 }                  // procedure fn
+self.hovered self.grabbed self.pressed                   // own interaction state (0/1)
+feedback lift tilt dim shake(<expr>)                     // one-liner reactions (auto use "feedback")
 ```
 
 ## Factoring (compile-time, zero runtime cost)
 
 ```
-def gap = 70                                             # compile-time constant, used via $()
-repeat i from 0 to 4 { circle $(40 + i*gap) 80 6 fill #ffd98a }   # $(expr) = compile-time arithmetic
-symbol "Card"(label, tint = "#fff") { … text "$(label)" … fill $(tint) … }   # parameterized symbol
+def gap = 70                                             // compile-time constant, used via $()
+repeat i from 0 to 4 { circle $(40 + i*gap) 80 6 fill #ffd98a }   // $(expr) = compile-time arithmetic
+symbol "Card"(label, tint = "#fff") { … text "$(label)" … fill $(tint) … }   // parameterized symbol
 instance "Card"($(i+1)) as "C$(i)" at $(80 + i*90),200
-each "Key" as i { when clicked { input = input*10 + (i+1) } }    # shared behavior over instances
-match Word1, Word2 onto Good, Bad {                       # declarative drag+drop pairing
+each "Key" as i { when clicked { input = input*10 + (i+1) } }    // shared behavior over instances
+match Word1, Word2 onto Good, Bad {                       // declarative drag+drop pairing
   correct Word1 -> Good, Word2 -> Bad
   on done { send "win" }
 }
-at center | at center,540 | at 120,center                # canvas-relative anchor
-align top of "Bin" [offset dx,dy]                         # pin origin onto another item's bbox
+at center | at center,540 | at 120,center                // canvas-relative anchor
+align top of "Bin" [offset dx,dy]                         // pin origin onto another item's bbox
 ```
 
 ## Expressions & stdlib
@@ -195,6 +195,9 @@ ramp over `dur` s for a readable timed feedback — capture the instant with **`
 
 ## CRITICAL GOTCHAS — do not get these wrong
 
+0. **A comment is `//`, everywhere.** `#` opens a COLOUR (`#ffcc00`). Used as a comment it survives in
+   the header half and is a parse ERROR inside `scene { … }` — reported as `"layer" expected, "#" found`,
+   which points nowhere near the real cause.
 1. **`size W H` is required and MUST be the first line** of a `.flatink`. A `.flat` has no `size`.
 2. **Two grammars.** Drawing keywords live in `scene`/`symbol` layers; logic keywords live in
    `object`/`every frame`/`fn`. Don't mix (no `var`/`when` inside `scene`; no `circle` inside `object`).

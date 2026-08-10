@@ -460,6 +460,18 @@ describe('flatFormat — .flatink program', () => {
     }
   })
 
+  it('`#` used as a comment inside `scene` names the real cause instead of blaming layers', () => {
+    // `#` opens a COLOUR. It happens to survive the header half, so an author who comments with it sees
+    // the first half work and the second break, on a message about `layer` that points nowhere near the
+    // `#`. It cost two of the three broken examples in the shipped prompts.
+    const bad = 'size 100 100\nscene {  # composition\n  layer "L" { rect 0 0 10 10 fill #ffffff }\n}\n'
+    expect(() => parseProgramFull(bad)).toThrow(/"#" opens a colour/)
+    expect(() => parseProgramFull(bad)).toThrow(/comment.*`\/\/`/)
+    // The colour itself is untouched, and `//` works where `#` did not.
+    const good = 'size 100 100\nscene {  // composition\n  layer "L" { rect 0 0 10 10 fill #ffffff }\n}\n'
+    expect(() => parseProgramFull(good)).not.toThrow()
+  })
+
   it('objectTargetDiagnostics: an `object` block on a SHAPE binds to nothing (was silent)', () => {
     const src = [
       'size 100 100',                              // 1

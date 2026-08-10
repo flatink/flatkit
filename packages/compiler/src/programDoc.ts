@@ -435,6 +435,39 @@ export function docLayoutWarnings(doc: Doc): { scope: string; diag: Diagnostic }
     }
   }
 
+  // (h) ANY item drawn ENTIRELY outside the canvas. The clipped-at-the-edge pass above deliberately
+  //     tolerates straddling (decor bleeds on purpose) and skips items parked off-screen — but "parked"
+  //     is only a pattern for something a binding moves back in, and those are excluded as dynamic. A
+  //     STATIC item wholly off-canvas is never intentional: it is a coordinate mistake, and until now
+  //     nothing said so for a shape or a group. Measured on a model-written board: the eighth token was
+  //     laid out past the edge and the whole chain stayed quiet.
+  //     Two things this must NOT flag, both measured on a real corpus before the rule was let out:
+  //       • an item PARKED off the TOP-LEFT corner on purpose (`at -999,-999` for a payload holder,
+  //         `-600,-600` for hidden labels) — the idiom is real, used in 3 of 58 activities measured, and
+  //         its signature is that BOTH axes are negative. A mistake overshoots one edge;
+  //       • a DEGENERATE bbox lying along an edge (a hairline rule at y=0 spans `0,0 -> 760,0`), which
+  //         is on the canvas, not off it — so compare strictly, with the same tolerance as the rest.
+  const parked = (b: { maxX: number; maxY: number }) => b.maxX < 0 && b.maxY < 0
+  const offCanvas = (b: { minX: number; minY: number; maxX: number; maxY: number }) =>
+    (b.maxX < -TOL || b.minX > W + TOL || b.maxY < -TOL || b.minY > H + TOL) && !parked(b)
+  const reportOffCanvas = (items: Item[], matrix: Transform, dynamic: boolean): void => {
+    for (const it of items) {
+      const isDynamic = dynamic || dynamicPos(it)
+      if (!isDynamic && !(isText(it) && it.textPath)) {
+        const local = itemBBox(doc, it)
+        const b = local && transformBBox(local, matrix)
+        if (b && offCanvas(b)) {
+          // Report the OUTERMOST offender: a group off-canvas takes its whole content with it, and one
+          // line about the group is the fix, where one per child is noise.
+          out.push(warn(`"${itemLabel(it)}" is drawn entirely off-canvas: bbox [${r0(b.minX)},${r0(b.minY)} -> ${r0(b.maxX)},${r0(b.maxY)}], canvas 0,0 -> ${W},${H}. Nothing of it is visible.`))
+          continue
+        }
+      }
+      if (isGroup(it)) for (const l of it.layers) reportOffCanvas(l.items, compose(matrix, it.transform), isDynamic)
+    }
+  }
+  for (const l of doc.layers) reportOffCanvas(l.items, IDENTITY, false)
+
   // (g) WRAPPED text taller than its box. Pass (d) skips `wrap` — rightly, since wrapping cannot overflow
   //     the box horizontally — but that left wrapped text unmeasured entirely, and what it DOES overflow is
   //     the box's height. Same visible defect: an instruction spilling out of its frame is the first thing

@@ -6,9 +6,9 @@ pivots, expression-driven channels, and named states. You think in keyframes, ar
 **Output contract:** usually a `.flat` (animated `symbol`s). Emit **only the code** in a fenced block.
 A `.flat` has **no `size`**. Author previews with:
 ```
-flatc --preview Wheel.flat --render -o wheel.png        # PNG of one frame (default --bbox all, union)
-flatc --preview Wheel.flat -o wheel.flatpack            # playable file for the browser
-flatc --preview Door.flat --render --set door=0.5 -o half.png   # a state / param value
+flatc --preview Wheel.flat --render -o wheel.png        // PNG of one frame (default --bbox all, union)
+flatc --preview Wheel.flat -o wheel.flatpack            // playable file for the browser
+flatc --preview Door.flat --render --set door=0.5 -o half.png   // a state / param value
 ```
 
 ## The model in one paragraph
@@ -22,11 +22,11 @@ containers in the layer's **roster** (declared ONCE above the cels). Between two
 symbol "Wheel" {
   timeline 24 24
   layer "spin" {
-    group "Rim" at 100,100 pivot 0,0 {          # roster: declared once, posed below
+    group "Rim" at 100,100 pivot 0,0 {          // roster: declared once, posed below
       layer "art" { circle 0 0 40 nofill stroke #333 8 }
     }
     cel 0 tween { pose "Rim" rotate 0 }
-    cel 24       { pose "Rim" rotate 360 }       # one full turn around the pivot, in DEGREES
+    cel 24       { pose "Rim" rotate 360 }       // one full turn around the pivot, in DEGREES
   }
 }
 ```
@@ -75,7 +75,7 @@ A cel is a **full snapshot**: a container is shown only on cels that `pose` it; 
 **disappears** there (that's how a symbol exits). To avoid re-typing unchanged containers:
 ```
 cel 0  tween { pose "Base" at 0,0   pose "Ring" scale 1 }
-cel 30 hold tween { pose "Ring" scale 4 }   # Base carried forward automatically
+cel 30 hold tween { pose "Ring" scale 4 }   // Base carried forward automatically
 cel 60 hold       { pose "Ring" scale 1 }
 ```
 Or keep a truly static element on its **own cel-less layer** (rendered every frame, declared once).
@@ -84,7 +84,7 @@ Or keep a truly static element on its **own cel-less layer** (rendered every fra
 
 Bind a channel on a container to a formula:
 ```
-group "Fan" pivot 0,0 expr rotation "turns(time)" { … }     # one turn per second
+group "Fan" pivot 0,0 expr rotation "turns(time)" { … }     // one turn per second
 ```
 - Channels: `x y scaleX scaleY rotation opacity` (absolute), plus **`dx` / `dy`** — additive position
   offsets, `pos = at + (dx, dy)`. Prefer them for motion AROUND a rest position: `expr dx "30*sin(clock)"`
@@ -101,15 +101,15 @@ unused, and **snaps to the target on a seek** — so tune it by PLAYING the prev
 
 ```
 symbol "Cable" {
-  params { number hookX = 0 range -1 1 "Hook offset" }        # the target must be a NAME this scope knows
+  params { number hookX = 0 range -1 1 "Hook offset" }        // the target must be a NAME this scope knows
   timeline 24 24
   layer "a" {
-    group "Swing" spring rotation "hookX" stiffness 0.08 damping 0.86 {   # 2nd order: overshoots, settles
+    group "Swing" spring rotation "hookX" stiffness 0.08 damping 0.86 {   // 2nd order: overshoots, settles
       layer "c" { rect -4 0 8 60 fill #333333 }
     }
   }
 }
-group "Leaf" smooth y "target" k 0.15 { … }                    # 1st order: no overshoot
+group "Leaf" smooth y "target" k 0.15 { … }                    // 1st order: no overshoot
 ```
 - `stiffness` / `damping` / `k` are all `0..1`. Low stiffness = lazy; damping near 1 = few oscillations.
 - The target is a quoted expression, and its names must EXIST in that scope (a symbol `param`, a scene
@@ -126,8 +126,8 @@ symbol "Door" {
   states door { closed at 0   open at 24   initial closed   transition 12 ease easeInOut }
   layer "panel" {
     group "Panel" at 60,10 pivot 0,0 { layer "art" { rect 0 0 40 80 fill #884422 } }
-    cel 0 tween { pose "Panel" rotate 0 }      # closed
-    cel 24       { pose "Panel" rotate 80 }    # open
+    cel 0 tween { pose "Panel" rotate 0 }      // closed
+    cel 24       { pose "Panel" rotate 80 }    // open
   }
 }
 ```

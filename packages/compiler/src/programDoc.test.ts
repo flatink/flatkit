@@ -441,6 +441,54 @@ describe('programDoc — layout warnings', () => {
     })
   })
 
+  // The clipped-at-the-edge pass tolerates straddling (decor bleeds on purpose) and only ever looked at
+  // text and images. A shape or a group laid out WHOLLY outside the canvas is a different thing — never
+  // intentional, and nothing said so. Reported on a model-written board whose eighth token landed past
+  // the edge with the whole chain silent.
+  describe('entirely off-canvas', () => {
+    const hit = (items: Layer['items']) => docLayoutWarnings(doc(items)).filter((w) => /entirely off-canvas/.test(w.diag.message))
+    const shape = (x: number, y: number): Region => ({ id: 'r', color: '#000', name: 'Far', path: { subpaths: [{ closed: true, segments: [{ anchor: { x, y } }, { anchor: { x: x + 20, y } }, { anchor: { x: x + 20, y: y + 20 } }] }] } })
+
+    it('a shape past the right edge is reported, one on the canvas is not', () => {
+      expect(hit([shape(900, 300)])).toHaveLength(1)
+      expect(hit([shape(100, 300)])).toEqual([])
+    })
+
+    it('a GROUP off-canvas is reported once, not once per child', () => {
+      const g: Group = {
+        id: 'g', kind: 'group', name: 'Off', transform: translation(900, 900),
+        layers: [{ id: 'GL', name: 'c', visible: true, locked: false, opacity: 1, items: [shape(0, 0), shape(30, 0)] }],
+      }
+      const ws = hit([g])
+      expect(ws).toHaveLength(1)
+      expect(ws[0].diag.message).toContain('"Off"')
+    })
+
+    it('text below the bottom edge is reported — the vertical axis was never covered', () => {
+      expect(hit([mkText('low', 100, 60)])).toEqual([]) // y = 20, on canvas
+      const low: Text = { ...mkText('low', 100, 60), transform: translation(100, 700) }
+      expect(hit([low])).toHaveLength(1)
+    })
+
+    it('an item PARKED off the top-left corner is left alone — that idiom is real', () => {
+      // `at -999,-999` for a payload holder, `-600,-600` for hidden labels: measured in 3 of 58 real
+      // activities. Both axes negative is the signature; a mistake overshoots one edge.
+      expect(hit([shape(-999, -999)])).toEqual([])
+      expect(hit([shape(-600, -600)])).toEqual([])
+    })
+
+    it('a hairline lying ALONG an edge is on the canvas, not off it', () => {
+      // A zero-height rule at y=0 spans `0,0 -> 760,0`; a naive comparison called that off-canvas.
+      const rule: Region = { id: 'r', color: '#000', path: { subpaths: [{ closed: false, segments: [{ anchor: { x: 0, y: 0 } }, { anchor: { x: 760, y: 0 } }] }] } }
+      expect(hit([rule])).toEqual([])
+    })
+
+    it('an item positioned at runtime is skipped, like everywhere else', () => {
+      const moving: Group = { ...({ id: 'g', kind: 'group', name: 'Slider', transform: translation(900, 900), layers: [] } as Group), expressions: { x: 'tx' } }
+      expect(hit([moving])).toEqual([])
+    })
+  })
+
   // `wrap` was skipped entirely by the width pass — reasonably, since a wrapped line cannot overflow the
   // box HORIZONTALLY. What it does overflow is the box's HEIGHT, and that is the same visible defect.
   describe('wrapped text', () => {

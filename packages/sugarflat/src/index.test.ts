@@ -259,3 +259,60 @@ describe('the reference a model is prompted with carries the footprints', () => 
     expect(sugarCard()).toMatch(/target: 208x118/)
   })
 })
+
+// Reported against 0.2.0. All three are defects in the fix that shipped an hour earlier, and each one
+// was contradicted by this package's own documentation — the worst kind, because a reader trusts it.
+describe('the escape hatch, as the README and sugarCard actually write it', () => {
+  const block = 'compte a {\n  cible 2\n}\n'
+  const run = (src: string) => desugar(src, { gestures: [counter] })
+
+  it('`raw { … }` on ONE line is expanded — both docs write it that way', () => {
+    // The old pattern demanded a newline after `{` and a closing brace in column 0, so the one-line
+    // form travelled on to the compiler, which said `unexpected statement "raw"` — a sugar defect
+    // described in FlatInk's vocabulary, exactly what UnknownSugarError was introduced to stop.
+    const r = run(`${block}\nraw { var extra = 1 }\n`)
+    expect(r.flatink).toContain('var extra = 1')
+    expect(r.flatink).not.toMatch(/^raw\b/m)
+  })
+
+  it('the multi-line form still works, and both forms may sit side by side', () => {
+    const r = run(`${block}\nraw { var one = 1 }\n\nraw {\n  var two = 2\n}\n`)
+    expect(r.flatink).toContain('var one = 1')
+    expect(r.flatink).toContain('var two = 2')
+  })
+
+  // A gesture emits no appearance, so a background is the FIRST thing any skin needs. Spliced on top,
+  // an opaque full-canvas rect hides the whole activity while `checkProgram` reports it clean — ten
+  // activities shipped that way and were read as a broken asset pipeline.
+  it('`raw scene under { … }` is drawn BEHIND the gesture, `raw scene { … }` on top', () => {
+    const r = run(`${block}\nraw scene under { layer "BG" { rect 0 0 40 40 fill #112233 } }\nraw scene { layer "BANNER" { rect 0 0 10 5 fill #ffffff } }\n`)
+    const bg = r.flatink.indexOf('layer "BG"')
+    const own = r.flatink.indexOf('group "Bouton"')
+    const banner = r.flatink.indexOf('layer "BANNER"')
+    expect(bg).toBeGreaterThan(-1)
+    expect(bg).toBeLessThan(own) // behind
+    expect(banner).toBeGreaterThan(own) // in front
+    expect(checkProgram(r.flatink).errors).toBe(0)
+  })
+
+  it('`raw scene` with no gesture to splice into raises instead of vanishing', () => {
+    expect(() => run('raw scene { layer "BG" { } }\n')).toThrow(/needs a gesture block/)
+  })
+})
+
+describe('sugarCard teaches the hatch that can actually carry decor', () => {
+  it('names all three forms, and says which one takes a background', () => {
+    const card = sugarCard()
+    expect(card).toMatch(/raw \{/)
+    expect(card).toMatch(/raw scene \{/)
+    expect(card).toMatch(/raw scene under \{/)
+    expect(card).toMatch(/background/i)
+  })
+
+  it('the forms it prints are the forms that work', () => {
+    // The card told a model to put decor in `raw { … }`, where a `layer` lands outside the scene and
+    // errors. Whatever the card shows must survive a round trip.
+    const src = `place p {\n  prompt "x"\n  target T at 200,400\n  item a -> T at 100,100\n}\n\nraw scene under { layer "BG" { rect 0 0 760 620 fill #112233 } }\n`
+    expect(checkProgram(desugar(src).flatink).errors).toBe(0)
+  })
+})

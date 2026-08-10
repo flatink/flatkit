@@ -254,18 +254,18 @@ function checkFlatLibs(flatPaths: string[]): number {
 }
 
 /** Loads a Doc from a `.flatink` (compiled) or a `.flatpack`/`.flatpack.json` (already-baked JSON). */
-function loadDoc(filePath: string): Doc {
-  if (filePath.endsWith('.flatink')) return buildDocFromProgram(filePath).doc
+function loadDoc(filePath: string, noLibs = false): Doc {
+  if (filePath.endsWith('.flatink')) return buildDocFromProgram(filePath, [], 'inline', '', noLibs).doc
   // .flatpack (canonical) or .flatpack.json (alias): untrusted JSON → normalize before use.
   return sanitizeDoc(JSON.parse(readFileSync(filePath, 'utf8')))
 }
 
 /** --play: runs the file headless, replays --script, prints { sends, vars }. */
-function playOnce(filePath: string, scriptPath: string, trace: boolean): number {
+function playOnce(filePath: string, scriptPath: string, trace: boolean, noLibs = false): number {
   if (!scriptPath) { process.stderr.write('flatc: --play requires --script <gestures.json>\n'); return 1 }
   if (!existsSync(scriptPath)) { process.stderr.write(`flatc: script not found: ${scriptPath}\n`); return 1 }
   let doc: Doc, gestures: Gesture[]
-  try { doc = loadDoc(filePath) } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
+  try { doc = loadDoc(filePath, noLibs) } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
   try { gestures = JSON.parse(readFileSync(scriptPath, 'utf8')) as Gesture[] } catch (e) { process.stderr.write(`flatc: invalid JSON script: ${(e as Error).message}\n`); return 1 }
   if (!Array.isArray(gestures)) { process.stderr.write('flatc: the script must be an array of gestures\n'); return 1 }
   const res = playHeadless(doc, gestures, { trace })
@@ -321,9 +321,15 @@ async function renderDocToFile(doc: Doc, outPath: string, frame: number, vars: R
 }
 
 /** --render: renders the file to PNG (headless skia). Async (SVG decode + raster). */
-async function renderOnce(filePath: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, scaleAuto: boolean): Promise<number> {
+async function renderOnce(filePath: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, scaleAuto: boolean, noLibs = false): Promise<number> {
   let doc: Doc
-  try { doc = loadDoc(filePath) } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
+  // `--no-libs` was parsed and then not passed on, so `--render` still auto-discovered the neighbouring
+  // .flat files -- and failed on one, advising the very flag that had been given. Same hole in `--play`.
+  try { doc = loadDoc(filePath, noLibs) } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
+  // A frame past the end WRAPS silently, so a render can show frame 20 while the caller asked for 200
+  // and reads the result as a renderer bug. It cost exactly that once.
+  const dur = doc.timeline?.durationFrames ?? 0
+  if (dur > 0 && frame >= dur) process.stderr.write(`flatc: --frame ${frame} is past the timeline (durationFrames ${dur}); the playhead WRAPS, so this renders frame ${frame % dur}\n`)
   const outPath = out ? resolve(out) : join(dirname(filePath), basename(filePath, extname(filePath)) + '.png')
   return renderDocToFile(doc, outPath, frame, vars, scaleAuto ? autoScale(doc.width, doc.height) : scale, steps)
 }
@@ -496,8 +502,8 @@ export function run(argv: string[]): number | Promise<number> {
 
   const explicitFlats = positional.slice(1)
   if (doPreview) return previewOnce(filePath, symbolName, out, frame, vars, scale, steps, doRender, pad, bboxMode, setSpec, scaleAuto)
-  if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps, scaleAuto)
-  if (doPlay) return playOnce(filePath, scriptPath, doTrace)
+  if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps, scaleAuto, noLibs)
+  if (doPlay) return playOnce(filePath, scriptPath, doTrace, noLibs)
   // `--check <library>.flat`: a `.flat` first positional is an asset LIB, not a program → lint via parseFlatLib
   // (the following positionals are more `.flat` libs to merge). Every other path is unchanged.
   const action: () => number = checkOnly && filePath.endsWith('.flat')

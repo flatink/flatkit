@@ -134,6 +134,38 @@ object "s1" { rotation = 0.1 }
     expect(checkProgram(VALID).report).not.toMatch(/`size W H`/)
   })
 
+  // A model that forgets `scene { … }` and writes its composition at the root gets one error PER LINE —
+  // 72 on a 75-line file, and not one of them contains the word `scene`. Every message is accurate and
+  // none names the cause, so the repair pass they are handed returns the same program with the same
+  // errors. It cannot guess. Say the cause once instead of the symptom seventy-two times.
+  it('composition at the root says the `scene` block is missing, once', () => {
+    const src = `size 480 320
+group "Hero" at 10,10 {
+  layer "art" { rect 0 0 20 20 fill #ff0000 }
+}
+text "Hi" at 5,5 box 40 20
+circle 30 30 5 fill #00ff00
+`
+    const r = checkProgram(src)
+    expect(r.ok).toBe(false)
+    const errors = r.diagnostics.filter((d) => d.severity === 'error')
+    expect(errors, `got ${errors.length} errors:\n${r.report}`).toHaveLength(1)
+    expect(errors[0].message).toMatch(/`scene \{ … \}`/)
+    expect(errors[0].message).toMatch(/group/) // names what it saw at the root
+    expect(r.report).not.toMatch(/unexpected statement/) // the symptom is gone
+  })
+
+  it('a program that HAS a scene keeps its precise per-line errors', () => {
+    // The collapse must only fire when the block is genuinely absent, or it would hide real mistakes.
+    const src = `size 480 320
+scene { layer "a" { group "B" { layer "c" { rect 0 0 10 10 fill #ff0000 } } } }
+object "B" { x = speed + 1 }
+`
+    const r = checkProgram(src)
+    expect(r.report).toMatch(/unknown variable "speed"/)
+    expect(r.report).not.toMatch(/no `scene/)
+  })
+
   it('every diagnostic carries a scope, a position and a severity', () => {
     const r = checkProgram("this is not flatink at all {{{")
     for (const d of r.diagnostics) {
