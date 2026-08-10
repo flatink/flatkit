@@ -677,3 +677,38 @@ describe('interactor options are statements, one per line', () => {
     expect(diagnostics.map((d) => d.message).join(' ')).not.toMatch(/one option per LINE/)
   })
 })
+
+// `when biomasse > 55 { send "done" }` is the natural reflex for anyone writing a rule-driven activity,
+// and FlatInk has no conditional `when` — only gestures. The old message listed the accepted events, which
+// leaves the author to infer the rule, and the recovery then produced two MORE errors from the body.
+describe('`when` takes a gesture, never a condition', () => {
+  it('names the rule and gives the idiom', () => {
+    const { diagnostics } = parseUnits('when biomasse > 55 {\n  send "completed"\n}\n')
+    expect(diagnostics[0].message).toMatch(/every frame/)
+    expect(diagnostics[0].message).toMatch(/condition/i)
+  })
+
+  it('reports the CAUSE once, not the body as symptoms', () => {
+    const { diagnostics } = parseUnits('when biomasse > 55 {\n  send "completed"\n}\n')
+    expect(diagnostics).toHaveLength(1)
+  })
+
+  it('a plain typo on the event name still lists the events', () => {
+    const { diagnostics } = parseUnits('when clicced {\n  x = 1\n}\n')
+    expect(diagnostics[0].message).toMatch(/unknown event/)
+    expect(diagnostics[0].message).toMatch(/clicked/)
+  })
+})
+
+// The class of bug that bit three docs this week: a message that teaches a form the parser rejects. The
+// guard idiom is a program, so it must parse as one -- and its first draft put `done = 1  send "…"` on a
+// single line, which is exactly what another diagnostic warns about.
+describe('the code inside a diagnostic is valid FlatInk', () => {
+  it('the `every frame` guard idiom parses clean', () => {
+    const { diagnostics } = parseUnits('when biomasse > 55 {\n  send "completed"\n}\n')
+    const idiom = diagnostics[0].message.slice(diagnostics[0].message.indexOf('\n    every frame'))
+    expect(idiom).toMatch(/every frame/)
+    const dedented = idiom.split('\n').map((l) => l.replace(/^ {4}/, '')).join('\n').replace(/…/g, 'completed')
+    expect(parseUnits(dedented).diagnostics).toEqual([])
+  })
+})

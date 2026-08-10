@@ -1611,3 +1611,19 @@ describe('per-item constructs at the program level', () => {
     expect(itemOnlyUnitDiagnostics(scene + 'object "Box" {\n  when clicked { }\n  opacity = 0.5\n  drag a, b\n}\n')).toEqual([])
   })
 })
+
+// `at 12 -16` -- a space where the comma goes. The generic `"," expected, "-16" found` is accurate but
+// says nothing about `at`, and a model that has seen SVG writes space-separated coordinates by reflex.
+describe('`at x,y` takes a comma', () => {
+  const parse = (src: string) => { try { parseProgram(src); return '' } catch (e) { return (e as Error).message } }
+
+  it('names the rule and shows both spellings', () => {
+    const m = parse('size 200 200\nscene { layer "a" { group "G" at 12 -16 pivot 0,0 { layer "c" { rect 0 0 4 4 fill #ffffff } } } }\n')
+    expect(m).toMatch(/at <x>,<y>|at x,y/)
+    expect(m).toMatch(/12,-16/)
+  })
+
+  it('the correct spelling still parses', () => {
+    expect(parse('size 200 200\nscene { layer "a" { group "G" at 12,-16 pivot 0,0 { layer "c" { rect 0 0 4 4 fill #ffffff } } } }\n')).toBe('')
+  })
+})

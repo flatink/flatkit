@@ -66,7 +66,7 @@ pose "Name" [at x,y] [rotate deg] [scale s | scaleX sx scaleY sy] [opacity o] [s
 
 ## Behavior
 Events (in `object`): `when clicked | hovered | unhovered | pressed | released | dragged | held |
-dropped on <Zone> [at pointer]`. Scene-wide: `when loaded`, `every frame`, `at frame n`.
+dropped on <Zone> [at pointer]`. Scene-wide: `when loaded`, `every frame`, `at frame n`. **`when` takes a GESTURE, never a condition** -- no `when <cond>`: watch it in `every frame` and guard it with a flag so it fires once (`if done < 0.5 { done = 1 … }`), the block runs 60x/s. Scene-wide blocks live at the TOP LEVEL, outside any `object`; a `when clicked`/binding/interactor at the top level does nothing -- it needs an `object "Name" { … }`.
 Actions (one per line): `<var> = <expr>` · `arr[i] = <expr>` · `if/else if/else` · `repeat n times {}` ·
 `repeat i from a to b {}` · `play`/`pause` · `go to frame n [and play]` · `send "evt" [, <expr> | , text("id") | , { a = <expr>, b }]` · `sound "id"`.
 Drag/interactors (write into your vars; all take `{ enabled <expr> }`):

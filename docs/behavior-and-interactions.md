@@ -28,7 +28,28 @@ Inside `object "Name" { … }`:
 | `when dropped on <Zone> [at pointer]` | released over a drop zone (see [drag & drop](#drag--drop)) |
 
 Scene-wide: `when loaded { … }` (once), `every frame { … }` (each tick), `at frame <n> { … }`,
-`label <frame> "name"`.
+`label <frame> "name"`. These live at the TOP LEVEL of the program, outside any `object` block — inside
+one they do nothing, and `--check` says so.
+
+> **`when` takes a GESTURE, never a condition.** There is no `when <condition>` in FlatInk, and
+> `when biomasse > 55 { … }` is the reflex of anyone writing a rule-driven activity. A condition is
+> watched in `every frame`, and it must be **guarded with a flag** — the block runs 60 times a second, so
+> an unguarded `send` fires sixty events per second rather than one:
+>
+> ```flatink
+> var done = 0
+> every frame {
+>   if biomasse > 55 {
+>     if done < 0.5 {
+>       done = 1
+>       send "completed"
+>     }
+>   }
+> }
+> ```
+>
+> Symmetrically, a `when clicked`, a channel binding or an interactor written at the top level drives
+> *one item* and there is none there: those belong in `object "Name" { … }`.
 
 ## Actions
 

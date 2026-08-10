@@ -137,10 +137,10 @@ scene { layer "c" { image "logo" 80 80 at -40,-40 } }   // the origin is the top
 On any group / instance / text / image:
 
 ```
-at <x>,<y>                          # translation
-matrix(a,b,c,d,e,f)                 # full affine
-at center  ·  at center,540  ·  at 120,center        # canvas-relative anchor (resolved from `size`)
-align <point> of "Name" [offset dx,dy]               # pin this item's origin onto another item's bbox
+at <x>,<y>                          // translation -- a COMMA between the two, negatives included: at 12,-16
+matrix(a,b,c,d,e,f)                 // full affine
+at center  ·  at center,540  ·  at 120,center        // canvas-relative anchor (resolved from `size`)
+align <point> of "Name" [offset dx,dy]               // pin this item's origin onto another item's bbox
 ```
 
 > **Placement & naming gotchas.** The order is fixed: **content → `as "…"` → `at …` / `matrix(…)` →

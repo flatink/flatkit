@@ -1665,7 +1665,11 @@ class FlatParser {
       this.next()
       // `at center` alone → canvas center; otherwise `at <x>,<y>` where each coord can be `center`.
       if (this.is('center') && this.t[this.p + 1]?.v !== ',') { this.next(); return { a: 1, b: 0, c: 0, d: 1, e: this.cw / 2, f: this.ch / 2 } }
-      const x = this.coord(true); this.eat(','); const y = this.coord(false)
+      const x = this.coord(true)
+      // A SPACE where the comma goes is the reflex of anyone who has written SVG, and the generic
+      // `"," expected` names the token, not the rule. Say the rule, with both spellings side by side.
+      if (!this.is(',')) throw new Error(`at <x>,<y> takes a COMMA between the two coordinates: write "at ${x},${this.t[this.p]?.v ?? '<y>'}", not "at ${x} ${this.t[this.p]?.v ?? '<y>'}"`)
+      this.eat(','); const y = this.coord(false)
       return { a: 1, b: 0, c: 0, d: 1, e: x, f: y }
     }
     // `align <point> of "Name" [offset dx,dy]`: anchors the origin on a point of the STATIC bbox of Name.

@@ -208,6 +208,9 @@ const stripComment = (s: string) => {
 type Mark = { i: number; line: number; col: number }
 
 /** Option keywords of an interactor block — used to explain a run-on line instead of naming a column. */
+/** A comparison between `when` and the `{` — the signature of a condition written where a gesture goes. */
+const CONDITION_AFTER_WHEN = /[<>]|==|!=/
+
 const INTERACTOR_SLOT = /^[^\n]*\b(confine|snap|enabled)\b/
 
 class Parser {
@@ -889,6 +892,11 @@ class Parser {
   }
 
   /** Error recovery: skips a `{…}` block if there is one, otherwise the line. */
+  /** Moves the cursor to the `{` opening the current statement's block, if it is on this line. */
+  private skipToBrace() {
+    while (!this.eof() && this.peek() !== '{' && this.peek() !== '\n') this.next()
+  }
+
   private recoverBlockOrLine() {
     this.skipWs()
     if (this.peek() === '{') {
@@ -934,6 +942,16 @@ class Parser {
           : e === 'pressed' ? 'press' : e === 'released' ? 'release' : e === 'dragged' ? 'drag' : e === 'held' ? 'longpress'
           : e === 'loaded' ? 'load' : null
         if (!ev) {
+          // `when <condition>` is the natural reflex for a rule-driven activity, and FlatInk has no such
+          // form: `when` takes a GESTURE. Listing the events leaves the author to infer that, and the
+          // line-level recovery then reports the body as two more errors. Name the rule, give the idiom,
+          // and swallow the block so the CAUSE is the only thing reported.
+          if (CONDITION_AFTER_WHEN.test(this.s.slice(this.i, this.s.indexOf('{', this.i) + 1 || undefined))) {
+            this.err(`\`when\` takes a GESTURE, never a condition — there is no \`when <condition>\` in FlatInk. Watch the condition in \`every frame { … }\`, and guard it with a flag (declare \`var done = 0\` in the header) so it fires ONCE instead of 60 times a second:\n    every frame {\n      if ${e} > 0 {\n        if done < 0.5 {\n          done = 1\n          send "…"\n        }\n      }\n    }`, m)
+            this.skipToBrace()
+            this.recoverBlockOrLine()
+            return null
+          }
           this.err(`unknown event "when ${e}" (clicked, hovered, unhovered, pressed, released, dragged, held, loaded)`, m)
           this.recoverBlockOrLine()
           return null
