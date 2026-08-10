@@ -52,17 +52,31 @@ Two consequences, both deliberate:
   how `match` has always worked in the language proper.
 
 ```
-place organs { prompt "…"  target Chest at 300,300  item heart -> Chest at 120,140 }
+place organs {
+  prompt "Place each organ in the body"
+  target Chest at 300,300
+  item heart -> Chest at 120,140
+}
 
-raw scene { layer "backdrop" { rect 0 0 760 620 fill linear(90, 0:#1b2a4a, 1:#4a6fa5) } }
-raw { object "TChest" { opacity = 0.9 } }
+raw scene under { layer "backdrop" { rect 0 0 760 620 fill linear(90, 0:#1b2a4a, 1:#4a6fa5) } }
+raw { object "organs_TChest" { opacity = 0.9 } }
 ```
 
 ## Several blocks in one document
 
 ```
-place words { prompt "…"  target Nouns at 200,200  item cat -> Nouns at 120,80 }
-compose coins { prompt "…"  total 150  chip 50 at 200,500  chip 100 at 420,500 }
+place words {
+  prompt "Put each word under its part of speech"
+  target Nouns at 200,200
+  item cat -> Nouns at 120,80
+}
+
+compose coins {
+  prompt "Make exactly 150"
+  total 150
+  chip 50  at 200,500
+  chip 100 at 420,500
+}
 
 raw scene under { layer "bg" { rect 0 0 760 620 fill #112233 } }
 ```

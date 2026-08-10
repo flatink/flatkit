@@ -28,8 +28,23 @@ function container(name: string, x: string, y: string, art: string[], hitbox?: {
   return [`    group "${name}" at ${x},${y} pivot 0,0${box} {`, '      layer "art" {', ...art.map((l) => `        ${l}`), '      }', '    }']
 }
 
-/** Split a block body into its non-empty, comment-free lines. */
-const lines = (body: string): string[] => body.split('\n').map((l) => l.replace(/\/\/.*$/, '').trim()).filter(Boolean)
+/** A line holding two statements: one keyword, then another after a run of spaces. */
+const RUNON = /^(?:prompt|target|item|total|chip|step)\b.*\s{2,}(?:prompt|target|item|total|chip|step)\b/
+
+/**
+ * Split a block body into its non-empty, comment-free lines — ONE STATEMENT PER LINE, like FlatInk
+ * itself. A body written inline is a run-on, and it deserves its own message: the grammar sketch in
+ * `summary` shows the shape on one line, so that is the natural thing to copy.
+ */
+function lines(kind: string, name: string, body: string): string[] {
+  const out = body.split('\n').map((l) => l.replace(/\/\/.*$/, '').trim()).filter(Boolean)
+  for (const line of out) {
+    if (!RUNON.test(line)) continue
+    const laid = line.split(/\s{2,}/).filter(Boolean).map((st) => `    ${st}`).join('\n')
+    throw new Error(`${kind} "${name}": two statements on one line — a block takes ONE per line, like FlatInk itself:\n  ${kind} ${name} {\n${laid}\n  }`)
+  }
+  return out
+}
 
 // ── place ────────────────────────────────────────────────────────────────────
 // The drop gesture: items belong on targets. Several items may share a target (a sort) or each may have
@@ -43,7 +58,7 @@ type PlaceModel = {
 
 function parsePlace(name: string, body: string, p: string): PlaceModel {
   const m: PlaceModel = { prompt: '', targets: [], items: [] }
-  for (const line of lines(body)) {
+  for (const line of lines('place', name, body)) {
     let x: RegExpMatchArray | null
     if ((x = line.match(/^prompt\s+"(.*)"$/))) m.prompt = x[1]
     else if ((x = line.match(/^target\s+(?:"([^"]+)"|(\S+))\s+at\s+(-?[\d.]+),(-?[\d.]+)$/))) {
@@ -115,7 +130,7 @@ function expandCompose(name: string, body: string, theme: Theme, ctx: GestureCon
   let target = 0
   const chips: { value: string; x: string; y: string }[] = []
   let prompt = ''
-  for (const line of lines(body)) {
+  for (const line of lines('compose', name, body)) {
     let x: RegExpMatchArray | null
     if ((x = line.match(/^prompt\s+"(.*)"$/))) prompt = x[1]
     else if ((x = line.match(/^total\s+(\d+)$/))) target = Number(x[1])
@@ -156,7 +171,7 @@ function expandSteps(name: string, body: string, theme: Theme, ctx: GestureConte
   const { prefix: p, index: b, doneVar } = ctx
   let prompt = ''
   const steps: { label: string; x: string; y: string }[] = []
-  for (const line of lines(body)) {
+  for (const line of lines('steps', name, body)) {
     let x: RegExpMatchArray | null
     if ((x = line.match(/^prompt\s+"(.*)"$/))) prompt = x[1]
     else if ((x = line.match(/^step\s+"(.*)"\s+at\s+(-?[\d.]+),(-?[\d.]+)$/))) steps.push({ label: x[1], x: x[2], y: x[3] })
@@ -235,7 +250,14 @@ export function sugarCard(opts: GestureOptions & { document?: { width: number; h
     `Canvas: ${doc.width}x${doc.height}, origin top-left. Coordinates are the CENTRE of each thing.`,
     'Anything you do not describe is not drawn.',
     '',
-    '## Blocks',
+    '## Blocks — ONE statement per line, like FlatInk itself',
+    '',
+    'place <name> {          compose <name> {        steps <name> {',
+    '  prompt "…"              prompt "…"              prompt "…"',
+    '  target <T> at x,y       total <n>               step "…" at x,y',
+    '  item <i> -> <T> at x,y  chip <v> at x,y       }',
+    '}                       }',
+    '',
     ...gestures({ theme }).map((g) => `- ${g.summary}`),
     '',
     'Several blocks may share a document; give each a DISTINCT name. They are laid out in the order you',
