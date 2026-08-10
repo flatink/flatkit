@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { printFlat, parseFlat, parseFlatLib, pathToData, printProgram, parseProgram, printProgramFull, parseProgramFull, behaviorDiagnostics, objectTargetDiagnostics, expandFeedback, sceneOnlyUnitDiagnostics, type Program } from './flatFormat'
+import { printFlat, parseFlat, parseFlatLib, pathToData, printProgram, parseProgram, printProgramFull, parseProgramFull, behaviorDiagnostics, objectTargetDiagnostics, expandFeedback, sceneOnlyUnitDiagnostics, itemOnlyUnitDiagnostics, type Program } from './flatFormat'
 import { parsePathData, circlePath, ellipsePath, rectPath } from './svgPath'
 import { folderPath } from './layers'
 import type { Folder, Group, Image, Instance, Region, SymbolDef, Text } from '@flatkit/types'
@@ -1578,5 +1578,36 @@ describe('scene-only constructs inside an object block', () => {
   it('points at the offending line, not the block', () => {
     const d = sceneOnlyUnitDiagnostics(scene + 'object "Box" {\n  x = 1\n  when loaded { x = 2 }\n}\n')
     expect(d[0].diag.line).toBe(5) // `when loaded`, not the `object` line
+  })
+})
+
+// The mirror of the trap above, and worse: a `when clicked`, a channel binding or an interactor written
+// at the PROGRAM level (outside any `object`) is dropped just as silently -- `unitsToTimeline` keeps only
+// the scene-wide kinds. `--check` passed with nothing but a misleading "never used" warning about the
+// variable the dropped handler wrote.
+describe('per-item constructs at the program level', () => {
+  const scene = 'size 100 100\nscene { layer "a" { group "Box" at 50,50 pivot 0,0 { layer "c" { rect -5 -5 10 10 fill #fff } } } }\n'
+
+  it('flags a top-level `when clicked` and names the fix', () => {
+    const d = itemOnlyUnitDiagnostics(scene + 'when clicked {\n  x = 1\n}\n')
+    expect(d).toHaveLength(1)
+    expect(d[0].diag.severity).toBe('error')
+    expect(d[0].diag.message).toMatch(/when clicked/)
+    expect(d[0].diag.message).toMatch(/object "/)
+    expect(d[0].diag.line).toBe(3)
+  })
+
+  it('flags a top-level channel binding and an interactor', () => {
+    const msgs = itemOnlyUnitDiagnostics(scene + 'opacity = 0.5\ndrag a, b\n').map((e) => e.diag.message).join(' ')
+    expect(msgs).toMatch(/opacity/)
+    expect(msgs).toMatch(/drag/)
+  })
+
+  it('says nothing about the scene-wide kinds, which run there', () => {
+    expect(itemOnlyUnitDiagnostics(scene + 'use "collision"\nlet c = 0\nfn twice(a) = a * 2\nwhen loaded { c = twice(3) }\nevery frame { c = c }\n')).toEqual([])
+  })
+
+  it('says nothing about the same constructs inside an object block', () => {
+    expect(itemOnlyUnitDiagnostics(scene + 'object "Box" {\n  when clicked { }\n  opacity = 0.5\n  drag a, b\n}\n')).toEqual([])
   })
 })

@@ -957,6 +957,45 @@ export function sceneOnlyUnitDiagnostics(src: string): { scope: string; diag: Di
   return out.sort((a, b) => a.diag.line - b.diag.line)
 }
 
+/** The mirror: the `ScriptUnit` kinds `unitsToTimeline` DROPS. A `when clicked`, a channel binding or an
+ *  interactor written at the PROGRAM level belongs to an ITEM, and there is no item there -- so it was
+ *  dropped, silently, exactly like the scene-wide kinds inside an `object`. This half was the worse of the
+ *  two: the only signal was a "never used" warning about the variable the dropped handler wrote, which
+ *  points at the wrong thing entirely. `use`, `let` and `fn` are NOT here -- an earlier pass collects them
+ *  and they do run at the top level. */
+const ITEM_ONLY = (u: ScriptUnit): { find: RegExp; what: string } | null => {
+  if (u.kind === 'event' && u.event !== 'load' && u.event !== 'enterFrame')
+    return { find: /^\s*when\s+(clicked|hovered|unhovered|pressed|released|dragged|held)\b/, what: '`when clicked { … }` (and the other per-item events)' }
+  if (u.kind === 'drop') return { find: /^\s*when\s+dropped\b/, what: '`when dropped on <Zone> { … }`' }
+  if (u.kind === 'binding') return { find: new RegExp(`^\\s*${u.channel}\\s*=`), what: `the binding \`${u.channel} = …\`` }
+  if (u.kind === 'modifier') return { find: /^\s*(spring|smooth)\b/, what: '`spring …` / `smooth …`' }
+  if (u.kind === 'interactor') return { find: /^\s*(drag|dragX|dragY|turnDeg|turn|trace|reveal|link)\b/, what: 'an interactor (`drag`, `turn`, `trace`, `reveal`, `link`)' }
+  return null
+}
+
+/** Per-item constructs written at the PROGRAM level -- silently dropped, so ERROR. The message names the
+ *  construct and says it needs an `object "Name" { … }` around it. */
+export function itemOnlyUnitDiagnostics(src: string): { scope: string; diag: Diagnostic }[] {
+  const region = behaviorRegions(src).find((r) => r.scope === 'scene')
+  if (!region) return []
+  const lines = region.body.split('\n')
+  const seen = new Map<string, string>() // regex source -> what (one entry per distinct construct)
+  for (const u of parseUnits(region.body).units) {
+    const loc = ITEM_ONLY(u)
+    if (loc) seen.set(loc.find.source, loc.what)
+  }
+  const out: { scope: string; diag: Diagnostic }[] = []
+  for (const [source, what] of seen) {
+    const find = new RegExp(source)
+    lines.forEach((text, i) => {
+      if (find.test(text))
+        out.push({ scope: 'scene', diag: { line: region.line + i, col: 1, severity: 'error',
+          message: `${what} drives ONE item and does NOTHING at the program level -- it is dropped, which is why nothing happened. Wrap it in \`object "Name" { … }\`, naming the group it should drive. Only \`when loaded\`, \`every frame\`, \`at frame\`, \`use\`, \`let\` and \`fn\` are program-wide.` } })
+    })
+  }
+  return out.sort((a, b) => a.diag.line - b.diag.line)
+}
+
 /** Two `object "X"` blocks binding the SAME channel: the later one wins and the earlier is lost. Blocks
  *  that bind DIFFERENT channels merge cleanly and say nothing — that is the normal way a skin adds a
  *  wobble to something the rules already move. */
