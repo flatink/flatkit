@@ -316,3 +316,29 @@ describe('sugarCard teaches the hatch that can actually carry decor', () => {
     expect(checkProgram(desugar(src).flatink).errors).toBe(0)
   })
 })
+
+// Found by the smoke test that installs the PUBLISHED package and runs the documented example — the one
+// place a defect in the docs and a defect in the code meet.
+describe('top-level raw lands where its statements are legal', () => {
+  const block = 'compte a {\n  cible 2\n}\n'
+  const run = (src: string) => desugar(src, { gestures: [counter] })
+
+  it('`var` written after the block still compiles — it is a HEADER declaration', () => {
+    // `var` after `scene` is a parse error, and the escape hatch put it exactly there. `object` and `fn`
+    // are legal on either side, so the header position is the only one where all of it works.
+    const r = run(`${block}\nraw { var extra = 1 }\n`)
+    expect(r.flatink.indexOf('var extra = 1')).toBeLessThan(r.flatink.indexOf('scene {'))
+    expect(checkProgram(r.flatink).errors).toBe(0)
+  })
+
+  it('an `object` in raw is accepted too, moved or not — behavior binds by name', () => {
+    const r = run(`${block}\nraw { object "Bouton" { opacity = 0.5 } }\n`)
+    expect(checkProgram(r.flatink).errors).toBe(0)
+    expect(r.flatink).toContain('opacity = 0.5')
+  })
+
+  it('the one-line body is not indented by the braces that hugged it', () => {
+    const r = run(`${block}\nraw { var extra = 1 }\n`)
+    expect(r.flatink).toMatch(/^var extra = 1$/m) // not " var extra = 1"
+  })
+})

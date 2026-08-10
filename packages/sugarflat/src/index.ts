@@ -123,7 +123,10 @@ function takeRaw(text: string): RawParts {
     const openBrace = m.index + m[0].length - 1
     const end = blockEnd(text, openBrace)
     if (end < 0) break // unbalanced: leave it alone, the compiler will say so
-    const body = text.slice(openBrace + 1, end).replace(/^\r?\n/, '').replace(/\r?\n[ \t]*$/, '')
+    const raw = text.slice(openBrace + 1, end)
+    // One-line form (`raw { var x = 1 }`) keeps the spaces that hugged the braces; the multi-line form
+    // keeps its own indentation, which is the author's.
+    const body = raw.includes('\n') ? raw.replace(/^\r?\n/, '').replace(/\r?\n[ \t]*$/, '') : raw.trim()
     const bucket = m[0].includes('scene') ? (m[1] ? out.under : out.over) : out.top
     bucket.push(body)
     out.rest += text.slice(cursor, m.index)
@@ -209,8 +212,12 @@ export function desugar(src: string, opts: DesugarOptions = {}): DesugarResult {
     const head = takeRaw(before)
     const tail = takeRaw(after)
     const expanded = spliceIntoScene(flatink, [...head.under, ...tail.under], [...head.over, ...tail.over])
+    // Everything top-level goes BEFORE the expansion, wherever the author wrote it. `var` (and `asset`,
+    // `use`, `def`) are header declarations and are a parse error after `scene`, while `object`/`fn` are
+    // accepted on either side -- so the header position is the only one where all of it is valid. Moving
+    // an `object` up changes nothing: behavior binds by name, not by position.
     const topLevel = (p: RawParts) => [p.rest.trim(), ...(p.top.length ? [RAW_NOTE, ...p.top] : [])].filter(Boolean).join('\n')
-    const whole = [topLevel(head), expanded, topLevel(tail)].filter(Boolean).join('\n\n')
+    const whole = [topLevel(head), topLevel(tail), expanded].filter(Boolean).join('\n\n')
     return { flatink: ensureHeader(whole, doc), kind: gesture.keyword, expanded: true, meta }
   }
   // A keyword that opens a block at column 0 and is NOT a FlatInk statement is a sugar block we do not
