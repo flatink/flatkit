@@ -373,10 +373,24 @@ function estTextWidth(t: Text): number {
   return longest * advance
 }
 
+/** Bounds of what a `text` actually PAINTS, in parent space -- as opposed to the box it declares.
+ *  Measured on the deckgen corpus: 36 of 53 warnings were `align center` texts in a comfortable box, where
+ *  the box crosses the canvas edge and the glyphs sit hundreds of pixels short of it. A box is a layout
+ *  frame, not ink: `text "Accepter" align center box 780 40` is 8 glyphs in the middle of 780 px.
+ *  A WRAPPED text keeps its box -- there the ink really can fill the width. Anything else is unchanged. */
+function inkBBox(doc: Doc, it: Item): ReturnType<typeof itemBBox> {
+  const box = itemBBox(doc, it)
+  if (!box || !isText(it) || it.wrap || it.textPath) return box
+  const estW = estTextWidth(it)
+  if (estW >= it.box.w) return box // the ink fills (or overruns) the frame -> the frame IS the measure
+  const left = it.align === 'left' ? 0 : it.align === 'right' ? it.box.w - estW : it.box.w / 2 - estW / 2
+  return transformBBox({ minX: left, minY: 0, maxX: left + estW, maxY: it.box.h }, it.transform)
+}
+
 /** Greedy word-wrap of a `wrap` text at its box width — the renderer's own rule (break at spaces, and
  *  only at spaces). Returns the resulting line count and the widest single word, which is what decides
  *  whether anything spills sideways: a word wider than the box has no break point and runs past it. */
-function wrapMetrics(t: Text): { lines: number; widestWord: number } {
+export function wrapMetrics(t: Text): { lines: number; widestWord: number } {
   const advance = glyphAdvance(t)
   const width = (s: string) => s.length * advance
   let lines = 0
@@ -428,7 +442,7 @@ export function docLayoutWarnings(doc: Doc): { scope: string; diag: Diagnostic }
   //     entirely off-screen ("hidden" pattern).
   for (const { it, parent, dynamic } of placed) {
     if (dynamic || (isText(it) && it.textPath)) continue // path-laid text → §(f), not a box
-    const local = itemBBox(doc, it)
+    const local = inkBBox(doc, it)
     if (!local) continue
     const b = transformBBox(local, parent) // itemBBox is PARENT-space → compose with the ancestors
     const visible = b.maxX > 0 && b.minX < W && b.maxY > 0 && b.minY < H // overlaps the canvas (not parked off-screen)
@@ -449,7 +463,14 @@ export function docLayoutWarnings(doc: Doc): { scope: string; diag: Diagnostic }
     const p0 = apply(m, { x: left, y: 0 }), p1 = apply(m, { x: left + estW, y: 0 })
     const wl = Math.min(p0.x, p1.x), wr = Math.max(p0.x, p1.x) // left/right edge of the content in world coords
     if (wr > W + TOL || wl < -TOL) {
-      out.push(warn(`text "${it.content.slice(0, 24)}${it.content.length > 24 ? '…' : ''}" overflows the canvas (estimated ~${r0(estW)} px, edge ${r0(wl)}->${r0(wr)} outside 0->${W}) — add "wrap"`))
+      // `wrap` breaks at SPACES and nowhere else, so it can do nothing for a single word -- and a giant
+      // single word bleeding off the frame is a deliberate gesture in every corpus measured (ghost
+      // typography: `1815`, `URUK`, `1429`). Prescribing `wrap` there is advice that cannot be followed.
+      const oneWord = !/\s/.test(it.content.trim())
+      const advice = oneWord
+        ? ' — `wrap` cannot help: it breaks at spaces, and this is a single word. Intentional if the bleed is the point; otherwise reduce the size or move it in'
+        : ' — add "wrap"'
+      out.push(warn(`text "${it.content.slice(0, 24)}${it.content.length > 24 ? '…' : ''}" overflows the canvas (estimated ~${r0(estW)} px, edge ${r0(wl)}->${r0(wr)} outside 0->${W})${advice}`))
     }
   }
 
@@ -468,10 +489,17 @@ export function docLayoutWarnings(doc: Doc): { scope: string; diag: Diagnostic }
   const parked = (b: { maxX: number; maxY: number }) => b.maxX < 0 && b.maxY < 0
   const offCanvas = (b: { minX: number; minY: number; maxX: number; maxY: number }) =>
     (b.maxX < -TOL || b.minX > W + TOL || b.maxY < -TOL || b.minY > H + TOL) && !parked(b)
+  // A container's bbox is the UNION of its children's, so it is only static if they all are. Measured on
+  // the deckgen corpus: `group "S0"` drives nothing but `opacity`, and holds a slide-in whose static `at`
+  // parks it off-screen — the union landed off-canvas and the group was reported. The `dynamic` flag was
+  // inherited DOWNWARD (a moved parent moves its children) but never upward, which is the other half of
+  // the same fact.
+  const movesADescendant = (it: Item): boolean =>
+    dynamicPos(it) || (isGroup(it) && it.layers.some((l) => l.items.some(movesADescendant)))
   const reportOffCanvas = (items: Item[], matrix: Transform, dynamic: boolean): void => {
     for (const it of items) {
       const isDynamic = dynamic || dynamicPos(it)
-      if (!isDynamic && !(isText(it) && it.textPath)) {
+      if (!isDynamic && !movesADescendant(it) && !(isText(it) && it.textPath)) {
         const local = itemBBox(doc, it)
         const b = local && transformBBox(local, matrix)
         if (b && offCanvas(b)) {
@@ -494,9 +522,13 @@ export function docLayoutWarnings(doc: Doc): { scope: string; diag: Diagnostic }
     if (!isText(it) || !it.wrap || it.textPath) continue
     const { lines, widestWord } = wrapMetrics(it)
     const label = `${it.content.slice(0, 24).replace(/\n/g, ' ')}${it.content.length > 24 ? '…' : ''}`
-    const tall = lines * it.size * it.lineHeight
+    // ONE line of slack. The estimator has no canvas: it wraps on a mean glyph advance, so it breaks a
+    // little early and lands one line long -- measured against skia on five decks (3/4/5 where skia laid
+    // 2/3/4). Warning at +1 line meant 36 warnings on a corpus where none matched a defect on screen, and
+    // a warning nobody believes is worse than none. Two lines over is a real overflow.
+    const tall = (lines - 1) * it.size * it.lineHeight
     if (tall > it.box.h + TOL) {
-      out.push(warn(`text "${label}" overflows its box: ~${lines} wrapped line(s) ≈ ${r0(tall)} px for a box ${r0(it.box.h)} px tall — raise the box height, shorten the text, or reduce the size`))
+      out.push(warn(`text "${label}" overflows its box: ~${lines} wrapped line(s) ≈ ${r0(lines * it.size * it.lineHeight)} px for a box ${r0(it.box.h)} px tall — raise the box height, shorten the text, or reduce the size`))
     }
     if (widestWord > it.box.w + TOL) {
       out.push(warn(`text "${label}" has a word too wide for its box (~${r0(widestWord)} px > ${r0(it.box.w)} px) — a single word cannot be broken, so it spills past the frame whatever "wrap" says`))

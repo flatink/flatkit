@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { scopeProgram, docLintContext, lintDoc, lintDocReport, docStructureWarnings, docHasErrors, docLayoutWarnings } from './programDoc'
+import { scopeProgram, docLintContext, lintDoc, lintDocReport, docStructureWarnings, docHasErrors, docLayoutWarnings, wrapMetrics } from './programDoc'
 import { compileFlatpack } from './compile'
 import { IDENTITY, translation } from '@flatkit/engine/transform'
 import type { Doc, Group, Image, Instance, Interaction, Layer, Paint, Region, SymbolDef, Text } from '@flatkit/types'
@@ -644,5 +644,94 @@ describe('programDoc — lint positions point into the SOURCE, not a rebuilt pro
     const diags = lintDoc(doc).filter(({ diag }) => /doneAtt/.test(diag.message))
     expect(diags).toHaveLength(1)
     expect(diags[0].diag.line).not.toBe(14)
+  })
+})
+
+// Reported from the deckgen corpus: 174 files, 53 warnings, and NONE of them matched a defect visible on
+// screen. Two of the three causes are ours, and both come from measuring a DECLARATION instead of what
+// gets drawn.
+describe('layout warnings — measuring the ink, not the declaration', () => {
+  const doc = (items: Text[], w: number, h: number): Doc =>
+    ({ width: w, height: h, symbols: [], layers: [{ id: 'l', name: 'a', visible: true, locked: false, opacity: 1, items }], timeline: { fps: 24, durationFrames: 24, tracks: [] } })
+
+  const txt = (over: Partial<Text> = {}): Text => ({
+    id: 't1', kind: 'text', name: 'T', content: 'Accepter', transform: { a: 1, b: 0, c: 0, d: 1, e: 400, f: 600 },
+    font: 'system-ui, sans-serif', size: 40, align: 'center', lineHeight: 1.2, color: '#ffffff', box: { w: 780, h: 40 }, ...over,
+  } as Text)
+
+  it('a centred text in a generous box is not "clipped" because the BOX crosses the edge', () => {
+    // `align center … box 780 40` at x=400 on a 1080 canvas: the box spans 400->1180, the glyphs sit
+    // around 790. Every centred text with a comfortable box tripped this.
+    const ws = docLayoutWarnings(doc([txt()], 1080, 1350))
+    expect(ws.filter((w) => /clipped at the canvas edge/.test(w.diag.message))).toEqual([])
+  })
+
+  it('but a centred text whose INK really crosses the edge is still reported', () => {
+    const ws = docLayoutWarnings(doc([txt({ content: 'A very long headline that truly runs past the right edge of the canvas', size: 60, box: { w: 1400, h: 70 } })], 1080, 1350))
+    expect(ws.some((w) => /overflows the canvas|clipped at the canvas edge/.test(w.diag.message))).toBe(true)
+  })
+
+  it('a wrapped text one estimated line over its box says nothing', () => {
+    // The estimator is approximate by construction (no canvas, a mean glyph advance). Measured against
+    // skia on five decks it ran ONE line long, so a one-line margin is the difference between a warning
+    // that means something and 36 that do not.
+    const t = txt({ content: 'A caption of middling length that only just fits its frame', wrap: true, box: { w: 400, h: 96 }, size: 20, align: 'left' })
+    const { lines } = wrapMetrics(t)
+    const ws = docLayoutWarnings(doc([{ ...t, box: { w: 400, h: (lines - 1) * 20 * 1.2 } } as Text], 1080, 1350))
+    expect(ws.filter((w) => /overflows its box/.test(w.diag.message))).toEqual([])
+  })
+
+  it('and two lines over is still reported', () => {
+    const t = txt({ content: 'A caption of middling length that only just fits its frame', wrap: true, box: { w: 400, h: 96 }, size: 20, align: 'left' })
+    const { lines } = wrapMetrics(t)
+    const ws = docLayoutWarnings(doc([{ ...t, box: { w: 400, h: (lines - 2) * 20 * 1.2 } } as Text], 1080, 1350))
+    expect(ws.some((w) => /overflows its box/.test(w.diag.message))).toBe(true)
+  })
+})
+
+// The third deckgen false positive, and its cause was not the one anyone assumed. A group whose OWN
+// position is static, but that CONTAINS an item a binding moves, has no meaningful static bbox either:
+// the union of its children is measured where the children are parked, not where they play.
+describe('off-canvas — a container inherits its children\'s motion', () => {
+  const prog = (childDriven: boolean) => `size 1080 1920
+timeline 24 240
+scene { layer "a" {
+  group "S0" at 0,0 pivot 0,0 { layer "c" {
+    group "s0_sl" at 1840,700 pivot 0,0 { layer "c" { rect 0 0 600 240 fill #cc3333 } }
+  } }
+} }
+object "S0" {
+  opacity = clamp(time / 0.45, 0, 1)
+}
+${childDriven ? 'object "s0_sl" {\n  x = 540 + (1300 - 1352 * clamp((time - 0.05) / 0.30, 0, 1))\n}' : ''}
+`
+  const offCanvas = (src: string) => docLayoutWarnings(compileFlatpack(src, [], {})).filter((w) => /off-canvas/.test(w.diag.message))
+
+  it('says nothing about a parent whose child is driven, even when the parent only drives opacity', () => {
+    expect(offCanvas(prog(true))).toEqual([])
+  })
+
+  it('but still reports a parent whose children are ALL static and off-canvas', () => {
+    expect(offCanvas(prog(false))).toHaveLength(1)
+  })
+})
+
+// "add wrap" is bad advice for a giant word bled off-frame on purpose -- reported from the deckgen decks,
+// where the ghost typography (`1815`, `URUK`, `1429`, `P`) is the whole visual gesture. The exact rule is
+// better than the size heuristic they suggested: `wrap` breaks at SPACES, so it can do nothing at all for
+// a single word, whatever its size.
+describe('canvas overflow — the advice matches what wrap can do', () => {
+  const prog = (content: string) => `size 800 450\nscene { layer "a" { text "${content}" at 380,70 font "system-ui, sans-serif" size 280 align left color #cc3333 box 900 340 } }\n`  // the deck-jeanne-darc geometry: ~582 px of ink, 380->962
+  const msg = (content: string) => docLayoutWarnings(compileFlatpack(prog(content), [], {})).map((w) => w.diag.message).find((m) => /overflows the canvas/.test(m)) ?? ''
+
+  it('does not tell you to wrap a single word', () => {
+    const m = msg('1429')
+    expect(m).toMatch(/overflows the canvas/)
+    expect(m).not.toMatch(/add "wrap"/)
+    expect(m).toMatch(/single word|no space/i)
+  })
+
+  it('still offers wrap when there IS somewhere to break', () => {
+    expect(msg('Jeanne d Arc a Orleans')).toMatch(/add "wrap"/)
   })
 })
