@@ -1,5 +1,41 @@
 # @flatkit/types
 
+## 0.29.2
+
+### Patch Changes
+
+- [`307c60e`](https://github.com/flatink/flatkit/commit/307c60e34ab9022981ffc7f533bf87ba4f790364) Thanks [@kaelhem](https://github.com/kaelhem)! - Per-item constructs at the program level were dropped in silence too -- now an error.
+
+  The mirror of the fix in 0.29.1. A `when clicked`, a channel binding (`opacity = 0.5`) or an interactor
+  (`drag a, b`) written OUTSIDE any `object` block belongs to an item, and there is no item there:
+  `unitsToTimeline` keeps only the scene-wide kinds and drops the rest. `--check` passed, and the only
+  signal was a "never used" warning about the variable the dropped handler wrote -- which points at the
+  wrong thing entirely. The message now names the construct and says to wrap it in `object "Name" { … }`.
+
+- [`6bb9674`](https://github.com/flatink/flatkit/commit/6bb9674e354a1b47b7590adc01e0280b63ffbc9f) Thanks [@kaelhem](https://github.com/kaelhem)! - `when <condition>` and `at x y` now name the rule they broke.
+
+  Both come from a day of real use writing a rule-driven activity.
+
+  `when biomasse > 55 { … }` is the reflex of anyone expressing a system, and FlatInk has no conditional
+  `when`. Listing the accepted events left the author to infer that, and the line-level recovery then
+  reported the body as two MORE errors. It now states the rule once, swallows the block, and gives the
+  `every frame` + flag idiom -- guarded, because the block runs 60 times a second and an unguarded `send`
+  fires sixty events. The idiom inside the message is parsed by a test, so it cannot teach a form the parser
+  rejects.
+
+  `at 12 -16` (a space where the comma goes, the reflex of anyone who has written SVG) said `"," expected,
+"-16" found` -- accurate about the token, silent about `at`. It now shows both spellings.
+
+  The guide gains the paragraph, and the three references the one-liner.
+
+- [`9f6eba5`](https://github.com/flatink/flatkit/commit/9f6eba54be796ee24a6eb83b15a7b113176724cc) Thanks [@kaelhem](https://github.com/kaelhem)! - The `link` thread idiom is in the prompts, as a program that compiles.
+
+  `link` returns the end point and the target index; it does NOT draw the thread, and nobody writes anything
+  but `rotation = angle(...)` / `scaleX = dist(...) / <drawn length>`. Those two lines were in the guide and
+  in none of the six embedded prompts -- so every integrator rediscovered them. `flatink-core` and
+  `role-coder` now carry a complete worked program (compiled by `prompts.test.ts`), and `flatink-lite` the
+  two lines.
+
 ## 0.29.1
 
 ### Patch Changes
