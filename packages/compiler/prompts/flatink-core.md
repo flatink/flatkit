@@ -66,7 +66,11 @@ tint <color> <amount(0..1)>                        // Flash-style tint
 nohit                                              // drawn but ignored by hit-test
 ```
 
-## Animation — timeline / cel / pose (in a `symbol`)
+## Animation — timeline / cel / pose
+
+Cels are how anything moves on a timeline, and they work in BOTH halves: inside a `symbol` (a reusable
+animated asset) **and inside a program's `scene { … }`** (a title card, a staggered entrance, a slide).
+Do not hand-write `clamp((time - t0) / dur, 0, 1)` per channel — that is a keyframe engine, retyped.
 
 A symbol owns a **timeline**; an animated **layer** is a track of **cels** (keyframes). Each cel lists
 the **poses** of containers declared once in the layer roster, plus (optionally) the layer's **matter**
@@ -92,6 +96,28 @@ pose "Name" [at x,y] [rotate <deg>] [scale s | scaleX sx scaleY sy]
 - `ease linear|easeIn|easeOut|easeInOut|cubic(a,b,c,d)` on a cel.
 - `pose` units are **human**: degrees, multipliers, around the group's **`pivot`**.
 - A `pose` is a **patch**: it only overrides channels it names (keeps declared position/scale/etc.).
+
+### The same cels, in a program's scene
+
+```
+size 960 540
+timeline 24 240
+scene {
+  layer "slide" {
+    group "Title" at 64,180 pivot 0,0 { layer "c" { text "Title" at 0,0 font "Georgia, serif" size 64 align left color #f3e6c8 box 700 80 } }
+    group "Sub"   at 64,270 pivot 0,0 { layer "c" { text "Subtitle" at 0,0 font "Georgia, serif" size 28 align left color #c8a24a box 500 40 } }
+    cel 0       tween ease easeOut { pose "Title" at 64,194 opacity 0 }
+    cel 12 hold tween ease easeOut { pose "Title" at 64,180 opacity 1   pose "Sub" at 64,284 opacity 0 }
+    cel 24 hold                    { pose "Sub"   at 64,270 opacity 1 }
+  }
+}
+object "Sub" { dy = 3 * sin(clock * 1.2) }
+```
+
+- **`hold` on every cel but the first**, or a cel that does not pose an element makes it VANISH.
+- **Frames may be fractional**: `cel 28.8` is 1.2 s at 24 fps — a deck thinks in seconds.
+- **Keyframes and bindings COMPOSE**: cels choreograph, `dx`/`dy` add what never stops. The binding
+  offsets the keyframed position instead of replacing it.
 
 ### Frame-by-frame — one DRAWING per cel (`matter`)
 

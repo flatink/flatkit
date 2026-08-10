@@ -349,6 +349,40 @@ describe('programDoc — cel-layer warnings (silent drops)', () => {
     expect(ws[0].diag.message).toMatch(/"Ghost"/)
   })
 
+  // An item posed by one cel, absent from the next, then posed again LATER blinked out and back. A cel
+  // is a full snapshot, so that is the model working as designed — and for a symbol's exit it is exactly
+  // right. But a staggered entrance (three things arriving at three moments, the deck case) needs `hold`
+  // on every cel, and forgetting it makes elements vanish mid-run with nothing to say so.
+  it('an item posed, skipped, then posed again -> warning naming `hold`', () => {
+    const d = doc(celLayer([group('a', 'A'), group('b', 'B')], [
+      { frame: 0, poses: [{ id: 'a' }] },
+      { frame: 12, poses: [{ id: 'b' }] }, // A is gone here…
+      { frame: 24, poses: [{ id: 'a' }, { id: 'b' }] }, // …and back here
+    ]))
+    const ws = hit(d, /disappears/)
+    expect(ws).toHaveLength(1)
+    expect(ws[0].diag.message).toContain('"A"')
+    expect(ws[0].diag.message).toMatch(/hold/)
+    expect(docHasErrors(d)).toBe(false) // a warning: the model is legitimate, the omission usually is not
+  })
+
+  it('an item posed then absent for GOOD is an exit, and says nothing', () => {
+    const d = doc(celLayer([group('a', 'A'), group('b', 'B')], [
+      { frame: 0, poses: [{ id: 'a' }, { id: 'b' }] },
+      { frame: 12, poses: [{ id: 'b' }] }, // A leaves and never returns — that is how an exit is written
+    ]))
+    expect(hit(d, /disappears/)).toEqual([])
+  })
+
+  it('posed on every cel -> nothing, which is what `hold` produces', () => {
+    const d = doc(celLayer([group('a', 'A')], [
+      { frame: 0, poses: [{ id: 'a' }] },
+      { frame: 12, poses: [{ id: 'a' }] },
+      { frame: 24, poses: [{ id: 'a' }] },
+    ]))
+    expect(hit(d, /disappears/)).toEqual([])
+  })
+
   it('scoped to the owning symbol, and nested group layers are visited', () => {
     const inner = celLayer([shape('r')], [{ frame: 0, poses: [] }])
     const outer: Group = { id: 'g', kind: 'group', name: 'G', transform: IDENTITY, layers: [inner] }

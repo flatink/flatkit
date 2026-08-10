@@ -296,6 +296,24 @@ export function docCelLayerWarnings(doc: Doc): { scope: string; diag: Diagnostic
           for (const c of l.cels) for (const p of c.poses) posed.add(p.id)
           for (const id of posed) if (id.startsWith('@')) push(`layer "${l.name}": \`pose "${id.slice(1)}"\` matches no item of this layer — the pose draws nothing (roster: ${l.items.map(itemLabel).join(', ') || 'empty'}).`)
           for (const it of l.items) if (isPoseable(it) && !posed.has(it.id)) push(`layer "${l.name}": "${itemLabel(it)}" is never posed by a cel — it is never drawn. Add \`pose "${itemLabel(it)}"\` to the cels where it should show.`)
+          // Posed, SKIPPED, then posed again: the item blinked out and back. A cel is a full snapshot, so
+          // that is the model working as designed — and it is exactly how an exit is written, which is why
+          // a FINAL absence says nothing. But a staggered entrance (three things arriving at three
+          // moments) needs `hold` on every cel, and forgetting it makes elements vanish mid-run in
+          // silence. That omission is what a program-scene animation trips on, every time.
+          const cels = [...l.cels].sort((a, b) => a.frame - b.frame)
+          for (const it of l.items) {
+            if (!isPoseable(it)) continue
+            const at = cels.map((c) => c.poses.some((p) => p.id === it.id))
+            const first = at.indexOf(true)
+            const last = at.lastIndexOf(true)
+            // The hole must sit BETWEEN the first and last pose. Absent before the first is a late
+            // ENTRANCE, absent after the last is an EXIT — both are how the model is meant to be used.
+            const gap = at.findIndex((on, i) => !on && i > first && i < last)
+            if (gap >= 0) {
+              push(`layer "${l.name}": "${itemLabel(it)}" is posed at cel ${cels[first].frame}, absent at cel ${cels[gap].frame}, then posed again at cel ${cels[last].frame} — a cel is a FULL snapshot, so it disappears in between. Add \`hold\` to the cels that should carry it forward (\`cel ${cels[gap].frame} hold { … }\`), or pose it there.`)
+            }
+          }
         }
         for (const it of l.items) if (isGroup(it)) visit(it.layers)
       }

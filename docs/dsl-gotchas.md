@@ -76,7 +76,14 @@
 
 ## Animation (pose / cel / timeline)
 
-> Full guide: **[Animating a symbol](animating-symbols.md)**. The sharp edges:
+> Full guide: **[Animating with keyframes](animating-symbols.md)**. The sharp edges:
+
+- **Cels are NOT symbol-only.** A layer inside a program's `scene { … }` takes them too, riding the
+  program's timeline — that is how a title card or a staggered entrance is written. Every doc example
+  happens to wrap them in a `symbol`, and a whole deck generator concluded they were unavailable and
+  hand-compiled `clamp((time - t0) / dur, 0, 1)` for every element and channel instead. Frames may be
+  fractional (`cel 28.8` = 1.2 s @24fps), and bindings compose on top: cels choreograph, `dx`/`dy` add
+  what never stops.
 
 - **`pose` rotates/scales in human units**: `pose "G" rotate 90 scale 2` — **degrees** and multipliers,
   **around the group's `pivot`**. No hand-written `matrix(cosθ, sinθ, …)`, no radians. `scaleX`/`scaleY`
@@ -112,7 +119,7 @@
   fill #e33 } }` — that IS how you author **frame-by-frame** (a new `matter` per cel; it holds until the
   next one, `morph` tweens the shape). A static element belongs on a **cel-less layer**. `--check` warns
   on all three silent drops: a bare shape in a cel layer, a `pose "X"` matching no roster item, and a
-  roster item no cel poses. See [Animating a symbol](animating-symbols.md).
+  roster item no cel poses. See [Animating with keyframes](animating-symbols.md).
 - **Render order**: in an animated layer the **matter draws BEHIND the posed containers**, and
   declaration order between the matter and an animated `group` is NOT preserved. To put a static
   shape in front of an animation, give it its own **layer above** (or wrap it in a group).
@@ -129,7 +136,7 @@
   time — the object moves *inside* a fixed canvas, it does not "jump". No need for an invisible anchor.
 - **Exposed interface** (`params {}` / `states {}`): a symbol can publish typed params (color/number/bool,
   `fill <param>`) and named states (`states door { closed at 0 open at 24 }`, driven by `Name.param = open`).
-  See [Animating a symbol](animating-symbols.md). Restyle/tune without touching internals.
+  See [Animating with keyframes](animating-symbols.md). Restyle/tune without touching internals.
 - **A container shows only on cels that pose it** — a cel is a full snapshot, so a container omitted from a
   cel disappears there (that's how a symbol *exits*). For a container that stays put: declare it on its own
   **cel-less layer** (always shown, declared once), or use **`cel N hold { … }`** to carry the previous

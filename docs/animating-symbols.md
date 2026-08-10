@@ -1,6 +1,6 @@
-# Animating a symbol (`.flat`)
+# Animating with keyframes
 
-> How a `.flat` symbol moves over time: the **timeline / cel / pose** model (Flash-style), the `pose`
+> The **timeline / cel / pose** model (Flash-style), the `pose`
 > keywords (`rotate`, `scale`, `opacity`, `spin`…), pivots, tweens, and how to preview the result.
 > If you only need static composition, see [Scene & drawing](scene-and-drawing.md).
 
@@ -146,6 +146,52 @@ Two other ways to author the same thing, when the drawings already exist as obje
 > nothing else. Put the shape inside a `matter { … }`, or on a **cel-less layer** if it is static decor.
 > `flatc --check` warns about it, and about the two sibling silent drops: a `pose "X"` naming no roster
 > item, and a roster item that no cel ever poses.
+
+## The same cels animate a PROGRAM's scene
+
+Everything above is written with a `symbol` around it, because that is where a reusable animation lives.
+It is not a restriction: **a layer inside `scene { … }` takes cels too**, and they ride the program's own
+timeline. That is how you animate a title card, a staggered entrance, a slide — anything that belongs to
+one document rather than to a reusable asset.
+
+```flatink
+size 960 540
+background #0f1420
+timeline 24 240
+
+scene {
+  layer "slide" {
+    group "Title" at 64,180 pivot 0,0 { layer "c" { text "Jeanne d'Arc" at 0,0 font "Georgia, serif" size 64 align left color #f3e6c8 box 700 80 } }
+    group "Sub"   at 64,270 pivot 0,0 { layer "c" { text "Orleans, 1429" at 0,0 font "Georgia, serif" size 28 align left color #c8a24a box 500 40 } }
+    group "Mark"  at 64,340 pivot 0,0 { layer "c" { rect 0 0 120 4 2 fill #c8a24a } }
+
+    cel 0        tween ease easeOut { pose "Title" at 64,194 opacity 0 }
+    cel 12  hold tween ease easeOut { pose "Title" at 64,180 opacity 1   pose "Sub" at 64,284 opacity 0 }
+    cel 24  hold tween ease easeOut { pose "Sub"   at 64,270 opacity 1   pose "Mark" scaleX 0 }
+    cel 36  hold                    { pose "Mark"  scaleX 1 }
+  }
+}
+
+object "Sub" {
+  dy = 3 * sin(clock * 1.2)
+}
+```
+
+Three things arrive in turn, each easing in, and the subtitle keeps breathing afterwards. Note what does
+the work:
+
+- **`hold` on every cel after the first.** A cel is a full snapshot, so a cel that does not pose the
+  title makes the title vanish. `hold` carries forward everything the cel does not mention — which for a
+  staggered entrance means *every* cel but the first. Forget it and elements disappear mid-run;
+  `--check` reports it (see [presence across cels](#presence-across-cels--a-cel-is-a-full-snapshot)).
+- **Frames may be fractional.** A deck thinks in seconds: `cel 28.8` is 1.2 s at 24 fps.
+- **Keyframes and expressions COMPOSE.** The cels drive `Sub`'s position and opacity; the `dy` binding
+  adds an offset on top of whatever the keyframe resolved. Keyframes for the choreography, expressions
+  for what never stops — that is the division of labour, and `dx`/`dy` exist so the second never
+  overwrites the first.
+
+Written as expressions instead, that slide is three `clamp((time - t0) / dur, 0, 1)` formulas per
+element, per channel — a keyframe engine, retyped. Reach for cels first.
 
 ## Driving a channel with an expression (`expr`)
 

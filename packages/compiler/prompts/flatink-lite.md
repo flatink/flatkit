@@ -41,7 +41,7 @@ Style: `fill #rrggbb | nofill` · `stroke #rgb <w> [cap round][join round][dash 
 `fill linear(90, 0:#a, 1:#b)` (0=→,90=↓) · `fill radial(0.5,0.5,0.5, 0:#fff,1:#000)` ·
 `filter glow <blur> <color> | shadow <dx> <dy> <blur> <color> | blur <r>` · `tint <color> <amt>` · `nohit`.
 
-## Animation (in a symbol): timeline / cel / pose
+## Animation: timeline / cel / pose — in a `symbol` AND in a program's `scene`
 ```
 symbol "Wheel" {
   timeline 24 24                              // fps, durationFrames (loops [0,dur))
@@ -56,6 +56,10 @@ symbol "Wheel" {
 pose "Name" [at x,y] [rotate deg] [scale s | scaleX sx scaleY sy] [opacity o] [spin cw|ccw] [turns n]
 ```
 - `ease linear|easeIn|easeOut|easeInOut|cubic(a,b,c,d)` on a cel.
+- **A `scene` layer takes cels too** — that is how a title card or a staggered entrance is written. Put
+  `hold` on every cel but the first (a cel is a full snapshot: unposed = invisible), use fractional
+  frames for seconds (`cel 28.8` = 1.2 s @24), and let `dx`/`dy` bindings add motion ON TOP of the
+  keyframes. Never hand-write `clamp((time - t0)/dur, 0, 1)` per channel.
 - States: `states door { closed at 0  open at 24  initial closed  transition 12 ease easeInOut }`
   → param drives the playhead (`door=0`→f0, `door=0.5`→f12). Driven by `Name.door = open`.
 - Expr channel on a container: `group "Fan" pivot 0,0 expr rotation "turns(time)" { … }` (RADIANS).
