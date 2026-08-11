@@ -137,7 +137,10 @@ if (!ok) regenerate(report) // the report doubles as the repair prompt
 ```
 
 Never throws: a source the parser rejects outright comes back as a diagnostic with `doc: null`. The CLI
-calls the same function, so the two verdicts cannot drift.
+calls the same function, so the two verdicts cannot drift **on the same text** — which is the caveat worth
+knowing: `flatc` reads a FILE and auto-discovers the `.flat` libs beside it, `checkProgram` receives a
+STRING and only the `assetSrcs` you hand it. Two different inputs, two legitimate verdicts. If the two ever
+disagree, compare what each was actually given before suspecting the pass.
 
 It also flags the three **silent drops of a cel layer** (such a layer draws only the current cel's
 `matter` and the containers that cel poses): a bare shape left in the layer, a `pose "X"` naming no roster
