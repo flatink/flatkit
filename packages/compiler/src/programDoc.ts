@@ -494,8 +494,20 @@ export function docLayoutWarnings(doc: Doc): { scope: string; diag: Diagnostic }
   // parks it off-screen — the union landed off-canvas and the group was reported. The `dynamic` flag was
   // inherited DOWNWARD (a moved parent moves its children) but never upward, which is the other half of
   // the same fact.
-  const movesADescendant = (it: Item): boolean =>
-    dynamicPos(it) || (isGroup(it) && it.layers.some((l) => l.items.some(movesADescendant)))
+  //  Computed ONCE, post-order. Asking per item re-walks the subtree every time -- O(n x depth) where one
+  //  pass suffices. (It is not where this pass spends its time: measured on a 4434-line deck the two shapes
+  //  are within noise. It is written this way because the other one is quadratic for no reason.)
+  const moving = new Set<string>()
+  const markMoving = (items: Item[]): boolean => {
+    let any = false
+    for (const it of items) {
+      const inside = isGroup(it) && it.layers.some((l) => markMoving(l.items))
+      if (dynamicPos(it) || inside) { moving.add(it.id); any = true }
+    }
+    return any
+  }
+  for (const l of doc.layers) markMoving(l.items)
+  const movesADescendant = (it: Item): boolean => moving.has(it.id)
   const reportOffCanvas = (items: Item[], matrix: Transform, dynamic: boolean): void => {
     for (const it of items) {
       const isDynamic = dynamic || dynamicPos(it)

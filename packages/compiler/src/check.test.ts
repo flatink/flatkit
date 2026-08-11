@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { checkProgram, formatDiagnostics, applyFixes } from './check'
+import { checkProgram, formatDiagnostics, applyFixes, repairLoop } from './check'
 import { compileFlatpack } from './compile'
 import { docHasErrors, lintDoc } from './programDoc'
 import { run } from './cli/flatc'
@@ -381,6 +381,102 @@ describe('flatc --fix', () => {
     try {
       expect(await run(['node', 'flatc', file, '--fix', '--no-libs'])).toBe(1)
       expect(readFileSync(file, 'utf8')).toBe(src)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
+
+// `--fix` writes to the AUTHOR'S file, so the failure modes matter more than the happy path.
+describe('flatc --fix — what it must never do to your file', () => {
+  const mk = (src: string) => { const dir = mkdtempSync(join(tmpdir(), 'flatc-fix-')); const file = join(dir, 'p.flatink'); writeFileSync(file, src); return { dir, file } }
+
+  it('does not touch the file at all when there is nothing to repair', async () => {
+    // It used to rewrite the original unconditionally. Identical bytes, but a new mtime -- which wakes
+    // every watcher pointed at the folder, and fails outright on a read-only checkout.
+    const { dir, file } = mk('size 200 200\nscene { layer "a" { group "G" at 10,10 pivot 0,0 { layer "c" { rect 0 0 4 4 fill #ffffff } } } }\nobject "Absent" {\n  x = 1\n}\n')
+    try {
+      const before = statSync(file).mtimeMs
+      await new Promise((r) => setTimeout(r, 10))
+      expect(await run(['node', 'flatc', file, '--fix', '--no-libs'])).toBe(1)
+      expect(statSync(file).mtimeMs).toBe(before)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  // The guarantee is STRUCTURAL, not observed: the loop is a pure function with no filesystem in it, so
+  // the CLI can only write once, after it returns. A loop that wrote each pass and reverted on failure
+  // would leave a window where the author's file holds a version we already know we do not want.
+  it('the repair loop never touches the filesystem, and returns a text that checks clean', () => {
+    const src = 'size 200 200\nvar cx = 0\nscene { layer "a" {\n  group "P" at 20,60 pivot 0,0 hitbox 40 40 { layer "c" { circle 0 0 15 fill #ff0000 } }\n} }\nobject "P" {\n  dragX cx { confine to P  snap 26 }\n  x = cx\n}\n'
+    const r = repairLoop(src, checkProgram(src).diagnostics, (candidate) => checkProgram(candidate).diagnostics)
+    expect(r.applied).toBeGreaterThan(0)
+    expect(r.errors).toBe(0)
+    expect(r.first).toBeGreaterThan(0)
+    expect(checkProgram(r.text).ok).toBe(true)
+  })
+
+  it('keeps the LAST ACCEPTED text when a pass makes things worse', () => {
+    const src = 'size 200 200\nvar cx = 0\nscene { layer "a" {\n  group "P" at 20,60 pivot 0,0 hitbox 40 40 { layer "c" { circle 0 0 15 fill #ff0000 } }\n} }\nobject "P" {\n  dragX cx { confine to P  snap 26 }\n  x = cx\n}\n'
+    const r = repairLoop(src, checkProgram(src).diagnostics, () => [{ scope: 'scene', line: 1, col: 1, severity: 'error', message: 'worse' }, { scope: 'scene', line: 2, col: 1, severity: 'error', message: 'worse' }, { scope: 'scene', line: 3, col: 1, severity: 'error', message: 'worse' }])
+    expect(r.applied).toBe(0)
+    expect(r.text).toBe(src)
+  })
+
+  it('gives up rather than loop when a recheck throws', () => {
+    const src = 'size 200 200\nvar cx = 0\nscene { layer "a" {\n  group "P" at 20,60 pivot 0,0 hitbox 40 40 { layer "c" { circle 0 0 15 fill #ff0000 } }\n} }\nobject "P" {\n  dragX cx { confine to P  snap 26 }\n  x = cx\n}\n'
+    const r = repairLoop(src, checkProgram(src).diagnostics, () => { throw new Error('boom') })
+    expect(r).toMatchObject({ applied: 0, text: src })
+  })
+})
+
+// `applyFixes` is PUBLIC: the diagnostics it is handed may have been stored, replayed against a changed
+// file, or built by a consumer. A position it cannot honour must be skipped, never applied blind -- a
+// negative column silently truncates the line through `slice`.
+describe('applyFixes — a position it cannot trust is skipped', () => {
+  const src = 'size 100 100\nscene { layer "a" { rect 0 0 4 4 fill #ffffff } }\n'
+  const edit = (fix: { line: number; col: number; endLine: number; endCol: number; replacement: string }) =>
+    applyFixes(src, [{ scope: 'scene', line: 1, col: 1, severity: 'error', message: 'x', fix }])
+
+  it('skips a non-positive column instead of truncating the line', () => {
+    expect(edit({ line: 2, col: 0, endLine: 2, endCol: 5, replacement: 'X' })).toEqual({ text: src, applied: 0 })
+    expect(edit({ line: 2, col: -3, endLine: 2, endCol: 5, replacement: 'X' })).toEqual({ text: src, applied: 0 })
+  })
+
+  it('skips a range that runs backwards', () => {
+    expect(edit({ line: 2, col: 10, endLine: 2, endCol: 4, replacement: 'X' })).toEqual({ text: src, applied: 0 })
+    expect(edit({ line: 2, col: 1, endLine: 1, endCol: 4, replacement: 'X' })).toEqual({ text: src, applied: 0 })
+  })
+
+  it('skips a line past the end of the file', () => {
+    expect(edit({ line: 99, col: 1, endLine: 99, endCol: 2, replacement: 'X' })).toEqual({ text: src, applied: 0 })
+  })
+})
+
+// `--fix` writes AT MOST ONCE, whichever path it takes -- including a source that does not parse at all,
+// where the repair used to run one write per syntax error. The observable proof is the mtime: one bump
+// for a file that needed several repairs, and none at all for a file that needed none.
+describe('flatc --fix — one write, or none', () => {
+  const mk = (src: string) => { const dir = mkdtempSync(join(tmpdir(), 'flatc-fix-')); const file = join(dir, 'p.flatink'); writeFileSync(file, src); return { dir, file } }
+  const BROKEN_TWICE = 'size 200 200\nvar cx = 0\nscene { layer "a" {\n  group "P" at 20 60 pivot 0,0 hitbox 40 40 { layer "c" { circle 0 0 15 fill #ff0000 } }\n  group "Q" at 80 90 pivot 0,0 { layer "c" { circle 0 0 5 fill #00ff00 } }\n} }\nobject "P" {\n  dragX cx { confine to P  snap 26 }\n  x = cx\n}\n'
+
+  it('repairs two SYNTAX errors and a run-on line in a single write', async () => {
+    const { dir, file } = mk(BROKEN_TWICE)
+    try {
+      expect(checkProgram(BROKEN_TWICE).ok).toBe(false)
+      expect(await run(['node', 'flatc', file, '--fix', '--no-libs'])).toBe(0)
+      const after = readFileSync(file, 'utf8')
+      expect(after).toContain('at 20,60')
+      expect(after).toContain('at 80,90')
+      expect(after).toContain('    confine to P\n    snap 26\n')
+      expect(checkProgram(after).ok).toBe(true)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('does not touch a file it cannot repair mechanically', async () => {
+    const { dir, file } = mk('size 200 200\nscene { layer "a" { group "G" at 10,10 pivot 0,0 { layer "c" { rect 0 0 4 4 fill #ffffff } } } }\nobject "Absent" {\n  x = 1\n}\n')
+    try {
+      const before = statSync(file).mtimeMs
+      await new Promise((r) => setTimeout(r, 12))
+      expect(await run(['node', 'flatc', file, '--fix', '--no-libs'])).toBe(1)
+      expect(statSync(file).mtimeMs).toBe(before)
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })

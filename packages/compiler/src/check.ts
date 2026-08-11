@@ -177,7 +177,12 @@ export function applyFixes(src: string, diagnostics: CheckDiagnostic[]): { text:
   let applied = 0
   const touched = new Set<number>()
   for (const e of edits) {
-    if (e.line < 1 || e.endLine > lines.length) continue
+    // A position this text cannot honour is SKIPPED, never applied blind. The diagnostics may have been
+    // stored, replayed against a file that moved on, or built by a consumer -- and a non-positive column
+    // reaches `slice` as an offset FROM THE END, which silently truncates the line instead of failing.
+    if (!Number.isInteger(e.line) || !Number.isInteger(e.endLine) || !Number.isInteger(e.col) || !Number.isInteger(e.endCol)) continue
+    if (e.line < 1 || e.col < 1 || e.endCol < 1 || e.endLine > lines.length) continue
+    if (e.endLine < e.line || (e.endLine === e.line && e.endCol < e.col)) continue
     let overlaps = false
     for (let l = e.line; l <= e.endLine; l++) if (touched.has(l)) overlaps = true
     if (overlaps) continue
@@ -190,4 +195,33 @@ export function applyFixes(src: string, diagnostics: CheckDiagnostic[]): { text:
     applied++
   }
   return { text: lines.join('\n'), applied }
+}
+
+/** Applies the mechanical repairs until nothing is left to apply, and returns the FINAL text. Pure: it
+ *  takes a `recheck` and never touches the filesystem, which is the whole guarantee -- the caller writes
+ *  once, at the end, a text this loop has already re-checked. Writing each pass and reverting on failure
+ *  would leave a window where the author's file holds a version we already know we do not want.
+ *
+ *  It ITERATES because repairing one error unmasks the next (a run-on interactor line swallows the
+ *  statements under it), and it accepts a pass only if the error count strictly DROPS -- except that the
+ *  count legitimately RISES on the first pass of a source that did not parse at all, where a single error
+ *  was all that was visible. That case never reaches here: it is handled before the Doc exists. */
+export function repairLoop(
+  src: string,
+  diagnostics: CheckDiagnostic[],
+  recheck: (candidate: string) => CheckDiagnostic[],
+  maxPasses = 5,
+): { text: string; applied: number; first: number; errors: number } {
+  const errs = (ds: CheckDiagnostic[]) => ds.filter((d) => d.severity === 'error').length
+  const first = errs(diagnostics)
+  let text = src, applied = 0, errors = first, current = diagnostics
+  for (let pass = 0; pass < maxPasses; pass++) {
+    const step = applyFixes(text, current)
+    if (!step.applied) break
+    let after: CheckDiagnostic[]
+    try { after = recheck(step.text) } catch { break } // the repair broke the parse outright -> keep the last accepted text
+    if (errs(after) >= errors) break
+    text = step.text; applied += step.applied; errors = errs(after); current = after
+  }
+  return { text, applied, first, errors }
 }

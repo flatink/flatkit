@@ -61,13 +61,19 @@ reported and left alone.
 **From code**, the same repairs without a subprocess — this is the point of carrying them:
 
 ```ts
-import { checkProgram, applyFixes } from '@flatkit/compiler'
+import { checkProgram, repairLoop } from '@flatkit/compiler'
 
-const first = checkProgram(srcFromAnLLM)
-const { text, applied } = applyFixes(srcFromAnLLM, first.diagnostics)
-const after = checkProgram(text)          // ALWAYS re-check: applyFixes never claims the result is valid
+const { text, applied } = repairLoop(srcFromAnLLM, checkProgram(srcFromAnLLM).diagnostics,
+                                     (candidate) => checkProgram(candidate).diagnostics)
+const after = checkProgram(text)          // ALWAYS re-check: the loop never claims the result is valid
 if (!after.ok) regenerate(after.report)   // only now does it cost a model round-trip
 ```
+
+`repairLoop` is the iteration, as a pure function: it applies, re-checks, and keeps a pass only if the
+error count strictly drops — stopping when nothing more applies. Reach for `applyFixes` alone if you want
+a single pass. Do NOT stop your own loop on "the count stopped dropping": repairing one error unmasks the
+next, and on a source that did not parse at all the count RISES on the first pass (one error was all that
+was visible). The stopping condition is `applied === 0`.
 
 A missing comma should not cost a whole regeneration. `CheckDiagnostic.fix` is present only when the
 repair is the single possible reading; a multi-line replacement inherits the indentation of the line it

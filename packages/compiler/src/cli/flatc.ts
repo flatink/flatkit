@@ -21,7 +21,7 @@ import { containerBBox, containerBBoxUnion } from '@flatkit/engine/groups'
 import { isInstance, isGroup } from '@flatkit/engine/layers'
 import { IDENTITY } from '@flatkit/engine/transform'
 import { lintDocReport, docHasErrors } from '../programDoc'
-import { applyFixes, formatDiagnostics, programDiagnostics } from '../check'
+import { applyFixes, formatDiagnostics, programDiagnostics, repairLoop } from '../check'
 import { FlatSyntaxError } from '@flatkit/engine/flatFormat'
 import { playHeadless, type Gesture } from '@flatkit/player/debug'
 import type { FuncDef } from '@flatkit/engine/actions'
@@ -67,7 +67,8 @@ Usage:
   --check           semantic lint only (no .flatpack); exits ≠0 on ERROR (warnings do not stop). Lints a
                     program .flatink OR an asset library .flat (per-symbol; several .flat are merged)
   --fix             apply the MECHANICAL repairs the diagnostics carry (missing separator, run-on line)
-                    and re-check; writes only if the error count drops. Implies --check.
+                    and re-check, iterating. Writes the file AT MOST ONCE, and never a text it has not
+                    re-checked; a file it cannot repair is left untouched, mtime included. Implies --check.
   --no-libs         do NOT auto-discover the .flat files sitting next to the program (use it in a working
                     folder, where a neighbouring scratch file is not a dependency)
   --watch           recompile on every change in the folder (agent → player loop)
@@ -113,9 +114,12 @@ type BuildResult = { doc: Doc; flatLibs: number; packages: number; media: number
  * `assetMode`: `inline` embeds each media as a base64 data-URI (default); `external` keeps `asset.data` as a
  * relative key (`<assetsDir>/<path>`) and returns the files to copy beside the .flatpack (no base64 bloat).
  */
-function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], assetMode: AssetMode = 'inline', assetsDir = '', noLibs = false): BuildResult {
+function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], assetMode: AssetMode = 'inline', assetsDir = '', noLibs = false, srcOverride?: string): BuildResult {
   const baseDir = dirname(programPath)
-  const programSrc = readFileSync(programPath, 'utf8')
+  // `srcOverride` compiles a CANDIDATE text as if it were the file, without writing it. `--fix` needs it:
+  // it must re-check each repair before committing anything, and writing-then-reverting leaves a window
+  // where the author's file holds a version we already know we do not want.
+  const programSrc = srcOverride ?? readFileSync(programPath, 'utf8')
   const prog = parseProgramFull(programSrc)
 
   // .flat libs: explicit if provided, otherwise auto-discover the .flat files in the program's folder
@@ -175,25 +179,31 @@ function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], 
 }
 
 /** Compile once (write or --check). Returns the exit code. */
-function compileOnce(programPath: string, explicitFlats: string[], out: string, checkOnly: boolean, assetMode: AssetMode = 'inline', noLibs = false, doFix = false, fixPass = 0): number {
+function compileOnce(programPath: string, explicitFlats: string[], out: string, checkOnly: boolean, assetMode: AssetMode = 'inline', noLibs = false, doFix = false): number {
   const outPath = out ? resolve(out) : join(dirname(programPath), basename(programPath, extname(programPath)) + '.flatpack')
   // External mode: sidecar folder next to the .flatpack, e.g. `game.flatpack` → `game.assets/`.
   const assetsDir = assetMode === 'external' ? basename(outPath, extname(outPath)) + '.assets' : ''
-  let built: BuildResult
-  try { built = buildDocFromProgram(programPath, explicitFlats, assetMode, assetsDir, noLibs) }
-  catch (e) {
-    // A source the parser REJECTS never reaches the diagnostics pass below — and that is exactly where a
-    // mechanical repair earns its keep, because there is no partial result to work from. When the syntax
-    // error carries its own fix, apply it and try again (bounded: each pass must consume one repair).
-    if (doFix && e instanceof FlatSyntaxError && e.fix && fixPass < 10) {
-      const original = readFileSync(programPath, 'utf8')
-      const { text, applied } = applyFixes(original, [{ scope: 'scene', line: e.line, col: e.col, severity: 'error', message: e.message, fix: e.fix }])
-      if (applied) {
-        writeFileSync(programPath, text)
+  const build = (src?: string) => buildDocFromProgram(programPath, explicitFlats, assetMode, assetsDir, noLibs, src)
+  // `--fix` on a source the parser REJECTS. That case never reaches the diagnostics pass below, and it is
+  // exactly where a mechanical repair earns its keep: there is no partial result to work from. Repaired
+  // IN MEMORY, one syntax error per turn, so the whole of `--fix` still writes the file at most once.
+  let parseRepaired = ''
+  if (doFix) {
+    let candidate = readFileSync(programPath, 'utf8')
+    for (let pass = 0; pass < 10; pass++) {
+      try { build(candidate); break } catch (e) {
+        if (!(e instanceof FlatSyntaxError) || !e.fix) break
+        const { text, applied } = applyFixes(candidate, [{ scope: 'scene', line: e.line, col: e.col, severity: 'error', message: e.message, fix: e.fix }])
+        if (!applied) break
+        candidate = text
+        parseRepaired = candidate
         process.stderr.write(`flatc: --fix: repaired \`${e.message.split(':')[0]}\` in ${basename(programPath)}\n`)
-        return compileOnce(programPath, explicitFlats, out, checkOnly, assetMode, noLibs, doFix, fixPass + 1)
       }
     }
+  }
+  let built: BuildResult
+  try { built = build(parseRepaired || undefined) }
+  catch (e) {
     process.stderr.write(`flatc: compile error: ${(e as Error).message}\n`)
     return 1
   }
@@ -211,27 +221,18 @@ function compileOnce(programPath: string, explicitFlats: string[], out: string, 
   //   • it writes only if the error count strictly DROPS at each pass. An auto-fix that makes things worse
   //     must not survive, and the honest way to know is to run the same check again on the result.
   if (doFix) {
-    const original = readFileSync(programPath, 'utf8')
-    const errs = (ds: typeof diagnostics) => ds.filter((d) => d.severity === 'error').length
-    let text = original
-    let total = 0
-    let before = errs(diagnostics)
-    const first = before
-    let current = diagnostics
-    for (let pass = 0; pass < 5; pass++) {
-      const step = applyFixes(text, current)
-      if (!step.applied) break
-      writeFileSync(programPath, step.text)
-      let after: typeof diagnostics
-      try { after = programDiagnostics(buildDocFromProgram(programPath, explicitFlats, assetMode, assetsDir, noLibs).doc, step.text) }
-      catch { writeFileSync(programPath, text); break } // the repair broke the parse outright → keep the last good text
-      if (errs(after) >= before) { writeFileSync(programPath, text); break }
-      text = step.text; total += step.applied; before = errs(after); current = after
-    }
-    if (!total) {
-      writeFileSync(programPath, original)
+    // START from the text the diagnostics were computed on. Falling back to the file would apply edits
+    // whose line/col were measured against the parse-repaired text -- a comma insertion survives that,
+    // a multi-line replacement does not.
+    const original = parseRepaired || readFileSync(programPath, 'utf8')
+    const { text, applied: total, first, errors: before } = repairLoop(original, diagnostics, (src) =>
+      programDiagnostics(buildDocFromProgram(programPath, explicitFlats, assetMode, assetsDir, noLibs, src).doc, src))
+    if (!total && !parseRepaired) {
+      // NOT even a rewrite of the identical bytes: a new mtime wakes every watcher pointed at the folder,
+      // and a write fails outright on a read-only checkout we had no reason to touch.
       process.stderr.write(`flatc: --fix: nothing to repair mechanically${hasErrors ? ' — the remaining errors need a decision, not a separator\n' : '\n'}`)
     } else {
+      writeFileSync(programPath, text) // ONE write, of a text this loop has already re-checked
       process.stderr.write(`flatc: --fix: ${total} repair(s) applied to ${basename(programPath)} · errors ${first} → ${before}\n`)
       return compileOnce(programPath, explicitFlats, out, checkOnly, assetMode, noLibs, false)
     }
