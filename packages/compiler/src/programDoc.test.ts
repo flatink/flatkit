@@ -735,3 +735,40 @@ describe('canvas overflow — the advice matches what wrap can do', () => {
     expect(msg('Jeanne d Arc a Orleans')).toMatch(/add "wrap"/)
   })
 })
+
+// The "never used" pass counted a variable's occurrences in a text REBUILT from the Doc -- and that text
+// only carries the `object` blocks of items at the ROOT of a scope. On a composed program whose draggables
+// live inside element groups, 8 of 11 blocks vanished, so every variable read only there read as dead.
+// Reported from a 210-line generated activity: 20 warnings, all false. The author's own guard was the
+// proof -- `drag x, y { enabled over == 0 }` reads `over`, and the pass never saw it.
+describe('unused globals — read from the Doc, not from a rebuilt text', () => {
+  const prog = (guard: string) => `size 200 200
+var over = 0
+var px = 20
+var py = 20
+scene { layer "a" {
+  group "Wrap" at 0,0 pivot 0,0 { layer "in" {
+    group "Z" at 150,150 pivot 0,0 hitbox 60 60 { layer "c" { rect -30 -30 60 60 fill #333333 } }
+    group "P" at 20,20 pivot 0,0 hitbox 40 40 { layer "c" { circle 0 0 15 fill #ff0000 } }
+  } }
+} }
+object "P" {
+  drag px, py { enabled ${guard} }
+  x = px
+  y = py
+  when dropped on Z {
+    over = 1
+  }
+}
+`
+  const dead = (src: string) =>
+    docStructureWarnings(compileFlatpack(src, [], {})).filter((w) => /never used/.test(w.diag.message)).map((w) => w.diag.message)
+
+  it('a variable read only inside a NESTED object block is not dead', () => {
+    expect(dead(prog('over == 0'))).toEqual([])
+  })
+
+  it('and one that truly is declared and never touched is still reported', () => {
+    expect(dead(prog('over == 0').replace('var over = 0', 'var over = 0\nvar orphan = 3')).join(' ')).toMatch(/"orphan"/)
+  })
+})

@@ -188,10 +188,21 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
     }
     for (const l of doc.layers) collectMods(l.items)
     for (const s of doc.symbols ?? []) for (const l of s.layers) collectMods(l.items)
-    const allText = [...scopes(doc).map(({ editPath }) => scopeProgram(doc, editPath)), ...modTargets].join('\n')
+    // Read the DOC, never a text rebuilt from it. `scopeProgram` only re-emits the `object` blocks of items
+    // at the ROOT of a scope, so on a composed program whose draggables live inside element groups most of
+    // them simply were not there: measured on a 210-line generated activity, 3 blocks out of 11 survived
+    // the round-trip, and every variable read only in the other 8 came back "never used" -- 20 warnings,
+    // all false. The walkers below descend the whole tree, symbols included.
+    const used: string[] = [...modTargets]
+    forEachExpression(doc, (e) => used.push(e))
+    forEachAction(doc, (a) => { for (const v of Object.values(a)) if (typeof v === 'string') used.push(v) })
+    // An interactor writes its variables through named SLOTS rather than an expression, and guards itself
+    // with `enabled` -- neither is an expression the walkers see. That guard was the reported case.
+    for (const i of doc.interactors ?? []) used.push(i.varX ?? '', i.varY ?? '', i.varT ?? '', i.enabled ?? '')
+    const allText = used.join('\n')
     for (const name of names0) {
-      const m = allText.match(new RegExp(`(?<![\\w-])${escapeRe(name)}(?![\\w-])`, 'g'))
-      if ((m?.length ?? 0) <= 1) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `global variable "${name}" never used (declared, but neither read nor written)` } })
+      if (!new RegExp(`(?<![\\w-])${escapeRe(name)}(?![\\w-])`).test(allText))
+        out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `global variable "${name}" never used (declared, but neither read nor written)` } })
     }
   }
   // (b bis) An `instance "X"` that resolved to NO symbol. Compilation keeps the unresolved `@X` marker all
