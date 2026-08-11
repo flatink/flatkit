@@ -1,6 +1,6 @@
 {
   "name": "@flatkit/sugarflat",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "description": "Declarative sugar for FlatInk: a compact block expands into inspectable .flatink. An authoring tool, never a runtime.",
   "license": "MIT",
   "author": "Zwyk Studio",
