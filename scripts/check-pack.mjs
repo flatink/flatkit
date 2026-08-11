@@ -29,10 +29,48 @@ function checkRequireConditions(name) {
   }
 }
 
+/**
+ * Subpaths a BROWSER must be able to import, and the Node builtins that must not be reachable from them.
+ *
+ * The README promises the compiler "lives in build/CLI tooling — the player stays tiny and never pulls it
+ * in". That held for `@flatkit/player`, and NOT for anyone needing a helper the root alone exported: the
+ * root re-exported `run`, the CLI entry point, whose module imports `fs`/`path` at the top. A bundler
+ * fails at NAME RESOLUTION (`"extname" is not exported by "__vite-browser-external"`) — before tree-shaking
+ * ever gets a chance to drop `run`, and marking the package external does not help either.
+ *
+ * `checkProgram`, `languageCard`, `drawingCard`, `docToManifest` are pure functions whose whole point is to
+ * run in a service or a browser. A guard, not a promise: this walks the built chunk graph of each entry.
+ */
+const BROWSER_SAFE = { compiler: ['index.js', 'analysis.js', 'compile.js'], engine: null, player: null, types: null, sugarflat: ['index.js'] }
+const NODE_IMPORT = /from\s*['"](?:node:)?(fs|path|os|child_process|worker_threads|module|url)['"]/g
+
+function checkBrowserSafe(name) {
+  const entries = BROWSER_SAFE[name]
+  if (!entries) return
+  const dist = new URL(`../packages/${name}/dist/`, import.meta.url)
+  for (const entry of entries) {
+    const seen = new Set()
+    const walk = (file) => {
+      if (seen.has(file)) return
+      seen.add(file)
+      let text
+      try { text = readFileSync(new URL(file, dist), 'utf8') } catch { return }
+      const hits = [...new Set([...text.matchAll(NODE_IMPORT)].map((m) => m[1]))]
+      if (hits.length) {
+        console.error(`✗ @flatkit/${name} "${entry}" reaches Node builtins (${hits.join(', ')}) via ${file} — a browser bundle of this entry fails at name resolution, before tree-shaking can drop anything`)
+        process.exit(1)
+      }
+      for (const m of text.matchAll(/from\s*['"]\.\/([^'"]+)['"]/g)) walk(m[1])
+    }
+    walk(entry)
+  }
+}
+
 for (const name of PACKAGES) {
   const cwd = new URL(`../packages/${name}`, import.meta.url).pathname
   process.stdout.write(`\n── @flatkit/${name} ──\n`)
   checkRequireConditions(name)
+  checkBrowserSafe(name)
   const tgz = execFileSync('pnpm', ['pack'], { cwd, encoding: 'utf8' }).trim().split('\n').pop()
   try {
     execFileSync('pnpm', ['exec', 'publint', tgz], { cwd, stdio: 'inherit' })
