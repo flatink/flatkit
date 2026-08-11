@@ -1,5 +1,12 @@
 # @flatkit/sugarflat
 
+## 0.3.11
+
+### Patch Changes
+
+- Updated dependencies [[`fda522f`](https://github.com/flatink/flatkit/commit/fda522ff266d62877539b88abaa63ab24b894a82)]:
+  - @flatkit/compiler@0.31.1
+
 ## 0.3.10
 
 ### Patch Changes
