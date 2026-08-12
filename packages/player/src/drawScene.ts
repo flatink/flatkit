@@ -305,6 +305,28 @@ function filterCacheSlot(rctx: RenderCtx, doc: Doc, it: Item, ctx: CanvasRenderi
  * `knownFilterStr`: the caller's already-computed `cssFilterString(filters, scale)` (every caller has it) ->
  * reused on the miss/bake path instead of recomputing it here.
  */
+/** Off-screen buffer window for an object: its SCREEN box (+ `margin` for a filter's spread), clamped to the
+ *  canvas. A box that ends up covering the whole canvas gains nothing → full screen. */
+function bufferBox(devBBox: BBox | null, cw: number, ch: number, margin: number): { ox: number; oy: number; ow: number; oh: number } {
+  if (!devBBox || devBBox.minX > devBBox.maxX) return { ox: 0, oy: 0, ow: cw, oh: ch }
+  const ox = Math.max(0, Math.floor(devBBox.minX - margin))
+  const oy = Math.max(0, Math.floor(devBBox.minY - margin))
+  const ow = Math.max(1, Math.min(cw, Math.ceil(devBBox.maxX + margin)) - ox)
+  const oh = Math.max(1, Math.min(ch, Math.ceil(devBBox.maxY + margin)) - oy)
+  return ow >= cw && oh >= ch ? { ox: 0, oy: 0, ow: cw, oh: ch } : { ox, oy, ow, oh }
+}
+
+/** Reblit a baked composite at its screen position, with the item's current opacity applied at blit time
+ *  (never baked in — a pure fade then reuses the bitmap). */
+type Baked = FilterCacheEntry & { canvas: HTMLCanvasElement }
+function blitBaked(ctx: CanvasRenderingContext2D, e: Baked, opacity: number): void {
+  ctx.save()
+  ctx.globalAlpha *= opacity
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.drawImage(e.canvas, 0, 0, e.ow, e.oh, e.ox, e.oy, e.ow, e.oh)
+  ctx.restore()
+}
+
 export function compositeFiltered(
   ctx: CanvasRenderingContext2D,
   opacity: number,
@@ -319,30 +341,14 @@ export function compositeFiltered(
   // Cache HIT: the subtree is static and its transform/tint/filter have not changed -> we
   // reblit the final bitmap (no redraw, no refiltering). This is THE "paper theatre" win.
   const prev = cache ? cache.map.get(cache.id) : undefined
-  if (prev && prev.canvas && prev.sig === cache!.sig) {
-    // HIT: baked bitmap and unchanged signature -> reblit (no redraw/refiltering). THE "paper theatre" win.
-    ctx.save()
-    ctx.globalAlpha *= opacity
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.drawImage(prev.canvas, 0, 0, prev.ow, prev.oh, prev.ox, prev.oy, prev.ow, prev.oh)
-    ctx.restore()
-    return
-  }
+  if (prev?.canvas && prev.sig === cache!.sig) { blitBaked(ctx, prev as Baked, opacity); return }
   // We only BAKE if the signature was ALREADY the one from the previous frame (stable object) -- otherwise an
   // object moved every frame would pay a useless bake on every miss.
   const stable = !!(prev && prev.sig === cache!.sig)
   const filterStr = knownFilterStr ?? cssFilterString(filters, scale)
   const cw = ctx.canvas.width
   const ch = ctx.canvas.height
-  let ox = 0, oy = 0, ow = cw, oh = ch
-  if (devBBox && devBBox.minX <= devBBox.maxX) {
-    const m = filterSpreadPx(filters, scale)
-    ox = Math.max(0, Math.floor(devBBox.minX - m))
-    oy = Math.max(0, Math.floor(devBBox.minY - m))
-    ow = Math.max(1, Math.min(cw, Math.ceil(devBBox.maxX + m)) - ox)
-    oh = Math.max(1, Math.min(ch, Math.ceil(devBBox.maxY + m)) - oy)
-    if (ow >= cw && oh >= ch) { ox = 0; oy = 0; ow = cw; oh = ch } // full-screen object -> no gain
-  }
+  const { ox, oy, ow, oh } = bufferBox(devBBox, cw, ch, filterSpreadPx(filters, scale))
   const scratch = acquireScratch(ow, oh, cw, ch)
   if (!scratch) { // no DOM -> direct fallback WITHOUT isolation: the filters/tint are lost, so say so
     warnScratchless(filters?.length ? 'filter' : 'tint')
@@ -371,11 +377,7 @@ export function compositeFiltered(
       cctx.clearRect(0, 0, store.canvas!.width, store.canvas!.height)
       cctx.drawImage(scratch.canvas, 0, 0, ow, oh, 0, 0, ow, oh)
       store.sig = cache!.sig; store.ox = ox; store.oy = oy; store.ow = ow; store.oh = oh
-      ctx.save()
-      ctx.globalAlpha *= opacity
-      ctx.setTransform(1, 0, 0, 1, 0, 0)
-      ctx.drawImage(store.canvas!, 0, 0, ow, oh, ox, oy, ow, oh)
-      ctx.restore()
+      blitBaked(ctx, store, opacity)
     } else {
       // 1st observation OR volatile object: we RECORD the signature (without baking) and blit filtered directly.
       if (cache) cache.map.set(cache.id, { sig: cache.sig, ox, oy, ow, oh })
@@ -421,14 +423,7 @@ function compositeMasked(
 ): void {
   const cw = ctx.canvas.width
   const ch = ctx.canvas.height
-  let ox = 0, oy = 0, ow = cw, oh = ch
-  if (devBBox && devBBox.minX <= devBBox.maxX) {
-    ox = Math.max(0, Math.floor(devBBox.minX))
-    oy = Math.max(0, Math.floor(devBBox.minY))
-    ow = Math.max(1, Math.min(cw, Math.ceil(devBBox.maxX)) - ox)
-    oh = Math.max(1, Math.min(ch, Math.ceil(devBBox.maxY)) - oy)
-    if (ow >= cw && oh >= ch) { ox = 0; oy = 0; ow = cw; oh = ch }
-  }
+  const { ox, oy, ow, oh } = bufferBox(devBBox, cw, ch, 0)
   const scratch = acquireScratch(ow, oh, cw, ch)
   if (!scratch) { warnScratchless(what); ctx.save(); ctx.globalAlpha *= opacity; drawContent(ctx); ctx.restore(); return }
   const octx = scratch.ctx
@@ -466,31 +461,94 @@ const TAU = Math.PI * 2
  */
 function compositeScratched(
   ctx: CanvasRenderingContext2D,
-  devBBox: BBox | null,
+  opacity: number,
+  devBBoxOf: () => BBox | null, // LAZY: a cache hit must not pay a bbox accumulation over the subtree
   mask: ScratchMask,
   parent: Transform,
+  cache: CacheSlot | undefined,
   drawContent: (octx: CanvasRenderingContext2D) => void,
 ): void {
-  compositeMasked(ctx, 1, devBBox, 'source-over', drawContent, (octx) => {
-    const dev = matOf(octx.getTransform()) // parent space → buffer (compositeMasked re-applied it)
-    const world = compose(dev, invert(parent)) // …composed back to WORLD, where the grid is measured
-    octx.setTransform(world.a, world.b, world.c, world.d, world.e, world.f)
-    octx.fillStyle = '#000' // any opaque colour: only its ALPHA is used by `destination-out`
-    // One disc per CLEARED CELL — so what disappears is exactly what the fraction counts. The radius covers
-    // the cell (side × 0.75 > half a diagonal) so neighbours merge with no lattice gaps, and no wider: rub
-    // the full brush radius around each centre and the hole grows to twice the finger.
-    // ALL the discs go into ONE path and ONE fill: a fully scratched full-frame veil is ~1000 cells, and
-    // that is a thousand fill calls per frame otherwise. Same winding for every disc → they union.
-    const r = mask.cell * 0.75
-    octx.beginPath()
-    for (const idx of mask.cells) {
-      const cx = mask.minX + ((idx % mask.cols) + 0.5) * mask.cell
-      const cy = mask.minY + (Math.floor(idx / mask.cols) + 0.5) * mask.cell
-      octx.moveTo(cx + r, cy) // start each subpath on its own circle (no connecting line between discs)
-      octx.arc(cx, cy, r, 0, TAU)
+  // Nothing has changed since the last paint (same transform, same cells) → one blit. Without this, a veil
+  // with a single cleared cell re-composited off-screen sixty times a second for the rest of the activity.
+  const prev = cache ? cache.map.get(cache.id) : undefined
+  if (prev?.canvas && prev.sig === cache!.sig) { blitBaked(ctx, prev as Baked, opacity); return }
+  const stable = !!(prev && prev.sig === cache!.sig) // seen once already → worth baking now
+  const cw = ctx.canvas.width
+  const ch = ctx.canvas.height
+  const { ox, oy, ow, oh } = bufferBox(devBBoxOf(), cw, ch, 0)
+  const scratch = acquireScratch(ow, oh, cw, ch)
+  if (!scratch) { warnScratchless('erase'); ctx.save(); ctx.globalAlpha *= opacity; drawContent(ctx); ctx.restore(); return }
+  const octx = scratch.ctx
+  try {
+    const dev = ctx.getTransform()
+    octx.setTransform(dev.a, dev.b, dev.c, dev.d, dev.e - ox, dev.f - oy) // off-screen origin = (ox,oy) screen
+    drawContent(octx)
+    const world = compose({ a: dev.a, b: dev.b, c: dev.c, d: dev.d, e: dev.e - ox, f: dev.f - oy }, invert(parent))
+    octx.setTransform(world.a, world.b, world.c, world.d, world.e, world.f) // …the grid is measured in WORLD space
+    octx.globalCompositeOperation = 'destination-out' // rub out — and, unlike an even-odd clip, overlaps UNION
+    punchCells(octx, mask, Math.hypot(world.a, world.b) || 1)
+    octx.globalCompositeOperation = 'source-over'
+    octx.filter = 'none'
+    const store = cache && stable && typeof document !== 'undefined' ? ensureCacheCanvas(cache, ox, oy, ow, oh) : null
+    const cctx = store ? store.canvas.getContext('2d') : null
+    if (store && cctx) { // bake the punched result, then blit it: the frames that follow are pure blits
+      cctx.setTransform(1, 0, 0, 1, 0, 0)
+      cctx.globalAlpha = 1; cctx.globalCompositeOperation = 'source-over'; cctx.filter = 'none'
+      cctx.clearRect(0, 0, store.canvas.width, store.canvas.height)
+      cctx.drawImage(scratch.canvas, 0, 0, ow, oh, 0, 0, ow, oh)
+      store.sig = cache!.sig; store.ox = ox; store.oy = oy; store.ow = ow; store.oh = oh
+      blitBaked(ctx, store, opacity)
+    } else {
+      if (cache) cache.map.set(cache.id, { sig: cache.sig, ox, oy, ow, oh }) // record the signature; bake next frame
+      ctx.save()
+      ctx.globalAlpha *= opacity
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      ctx.drawImage(scratch.canvas, 0, 0, ow, oh, ox, oy, ow, oh)
+      ctx.restore()
     }
-    octx.fill()
-  }, 'destination-out', 'erase')
+  } finally {
+    releaseScratch()
+  }
+}
+
+/**
+ * The holes themselves: one disc per CLEARED CELL, all in ONE path and ONE fill — a fully scratched
+ * full-frame veil is ~1000 cells, and a fill apiece is what turns a scratch into a slideshow. The radius is
+ * ¾ of a cell: over half a diagonal, so neighbours merge with no lattice gap, and no more, so what
+ * disappears stays what the fraction counts.
+ *
+ * The edge is BLURRED rather than cut. Hard discs read as stamps — a lone touch left a perfect circle and
+ * the border of a scratched area was a scallop at the mesh of the grid. The blur is a fraction of the CELL,
+ * so `grain` sets how fine the erasing looks while `brush` keeps meaning how wide the finger is. (A canvas
+ * that ignores `filter` — an old Safari — degrades to the crisp edge, like every other filter here.)
+ */
+function punchCells(octx: CanvasRenderingContext2D, mask: ScratchMask, scale: number): void {
+  const r = mask.cell * 0.75
+  const soft = Math.min(16, Math.max(0.5, mask.cell * 0.55 * scale)) // device px, and never a fog
+  octx.filter = `blur(${round2(soft)}px)`
+  octx.fillStyle = '#000' // any opaque colour: only its ALPHA is used by `destination-out`
+  octx.beginPath()
+  for (const idx of mask.cells) {
+    const cx = mask.minX + ((idx % mask.cols) + 0.5) * mask.cell
+    const cy = mask.minY + (Math.floor(idx / mask.cols) + 0.5) * mask.cell
+    octx.moveTo(cx + r, cy) // start each subpath on its own circle (no connecting line between discs)
+    octx.arc(cx, cy, r, 0, TAU)
+  }
+  octx.fill()
+}
+
+const round2 = (n: number): number => Math.round(n * 100) / 100
+
+/** Cache slot of a SCRATCHED composite — the filtered-composite map, under its own key so an item can hold
+ *  both. The signature is the screen placement + how many cells have fallen: while the child scratches it
+ *  changes every frame (and the composite is redone), and the moment they stop it freezes (and it is a
+ *  blit). Only for a subtree whose CONTENT is static — an animated veil must keep being redrawn. */
+function scratchCacheSlot(rctx: RenderCtx, doc: Doc, it: Item, ctx: CanvasRenderingContext2D, mask: ScratchMask): CacheSlot | undefined {
+  if (!rctx.filterCache || typeof document === 'undefined' || !isContentStatic(doc, it)) return undefined
+  const own = 'transform' in it && it.transform ? (it.transform as Transform) : IDENTITY
+  const m = compose(matOf(ctx.getTransform()), own)
+  const sig = `${round2(m.a)},${round2(m.b)},${round2(m.c)},${round2(m.d)},${round2(m.e)},${round2(m.f)}|${mask.cells.size}|${rctx.imageEpoch ?? 0}`
+  return { map: rctx.filterCache, id: 'scratch:' + it.id, sig }
 }
 
 /** Does a mask's matter contain text/an image? (-> alpha clipping rather than vector). */
@@ -777,10 +835,14 @@ export function renderItems(
     // the punch takes away the VEIL only, never what is drawn under it.
     const scratched = rctx.scratched?.get(it.id)
     if (scratched?.cells.size) {
-      const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
-      accumDevBBox(doc, [it], frame, matOf(ctx.getTransform()), seen, acc, rctx)
-      compositeScratched(ctx, acc.minX <= acc.maxX ? acc : null, scratched, parent, (octx) =>
-        renderOneItem(octx, doc, it, frame, hidden, seen, rctx, opacity, parent, depth))
+      // The bbox is a LAMBDA on purpose: an unchanged veil never accumulates it (see `compositeScratched`).
+      const devBBox = () => {
+        const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
+        accumDevBBox(doc, [it], frame, matOf(ctx.getTransform()), seen, acc, rctx)
+        return acc.minX <= acc.maxX ? acc : null
+      }
+      compositeScratched(ctx, opacity, devBBox, scratched, parent, scratchCacheSlot(rctx, doc, it, ctx, scratched), (octx: CanvasRenderingContext2D) =>
+        renderOneItem(octx, doc, it, frame, hidden, seen, rctx, 1, parent, depth)) // opacity is applied at BLIT
     } else {
       renderOneItem(ctx, doc, it, frame, hidden, seen, rctx, opacity, parent, depth)
     }

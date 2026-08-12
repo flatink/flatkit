@@ -1040,14 +1040,14 @@ describe('flatFormat — reveal / link gestures (object → model → text)', ()
     '    group "Capital" at 50,50 { layer "c" { path "M0 0L1 0L1 1Z" fill #000000 } }',
     '    group "Country" at 100,100 { layer "c" { path "M0 0L1 0L1 1Z" fill #000000 } }',
     '  }', '}', '',
-    'object "Card" {', '  reveal seen {', '    brush 30', '    erase', '    cells grid', '  }', '}', '',
+    'object "Card" {', '  reveal seen {', '    brush 30', '    grain 8', '    erase', '    cells grid', '  }', '}', '',
     'object "Capital" {', '  link ex, ey, target to Country', '}', '',
   ].join('\n')
 
   it('parse the reveal/link interactors with their fields', () => {
     const doc = parseProgramFull(src)
     const reveal = doc.interactors!.find((i) => i.axis === 'reveal')!
-    expect(reveal).toMatchObject({ axis: 'reveal', varX: 'seen', grid: 30, erase: true, cells: 'grid' })
+    expect(reveal).toMatchObject({ axis: 'reveal', varX: 'seen', grid: 30, grain: 8, erase: true, cells: 'grid' })
     const link = doc.interactors!.find((i) => i.axis === 'link')!
     expect(link).toMatchObject({ axis: 'link', varX: 'ex', varY: 'ey', varT: 'target', confine: 'Country' })
   })
@@ -1055,7 +1055,7 @@ describe('flatFormat — reveal / link gestures (object → model → text)', ()
   it('stable round-trip (idempotent) + canonical gesture lines', () => {
     const once = printProgramFull(parseProgramFull(src))
     expect(printProgramFull(parseProgramFull(once))).toBe(once) // print∘parse idempotent
-    expect(once).toContain('reveal seen {\n    brush 30\n    erase\n    cells grid\n  }')
+    expect(once).toContain('reveal seen {\n    brush 30\n    grain 8\n    erase\n    cells grid\n  }')
     expect(once).toContain('link ex, ey, target to Country')
   })
 })
@@ -1658,5 +1658,37 @@ describe('`at x,y` takes a comma', () => {
 
   it('the correct spelling still parses', () => {
     expect(parse('size 200 200\nscene { layer "a" { group "G" at 12,-16 pivot 0,0 { layer "c" { rect 0 0 4 4 fill #ffffff } } } }\n')).toBe('')
+  })
+})
+
+describe('flatFormat — continuous `trace` slots (step / both ends / point)', () => {
+  const src = [
+    'size 600 200', 'scene {', '  layer "c" {',
+    '    group "Path" at 0,0 { layer "c" { path "M60 100L540 100" nofill stroke #cccccc 18 } }',
+    '  }', '}', '',
+    'object "Path" {', '  trace progress along Path {', '    tolerance 30', '    step 40', '    both ends',
+    '    point tipX, tipY', '  }', '}', '',
+  ].join('\n')
+
+  it('parses every slot, and round-trips in the canonical order', () => {
+    const it0 = parseProgramFull(src).interactors!.find((i) => i.axis === 'trace')!
+    expect(it0).toMatchObject({ axis: 'trace', varX: 'progress', confine: 'Path', grid: 30, step: 40, bothEnds: true, pointX: 'tipX', pointY: 'tipY' })
+    const once = printProgramFull(parseProgramFull(src))
+    expect(once).toContain('trace progress along Path {\n    tolerance 30\n    step 40\n    both ends\n    point tipX, tipY\n  }')
+    expect(printProgramFull(parseProgramFull(once))).toBe(once) // print∘parse idempotent
+  })
+
+  it('a plain `trace` keeps none of them (the historical cursor is untouched)', () => {
+    const plain = src.replace('    step 40\n', '').replace('    both ends\n', '').replace('    point tipX, tipY\n', '')
+    const it0 = parseProgramFull(plain).interactors!.find((i) => i.axis === 'trace')!
+    expect(it0.step).toBeUndefined()
+    expect(it0.bothEnds).toBeUndefined()
+    expect(it0.pointX).toBeUndefined()
+  })
+
+  it('`both` alone and a one-variable `point` are refused, with the shape spelled out', () => {
+    const errs = (bad: string) => behaviorDiagnostics(src.replace('    both ends', bad)).map((d) => d.diag.message).join(' ')
+    expect(errs('    both')).toMatch(/both ends/)
+    expect(errs('    point tipX')).toMatch(/point <x>, <y>/)
   })
 })

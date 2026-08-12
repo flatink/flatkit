@@ -75,8 +75,12 @@ Drag/interactors (write into your vars; all take `{ enabled <expr> }`):
 ```
 drag x, y [{ confine to <Zone>
              snap <grid> }]   // ONE OPTION PER LINE. Then USE them: x = px, y = py
-turn <angle> around x,y    ·    trace <progress> along <Group>    // pair with `draw "<progress>"` on the SAME path data
-reveal <progress> [{ brush <px>
+turn <angle> around x,y
+trace <progress> along <Group> [{ tolerance <px>
+                                  step <px>          // a TRACE, not a cursor (without it, one press near the finish = done)
+                                  both ends · point <x>,<y> }]   // pair with `draw "<progress>"` on the SAME path data
+reveal <progress> [{ brush <px>        // the FINGER's radius
+                     grain <px>         // the RESOLUTION of coverage + erase (default: the brush) — fine grain, wide finger
                      erase              // the runtime rubs the target out where scratched (a scratch card = a grey rect + this)
                      cells <array> }]   // fraction + WHERE: cells[row*cols+col] = 1, cols = ceil(zone_w/brush)
 link endX,endY,target to <Group>     // target = hit index 1..n (0=none), WORLD coords

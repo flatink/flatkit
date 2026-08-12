@@ -445,3 +445,77 @@ describe('headless -- reveal cells (the scratched grid)', () => {
     expect(res.vars.covered).toBeCloseTo(2 / 16, 6)
   })
 })
+
+// `trace` with `step`: a TRACE, not a cursor. Measured on the reported case — a straight line, tolerance 30
+// — where a single press a few pixels from the finish used to report the exercise as completed.
+describe('headless -- continuous trace (`step`)', () => {
+  const line = (slots: string) => [
+    'size 600 200', 'var progress = 0', 'var tipX = 0', 'var tipY = 0',
+    'scene { layer "L" {',
+    '  group "Path" at 0,0 { layer "c" { path "M60 100L540 100" nofill stroke #cccccc 18 cap round } }',
+    '} }', '',
+    'object "Path" {', '  trace progress along Path {', '    tolerance 30', slots, '  }', '}',
+  ].join('\n')
+  const sweep = (from: number, to: number, by: number): Gesture[] => {
+    const g: Gesture[] = [{ type: 'down', x: from, y: 100 }]
+    for (let x = from; by > 0 ? x < to : x > to; x += by) g.push({ type: 'move', x, y: 100 })
+    g.push({ type: 'move', x: to, y: 100 }) // always land ON the target: `up` alone advances nothing
+    g.push({ type: 'up', x: to, y: 100 })
+    return g
+  }
+  const play = (slots: string, gestures: Gesture[]) => playHeadless(parseProgramFull(line(slots)) as unknown as Doc, gestures).vars
+
+  it('a press near the FINISH advances nothing (it used to complete the exercise)', () => {
+    expect(play('    step 40', [{ type: 'down', x: 530, y: 100 }, { type: 'move', x: 540, y: 100 }, { type: 'up', x: 540, y: 100 }]).progress).toBe(0)
+  })
+
+  it('…while the same press completes it WITHOUT `step` (the historical cursor)', () => {
+    expect(play('', [{ type: 'down', x: 530, y: 100 }, { type: 'move', x: 540, y: 100 }, { type: 'up', x: 540, y: 100 }]).progress).toBe(1)
+  })
+
+  it('a continuous run from the start reaches 1', () => {
+    expect(play('    step 40', sweep(60, 540, 30)).progress).toBeCloseTo(1, 6)
+  })
+
+  it('a JUMP mid-run freezes the progress where it was (you must pass through what is between)', () => {
+    const vars = play('    step 40', [
+      { type: 'down', x: 60, y: 100 }, { type: 'move', x: 100, y: 100 },
+      { type: 'move', x: 400, y: 100 }, { type: 'move', x: 540, y: 100 }, { type: 'up', x: 540, y: 100 },
+    ])
+    expect(vars.progress).toBeCloseTo(40 / 480, 6) // stopped at x=100, the last continuous point
+  })
+
+  it('lifting the finger and putting it back where it was RESUMES (a child stops mid-letter)', () => {
+    const vars = play('    step 40', [
+      ...sweep(60, 300, 30),
+      ...sweep(302, 540, 30), // second grab, starting where the first ended
+    ])
+    expect(vars.progress).toBeCloseTo(1, 6)
+  })
+
+  it('and putting it back somewhere ELSE does not (the run is not transferable)', () => {
+    const vars = play('    step 40', [...sweep(60, 300, 30), ...sweep(400, 540, 30)])
+    expect(vars.progress).toBeCloseTo((300 - 60) / 480, 6) // still where the first grab left it
+  })
+
+  it('`both ends`: the far end is a legal entry, and the progress counts from THERE', () => {
+    expect(play('    step 40\n    both ends', sweep(540, 420, -30)).progress).toBeCloseTo(120 / 480, 6)
+    expect(play('    step 40', sweep(540, 420, -30)).progress).toBe(0) // …without it, only the `d`'s own start
+  })
+
+  it('assigning the progress variable RESTARTS it (the only reset there is)', () => {
+    const vars = playHeadless(parseProgramFull(line('    step 40').replace('object "Path" {', 'object "Path" {\n  when released {\n    progress = 0\n  }')) as unknown as Doc, [
+      ...sweep(60, 300, 30), // …traced, then the handler resets it
+      ...sweep(302, 540, 30), // …so this grab is NOT a resume: it starts far from the (re-opened) start
+    ]).vars
+    expect(vars.progress).toBe(0)
+  })
+
+  it('`point x, y` places the pen tip at the current progress — and on the START before anything is touched', () => {
+    const before = play('    step 40\n    point tipX, tipY', [])
+    expect([before.tipX, before.tipY]).toEqual([60, 100]) // the path's start, not the origin
+    const after = play('    step 40\n    point tipX, tipY', sweep(60, 300, 30))
+    expect(after.tipX).toBeCloseTo(300, 6)
+    expect(after.tipY).toBeCloseTo(100, 6)
+  })
+})

@@ -845,3 +845,33 @@ describe('programDoc — `draw` without a stroke', () => {
     expect(hit('path "M0 0L100 0" nofill stroke #111111 6 draw 0.5')).toEqual([])
   })
 })
+
+// Options that quietly do nothing on their own — the scene reads as if they had never been typed.
+describe('programDoc — gesture options that need a partner', () => {
+  const hit = (src: string, re: RegExp) => docStructureWarnings(compileFlatpack(src, [], {})).filter((w) => re.test(w.diag.message)).map((w) => w.diag.message)
+  const trace = (slots: string) => [
+    'size 600 200', 'var progress = 0',
+    'scene { layer "L" {', '  group "Path" at 0,0 { layer "c" { path "M60 100L540 100" nofill stroke #cccccc 18 } }', '} }', '',
+    'object "Path" {', '  trace progress along Path {', slots, '  }', '}',
+  ].join('\n')
+  const veil = (slots: string) => [
+    'size 200 200', 'var covered = 0',
+    'scene { layer "L" {', '  group "Veil" at 50,50 { layer "c" { rect -50 -50 100 100 fill #999999 } }', '} }', '',
+    'object "Veil" {', '  reveal covered {', slots, '  }', '}',
+  ].join('\n')
+
+  it('`both ends` without `step` says which half is missing', () => {
+    expect(hit(trace('    both ends'), /both ends/)[0]).toMatch(/step <px>/)
+    expect(hit(trace('    step 40\n    both ends'), /both ends/)).toEqual([])
+  })
+
+  it('a `grain` coarser than the brush warns that a touch may clear nothing', () => {
+    expect(hit(veil('    brush 20\n    grain 40'), /grain 40/)[0]).toMatch(/centre/)
+    expect(hit(veil('    brush 40\n    grain 10'), /grain/)).toEqual([]) // fine grain, wide finger: the point
+  })
+
+  it('the pen-tip variables of `point` count as used', () => {
+    const dead = docStructureWarnings(compileFlatpack(trace('    step 40\n    point tipX, tipY').replace('var progress = 0', 'var progress = 0\nvar tipX = 0\nvar tipY = 0'), [], {}))
+    expect(dead.filter((w) => /never used/.test(w.diag.message))).toEqual([])
+  })
+})

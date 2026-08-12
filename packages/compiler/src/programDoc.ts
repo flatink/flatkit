@@ -198,7 +198,7 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
     forEachAction(doc, (a) => { for (const v of Object.values(a)) if (typeof v === 'string') used.push(v) })
     // An interactor writes its variables through named SLOTS rather than an expression, and guards itself
     // with `enabled` -- neither is an expression the walkers see. That guard was the reported case.
-    for (const i of doc.interactors ?? []) used.push(i.varX ?? '', i.varY ?? '', i.varT ?? '', i.cells ?? '', i.enabled ?? '')
+    for (const i of doc.interactors ?? []) used.push(i.varX ?? '', i.varY ?? '', i.varT ?? '', i.cells ?? '', i.pointX ?? '', i.pointY ?? '', i.enabled ?? '')
     const allText = used.join('\n')
     for (const name of names0) {
       if (!new RegExp(`(?<![\\w-])${escapeRe(name)}(?![\\w-])`).test(allText))
@@ -283,6 +283,7 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
   out.push(...docLayoutWarnings(doc))
   out.push(...docRevealCellWarnings(doc))
   out.push(...docDrawWarnings(doc))
+  out.push(...docGestureOptionWarnings(doc))
   return out
 }
 
@@ -361,6 +362,29 @@ export function docRevealCellWarnings(doc: Doc): { scope: string; diag: Diagnost
       out.push(warn(`\`reveal … cells ${it.cells}\` (object "${who}") writes into "${it.cells}", which is ${declared === undefined ? 'not declared' : 'a scalar, not an array'} — the scratched grid goes nowhere. Declare it with the grid's size: \`var ${it.cells} = fill(${n}, 0)\` — ${geom}, index = row * ${cols} + col.`))
     } else if (declared.length !== n) {
       out.push(warn(`\`reveal … cells ${it.cells}\` (object "${who}"): the grid is ${geom}, but "${it.cells}" holds ${declared.length} — ${declared.length < n ? 'every cell past the end is dropped in silence' : 'the extra cells are never written'}. Declare \`var ${it.cells} = fill(${n}, 0)\`, index = row * ${cols} + col.`))
+    }
+  }
+  return out
+}
+
+/**
+ * Slots that quietly do nothing on their own: `both ends` without `step` (only a CONTINUOUS trace has an
+ * entry end to choose), and a `grain` so much coarser than the brush that a touch can land between two cell
+ * centres and clear nothing at all. Both leave a scene that looks written correctly and behaves as if the
+ * option had not been typed.
+ */
+export function docGestureOptionWarnings(doc: Doc): { scope: string; diag: Diagnostic }[] {
+  const out: { scope: string; diag: Diagnostic }[] = []
+  for (const it of doc.interactors ?? []) {
+    const who = itemNameById(doc, it.targetId) ?? it.targetId
+    if (it.axis === 'trace' && it.bothEnds && it.step === undefined) {
+      out.push(warn(`\`both ends\` without \`step\` (object "${who}") — it picks which END the run is measured from, and a \`trace\` without \`step\` has no run: its progress is wherever the finger projects, from anywhere. Add \`step <px>\` (the max jump between two frames) or drop \`both ends\`.`))
+    }
+    if (it.axis === 'reveal') {
+      const brush = it.grid && it.grid > 0 ? it.grid : 24
+      if (it.grain && it.grain > brush) {
+        out.push(warn(`\`grain ${it.grain}\` is coarser than \`brush ${brush}\` (object "${who}") — a cell is cleared when its CENTRE falls within the brush, so a touch can land between two centres and clear nothing. Keep the grain at or under the brush (a fine grain under a wide finger is the point).`))
+      }
     }
   }
   return out

@@ -182,8 +182,12 @@ drag x, y [{ confine to <Zone>
              enabled <expr> }]   // ONE OPTION PER LINE. dragX / dragY too
 turn    <angle> around <x>,<y> [{ snap <deg> }]    // → <angle> in RADIANS → rotation = <angle> directly
 turnDeg <angle> around <x>,<y> [{ snap <deg> }]    // → <angle> in DEGREES → pair with rotationDeg = <angle>
-trace <progress> along <Group> [{ tolerance <px> }]// follow a path → 0..1 monotone (pairs with `draw`)
-reveal <progress> [{ brush <px>
+trace <progress> along <Group> [{ tolerance <px>
+                                 step <px>         // …a TRACE, not a cursor: only advances through what the finger passes
+                                 both ends         // …enterable from either end (or either way round a closed shape)
+                                 point <x>,<y> }]  // …world position of the current progress (the pen tip)
+reveal <progress> [{ brush <px>                   // = the FINGER's radius
+                     grain <px>                    // = the RESOLUTION of the coverage and of `erase` (default: the brush)
                      erase                         // …and the runtime RUBS THE TARGET OUT where it was scratched
                      cells <array> }]              // scratch/wipe → 0..1 cumulative; `cells` = WHERE (1 per cleared cell)
 link  <endX>,<endY>,<target> to <Group>            // elastic thread → target = hit index 1..n (0=none)
@@ -191,7 +195,9 @@ link  <endX>,<endY>,<target> to <Group>            // elastic thread → target 
 
 **`trace` + `draw` is the tracing exercise**: give the guide shape and the ink shape the SAME path data,
 `trace avance along Chemin` on one, `draw "avance"` on the other — the ink follows the finger by arc
-length. **A scratch card is `reveal cleared { brush 28 · erase }` on a grey rectangle** — nothing else: `erase`
+length. Add **`step <px>`** or the drill is free: without it the progress is where the finger PROJECTS, so
+one press near the finish completes it. With it, the run must start at an end and pass through everything
+(and it resumes across a lift, since a child stops mid-letter). Restart with `avance = 0`. **A scratch card is `reveal cleared { brush 28 · erase }` on a grey rectangle** — nothing else: `erase`
 makes the runtime rub the veil out under the finger (a `mask` layer CANNOT do it, its matter is an even-odd
 clip path where two overlapping stamps cancel). **`reveal … cells grille`** is the other half, for a scene
 that must REACT to the uncovered area: it writes `grille[i] = 1` for each cleared cell (`i = row * cols + col`,

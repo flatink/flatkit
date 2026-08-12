@@ -27,7 +27,7 @@ const recorder = () =>
       if (k === 'getTransform') return () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })
       return (...args: unknown[]) => { ops.push({ op: k, args: args.filter((a) => typeof a === 'number') as number[] }) }
     },
-    set: (_t, k: string, v) => { if (k === 'globalCompositeOperation') ops.push({ op: `=${String(v)}`, args: [] }); return true },
+    set: (_t, k: string, v) => { if (k === 'globalCompositeOperation' || k === 'filter') ops.push({ op: `=${String(v)}`, args: [] }); return true },
   }) as unknown as CanvasRenderingContext2D
 
 let offscreen: CanvasRenderingContext2D
@@ -80,6 +80,9 @@ describe('drawScene -- `reveal … erase` (the veil is rubbed out where scratche
     // index = row * cols + col → centres at (12.5,12.5) (37.5,12.5) (37.5,37.5); radius covers the cell.
     expect(arcs.map((a) => [a.args[0], a.args[1]])).toEqual([[12.5, 12.5], [37.5, 12.5], [37.5, 37.5]])
     expect(arcs[0].args[2]).toBeCloseTo(25 * 0.75, 6)
+    // …with a BLURRED edge: hard discs read as stamps (a lone touch left a perfect circle, and the border
+    // of a scratched area was a scallop at the mesh of the grid).
+    expect(ops.some((o) => /^=blur\(/.test(o.op))).toBe(true)
     const punch = ops.slice(ops.findIndex((o) => o.op === '=destination-out'))
     expect(punch.filter((o) => o.op === 'fill')).toHaveLength(1) // ONE path, ONE fill — not one per cell
     expect(mainDraws).toBe(1) // the isolated result is blitted back once
@@ -99,8 +102,9 @@ describe('player -- a scratched `reveal … erase` reaches the renderer', () => 
     'object "Veil" {', '  reveal covered {', `${slots}`, '  }', '}',
   ].join('\n').replace('size 200 200', 'size 200 200\nvar covered = 0')
 
-  /** Drives a real player through a scratch stroke, then renders — the whole chain, gesture to punch. */
-  const scratchAndRender = (slots: string): Op[] => {
+  /** Drives a real player through a scratch stroke. Returns what the STROKE drew, and a `repaint()` that
+   *  renders again with nothing changed — the case that used to re-composite for the rest of the activity. */
+  const scratch = (slots: string) => {
     const handlers: Record<string, (e: { clientX: number; clientY: number; pointerId: number }) => void> = {}
     const canvas = {
       getContext: () => mainCtx(),
@@ -110,26 +114,44 @@ describe('player -- a scratched `reveal … erase` reaches the renderer', () => 
       width: 200, height: 200,
     } as unknown as HTMLCanvasElement
     const pl = new FlatPlayer(canvas, parseProgramFull(program(slots)) as unknown as Doc, { input: true, padding: 0, loop: false })
-    try {
-      for (const [type, at] of [['pointerdown', 12], ['pointermove', 12], ['pointerup', 12]] as const) handlers[type]?.({ clientX: at, clientY: at, pointerId: 1 })
-      ops = [] // keep only what the NEXT paint draws
-      pl.render()
-      return ops
-    } finally {
-      pl.destroy()
+    ops = []
+    for (const [type, at] of [['pointerdown', 12], ['pointermove', 12], ['pointerup', 12]] as const) handlers[type]?.({ clientX: at, clientY: at, pointerId: 1 })
+    const stroke = ops
+    return {
+      stroke,
+      repaint: () => { ops = []; mainDraws = 0; pl.render(); return ops },
+      done: () => pl.destroy(),
     }
   }
 
-  it('with `erase`, the paint after the stroke punches the scratched cell out', () => {
-    const arcs = scratchAndRender('    brush 25\n    erase').filter((o) => o.op === 'arc')
-    expect(arcs).toHaveLength(1) // the pointer at (12,12) cleared exactly the top-left cell
-    expect([arcs[0].args[0], arcs[0].args[1]]).toEqual([12.5, 12.5])
-    expect(ops.some((o) => o.op === '=destination-out')).toBe(true)
+  it('with `erase`, the stroke punches the scratched cell out', () => {
+    const s = scratch('    brush 25\n    erase')
+    try {
+      const arcs = s.stroke.filter((o) => o.op === 'arc')
+      expect(arcs.length).toBeGreaterThanOrEqual(1) // the pointer at (12,12) cleared the top-left cell
+      expect([arcs[0].args[0], arcs[0].args[1]]).toEqual([12.5, 12.5])
+      expect(s.stroke.some((o) => o.op === '=destination-out')).toBe(true)
+    } finally { s.done() }
+  })
+
+  it('a repaint with nothing scratched since is ONE blit — no re-render, no punch', () => {
+    // The reported cost: once a single cell had fallen, every frame paid a bbox accumulation, an off-screen
+    // canvas, a full re-render of the veil, N arcs and a blit back — for the rest of the activity, while the
+    // child was busy elsewhere on the board.
+    const s = scratch('    brush 25\n    erase')
+    try {
+      const again = s.repaint()
+      expect(again.filter((o) => o.op === 'arc')).toHaveLength(0) // nothing re-punched…
+      expect(again.filter((o) => o.op === 'fill')).toHaveLength(0) // …and the veil itself is not redrawn
+      expect(mainDraws).toBe(1) // one blit of the baked bitmap
+    } finally { s.done() }
   })
 
   it('without `erase`, the same stroke changes nothing on screen (the fraction is all you get)', () => {
-    const drawn = scratchAndRender('    brush 25')
-    expect(drawn.filter((o) => o.op === 'arc')).toHaveLength(0)
-    expect(drawn.some((o) => o.op === '=destination-out')).toBe(false)
+    const s = scratch('    brush 25')
+    try {
+      expect(s.stroke.filter((o) => o.op === 'arc')).toHaveLength(0)
+      expect(s.stroke.some((o) => o.op === '=destination-out')).toBe(false)
+    } finally { s.done() }
   })
 })

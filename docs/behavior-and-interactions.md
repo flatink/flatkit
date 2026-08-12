@@ -162,13 +162,52 @@ Higher-level pointer behaviors (each writes into your variables; all accept `{ e
 ```
 turn    <angle> around <x>,<y> [{ snap <deg> }]    # dial / clock hand → angle in RADIANS → rotation = angle
 turnDeg <angle> around <x>,<y> [{ snap <deg> }]    # …in DEGREES → rotationDeg = angle  (rotationDeg = sugar for rotation = rad(…))
-trace <progress> along <Group> [{ tolerance <px> }]# follow a path → progress 0..1 (monotone)
-reveal <progress> [{ brush <px> · erase · cells <array> }]  # scratch/wipe the grabbed area → fraction 0..1 (cumulative across grabs)
+trace <progress> along <Group> [{ tolerance <px> · step <px> · both ends · point <x>,<y> }]  # follow a path → progress 0..1 (monotone)
+reveal <progress> [{ brush <px> · grain <px> · erase · cells <array> }]  # scratch/wipe the grabbed area → fraction 0..1 (cumulative across grabs)
 link  <endX>, <endY>, <target> to <Group>          # pull a thread → end follows the pointer; <target> = hit index 1..n on release (0 = none)
 ```
 
 Each output also accepts an **array element** (`drag hx[i], hy[i]`, `reveal seen[2]`) — the natural form
 under `each` (see below).
+
+### A cursor, or a TRACE (`step`)
+
+By default `trace` reports **where the finger projects** on the path: a press three pixels from the finish
+reports the path as finished. That is what you want for a slider, and the opposite of what you want for a
+writing drill. **`step <px>`** makes it a trace — the progress may only grow through what the finger
+actually passes, by at most `step` px of arc length between two frames:
+
+```
+object "Route" {
+  trace progress along Route {
+    tolerance 30      # how far off the path the finger may stray
+    step 40           # …and how far it may LEAP along it: past that, the progress waits
+    both ends         # the run may start at either end (or either way round a closed shape)
+    point tipX, tipY  # the world point where the ink stops — the pen tip
+  }
+}
+```
+
+Everything else follows from that one rule:
+
+- **it must be started at an end** — nothing else is within `step` of a progress of 0;
+- **a jump does not count**: leap ahead and the progress simply waits where it was until the finger comes
+  back within `step` of it;
+- **lifting the finger and putting it back resumes** — the progress belongs to the OBJECT, not to the grab,
+  because a child stops mid-letter. Put the finger back somewhere else and nothing advances.
+- **`both ends`** lets the far end be the entry too; the run is then measured from the end that was
+  entered, and the direction locks on the first advance (so a closed shape can be walked either way round).
+- **`point <x>, <y>`** writes the world position of the current progress into two variables — the pen tip
+  while tracing, and *where to put the finger back* after a pause. It is placed on the path's start as soon
+  as the scene loads, so a marker never sits at the origin waiting for a first touch.
+
+Pick `step` **larger than the distance between two pointer samples** — a finger moving fast covers ground
+between frames, and a replay script moves as far as you wrote. Something like a quarter of the path is a
+sane start: big enough never to stall a real gesture, small enough that skipping a letter's curve is
+impossible.
+
+**Restarting**: assign the progress variable (`progress = 0`) — the trace re-seats itself on what the scene
+wrote, and the entry end opens again. There is no other reset, on purpose: the variable is the truth.
 
 ### Drawing what a `trace` traced
 
@@ -182,7 +221,12 @@ scene { layer "Ink" {
   path "M60 300C220 120 340 480 500 300" nofill stroke #2255ff 18 cap round draw "progress" nohit
 } }
 
-object "Route" { trace progress along Route { tolerance 30 } }
+object "Route" {
+  trace progress along Route {
+    tolerance 30
+    step 40
+  }
+}
 ```
 
 The guide and the ink carry the **same path data**: `trace` measures on it, `draw` cuts on it. (Driving a
@@ -212,6 +256,13 @@ Nothing else to write: no grid of tiles, no `each`, no array. What disappears is
 counts (one disc per cleared cell, sized to merge with its neighbours), so `cleared` and the picture always
 agree. Erasing is **visual only** — the zone stays grabbable where it has been cleared, which is what lets
 the scratching continue there.
+
+**`brush` is the finger, `grain` is the resolution.** They are separate numbers: `brush <px>` says how wide
+a touch clears, `grain <px>` how finely the runtime tracks and rubs it out (absent = the brush). A wide
+finger with a fine grain — the usual want — is `brush 48` + `grain 12`: the same gesture, an edge four
+times finer. The erased edge is soft over about half a grain, so nothing reads as a stamp; keep the grain
+**at or under** the brush, or a touch can fall between two cell centres and clear nothing (`--check` says
+so). A finer grain also makes the fraction more accurate, at four cells per step down.
 
 > **Why not a `mask` layer?** Because a mask is an even-odd **clipping path**: two overlapping brush stamps
 > *cancel* instead of accumulating, and nothing in the language creates a stamp at the pointer anyway

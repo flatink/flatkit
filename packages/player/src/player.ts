@@ -20,7 +20,7 @@ import { applyInstanceBinds } from '@flatkit/engine/instanceBind'
 import { importedFunctions } from '@flatkit/engine/stdlib'
 import { namedChannels, objectChannelsById, objectParentTransform, type NamedChannels, type ObjectChannels } from '@flatkit/engine/sceneRefs'
 import { itemBoundsByName, itemBoundsById, itemBoundsByIds, dropZoneBounds, tracePathByName, groupTargets } from '@flatkit/engine/groups'
-import { projectToPath, samplePathAt, type Path } from '@flatkit/engine/path'
+import { projectToPath, samplePathAt, pathArcLength, type Path } from '@flatkit/engine/path'
 import { apply, invert, spaceConversions, IDENTITY, type Transform } from '@flatkit/engine/transform'
 import type { Interactor } from '@flatkit/types'
 import { hitChains, warmHitCache as warmHitPaths, type GrabZones } from './hit'
@@ -148,6 +148,16 @@ const docReadsMousePos = (doc: Doc): boolean => /mouse\s*\.\s*[xy]/.test(JSON.st
 /** Key names the scene actually READS (`keys.<Name>` in any expression) — same over-approximating scan as
  *  `docUsesWheel` (a literal "keys.X" inside a text is a false positive; harmless). The player consumes
  *  ONLY these: everything else keeps its native page behavior (scroll, shortcuts). */
+/** Grab-time state of a `trace`: its WORLD path and that path's total length (the unit `step` is in). */
+const traceGrab = (doc: Doc, it: Interactor): { tracePath: Path | null; traceMaxT: number; traceLen: number } => {
+  const tracePath = it.confine ? tracePathByName(doc, it.confine) : null
+  return { tracePath, traceMaxT: 0, traceLen: tracePath ? pathArcLength(tracePath) : 1 }
+}
+
+/** Progress variables of the CONTINUOUS traces (`step`) — the writes that must re-seat their state. */
+const traceOutputNames = (doc: Doc): Set<string> =>
+  new Set((doc.interactors ?? []).filter((i) => i.axis === 'trace' && i.step !== undefined && i.varX).map((i) => i.varX as string))
+
 const docReadKeys = (doc: Doc): Set<string> => {
   const out = new Set<string>()
   for (const m of JSON.stringify(doc).matchAll(/keys\s*\.\s*([A-Za-z_]\w*)/g)) out.add(m[1])
@@ -278,10 +288,15 @@ export class FlatPlayer {
   // `click` is DEFERRED to pointerup: a tap fires it only if the pointer stayed within TAP_TOL of the press
   // (a press that becomes a drag is NOT a click). Lets a draggable surface and a tappable child coexist.
   private pendingClick: string | null = null // click target captured on press, fired on release if it stayed a tap
-  private dragActive: { it: Interactor; offX: number; offY: number; parentInv: Transform; tracePath?: Path | null; traceMaxT?: number; revealCells?: Set<number>; revealGrid?: RevealGrid } | null = null // "drag" interactor in progress (parentInv cached at grab time)
+  private dragActive: { it: Interactor; offX: number; offY: number; parentInv: Transform; tracePath?: Path | null; traceMaxT?: number; traceLen?: number; revealCells?: Set<number>; revealGrid?: RevealGrid } | null = null // "drag" interactor in progress (parentInv cached at grab time)
   // `reveal` coverage PERSISTED per target across grabs → true monotonicity (a child scratching with
   // several short strokes keeps accumulating instead of resetting to the current stroke each grab).
   private readonly revealStates = new Map<string, RevealState>()
+  // CONTINUOUS `trace` (`step`) — progress + the end it was entered from, per TARGET. Persisted across
+  // grabs for the same reason: a child stops mid-letter, lifts, and puts the finger back where it was.
+  // Reset by writing the progress variable from the scene (`avance = 0`), which is how an author restarts.
+  private readonly traceStates = new Map<string, { progress: number; dir: 0 | 1 | -1 }>()
+  private traceOutputs: Set<string> = new Set() // the progress variables of continuous traces (see `syncTraceState`)
   // Grab zones handed to the hit test: the WORLD bbox of each `reveal` target, so a veil stays grabbable
   // where the child already scratched it away (its cells sit at `opacity 0`, which normally lets the
   // pointer through). Built on load, when the scene geometry is known; UNDEFINED when the doc declares no
@@ -436,8 +451,16 @@ export class FlatPlayer {
         const t = projectToPath(path, p)
         const near = samplePathAt(path, t).point
         const tol = d.it.grid && d.it.grid > 0 ? d.it.grid : 24 // tolerance (px); default 24
-        if (Math.hypot(p.x - near.x, p.y - near.y) <= tol) d.traceMaxT = Math.max(d.traceMaxT ?? 0, t)
-        if (d.it.varX) this.writeOut(d.it.varX, d.traceMaxT ?? 0)
+        const onPath = Math.hypot(p.x - near.x, p.y - near.y) <= tol
+        if (d.it.step === undefined) {
+          // CURSOR (historical): the progress IS the projection, monotone within the grab. A press anywhere
+          // on the path counts as having reached that point — fine for a slider, wrong for a tracing drill.
+          if (onPath) d.traceMaxT = Math.max(d.traceMaxT ?? 0, t)
+          if (d.it.varX) this.writeOut(d.it.varX, d.traceMaxT ?? 0)
+        } else if (this.grabbed) {
+          this.advanceTrace(this.grabbed, d.it, t, d.traceLen ?? 1, onPath)
+        }
+        if (d.it.pointX && d.it.pointY) this.writeTracePoint(d.it, path, this.tracePos(this.grabbed ?? '', d.it, d.traceMaxT ?? 0))
         this.bustNamed()
       }
       return
@@ -486,6 +509,57 @@ export class FlatPlayer {
     if (d.it.axis !== 'x' && d.it.varY) this.writeOut(d.it.varY, local.y)
     this.bustNamed()
   }
+  /**
+   * CONTINUOUS trace (`step`): the progress may only grow through what the finger actually passes, by at
+   * most `step` px of arc length per frame. Everything else follows from that single rule — a press near
+   * the end advances nothing (the jump from 0 is the whole path), lifting the finger and putting it back
+   * where it was resumes (the state is per TARGET, not per grab), and the entry point must be an END,
+   * since nothing else is within `step` of a progress of 0.
+   *
+   * `both ends`: the far end is a legal entry too, so the run is measured from whichever end was entered
+   * (`dir`), and on a CLOSED path — whose two ends are the same point — the direction is simply the one
+   * the finger left in. The direction locks on the first ADVANCE, never on the press alone.
+   */
+  private advanceTrace(id: string, it: Interactor, t: number, length: number, onPath: boolean): void {
+    const st = this.traceStates.get(id) ?? { progress: 0, dir: 0 as 0 | 1 | -1 }
+    const step = it.step ?? 0
+    if (onPath) {
+      // The jump is compared with a hair of slack: a replay script that moves by exactly `step` px lands on
+      // 40.000000000000004 once the fractions have been through a division, and would stall on its 3rd move.
+      const room = step * (1 + 1e-9) + 1e-9
+      for (const dir of (st.dir !== 0 ? [st.dir] : it.bothEnds ? [1, -1] as const : [1] as const)) {
+        const u = dir === 1 ? t : 1 - t // the finger's position, measured from the entered end
+        if (u > st.progress && (u - st.progress) * length <= room) { st.dir = dir; st.progress = u; break }
+      }
+    }
+    this.traceStates.set(id, st)
+    if (it.varX) this.writeOut(it.varX, st.progress)
+  }
+  /** Progress of a trace in the PATH's own parameter (what `samplePathAt` takes), whichever end was entered. */
+  private tracePos(id: string, it: Interactor, fallback: number): number {
+    if (it.step === undefined) return fallback // cursor mode: the projection is the position
+    const st = this.traceStates.get(id)
+    if (!st) return 0
+    return st.dir === -1 ? 1 - st.progress : st.progress
+  }
+  /** `point <x>, <y>`: the WORLD point where the ink stops — the pen tip, and the spot to put the finger
+   *  back on after a pause. Written on every move AND at load, so the marker starts on the path's start
+   *  instead of at the origin. */
+  private writeTracePoint(it: Interactor, path: Path, at: number): void {
+    if (!it.pointX || !it.pointY) return
+    const pt = samplePathAt(path, at).point
+    this.writeOut(it.pointX, pt.x)
+    this.writeOut(it.pointY, pt.y)
+  }
+  /** Places every `trace … { point x, y }` marker at its current progress (0 on a fresh document) — the
+   *  scene shows where to start before anything is touched. Called on load, with the geometry known. */
+  private initTracePoints(): void {
+    for (const it of this.doc.interactors ?? []) {
+      if (it.axis !== 'trace' || !it.pointX || !it.pointY || !it.confine) continue
+      const path = tracePathByName(this.doc, it.confine)
+      if (path?.subpaths.length) this.writeTracePoint(it, path, this.tracePos(it.targetId, it, 0))
+    }
+  }
   /** WORLD bbox of every `reveal` target — the zones the hit test honours whatever their content looks like
    *  (see `GrabZones` in hit.ts). Built once per document: a zone is the item's GEOMETRY, which erasing the
    *  veil that fills it does not change. */
@@ -506,7 +580,9 @@ export class FlatPlayer {
     }
     const b = this.grabZones?.get(id) ?? itemBoundsById(this.doc, id) // same bbox the hit test uses as the zone
     if (!b) return {}
-    const cell = it.grid && it.grid > 0 ? it.grid : 24
+    // The grid's RESOLUTION (`grain`) is not the finger's radius (`brush`): a wide finger with a fine grain
+    // is the common case (a smooth edge under a generous touch). Absent → the brush, i.e. the old behavior.
+    const cell = it.grain && it.grain > 0 ? it.grain : it.grid && it.grid > 0 ? it.grid : 24
     const cols = Math.max(1, Math.ceil((b.maxX - b.minX) / cell))
     const rows = Math.max(1, Math.ceil((b.maxY - b.minY) / cell))
     const state: RevealState = { revealCells: new Set<number>(), revealGrid: { minX: b.minX, minY: b.minY, cell, cols, rows } }
@@ -642,7 +718,7 @@ export class FlatPlayer {
         const ctx = this.exprCtx()
         const pos = objectChannelsById(this.doc, grabId, this.frame, ctx, this.fps)
         const parent = objectParentTransform(this.doc, grabId, this.frame, ctx, this.fps) ?? IDENTITY
-        this.dragActive = { it: inter, offX: (pos?.x ?? p.x) - p.x, offY: (pos?.y ?? p.y) - p.y, parentInv: invert(parent), ...(inter.axis === 'trace' ? { tracePath: inter.confine ? tracePathByName(this.doc, inter.confine) : null, traceMaxT: 0 } : {}), ...(inter.axis === 'reveal' ? this.revealGridFor(grabId, inter) : {}) }
+        this.dragActive = { it: inter, offX: (pos?.x ?? p.x) - p.x, offY: (pos?.y ?? p.y) - p.y, parentInv: invert(parent), ...(inter.axis === 'trace' ? traceGrab(this.doc, inter) : {}), ...(inter.axis === 'reveal' ? this.revealGridFor(grabId, inter) : {}) }
       }
       this.canvas.setPointerCapture?.(e.pointerId) // keep the drag even if the pointer leaves the canvas
       this.fireEvent(grabId, 'press')
@@ -727,6 +803,7 @@ export class FlatPlayer {
     this.usesMousePos = docReadsMousePos(this.doc)
     this.hasModifiers = docHasModifiers(this.doc)
     this.buildGrabZones()
+    this.traceOutputs = traceOutputNames(this.doc)
     this.loop = opts.loop ?? true
     this.pad = opts.padding ?? 0
     this.audioOn = opts.audio ?? true
@@ -737,6 +814,7 @@ export class FlatPlayer {
     this.resolveAsset = opts.resolveAsset ?? ((a) => (isEmbeddedData(a.data) ? a.data : null))
     this.vars = cloneVars(doc.variables)
     this.buildFunctions()
+    this.initTracePoints() // …once `vars` exists: the pen-tip markers start ON the path, not at the origin
     this.measure()
     this.render()
     this.fireLoad()
@@ -821,6 +899,24 @@ export class FlatPlayer {
   private setVarLive(name: string, value: number | number[]): void {
     this.vars.set(name, value)
     if (this.ctxCache && !this.funcNames.has(name) && !RESERVED.has(name)) this.ctxCache[name] = value
+    // A continuous `trace` keeps its progress across grabs, so the ONLY way to restart the exercise is the
+    // one an author would write anyway: assign the progress variable (`avance = 0`). The variable stays the
+    // source of truth — without this, `avance = 0` would blank the ink and the next touch would jump back
+    // to where the finger had got to.
+    if (this.traceOutputs.size && this.traceOutputs.has(name) && typeof value === 'number') this.syncTraceState(name, value)
+  }
+  /** Re-seat every continuous trace whose progress variable is `name` on the value the scene just wrote. */
+  private syncTraceState(name: string, value: number): void {
+    const p = value < 0 ? 0 : value > 1 ? 1 : value
+    for (const it of this.doc.interactors ?? []) {
+      if (it.axis !== 'trace' || it.step === undefined || it.varX !== name) continue
+      const st = this.traceStates.get(it.targetId)
+      this.traceStates.set(it.targetId, { progress: p, dir: p === 0 ? 0 : (st?.dir ?? 0) }) // back to 0 ⇒ the entry end is open again
+      if (it.pointX && it.pointY && it.confine) {
+        const path = tracePathByName(this.doc, it.confine)
+        if (path?.subpaths.length) this.writeTracePoint(it, path, this.tracePos(it.targetId, it, p))
+      }
+    }
   }
 
   /** Calls a procedure `fn name(p) { ... }`: binds the params (save/restore), bounds the recursion. */
@@ -1066,7 +1162,9 @@ export class FlatPlayer {
     this.ctxCache = null // new document -> cached expr context stale (vars Map replaced just above)
     this.filterCache.clear() // new document -> filter bitmaps stale
     this.revealStates.clear() // new document -> reveal coverage resets
+    this.traceStates.clear() // …and so does a continuous trace's progress
     this.scratched.clear() // …and so does what the renderer rubs out (`erase`)
+    this.traceOutputs = traceOutputNames(this.doc)
     this.buildGrabZones() // new document -> new geometry for the `reveal` grab zones
     this.instNameCache = undefined // new document -> name→instance lookup stale
     this.paramRt.clear() // new document -> per-instance param transitions reset

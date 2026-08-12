@@ -245,8 +245,17 @@ export type Interactor = {
   varT?: string // axis 'link': INDEX (1..n) of the target reached on release, 0 if none
   confine?: string // clamp zone (drag); name of the GROUP-path to follow ('trace'); name of the GROUP of targets ('link')
   grid?: number // snap: grid step (drag, px), angle step (turn/turnDeg, ALWAYS degrees), TOLERANCE (trace, px), or BRUSH radius (reveal, px)
+  // axis 'trace': max arc-length JUMP (px) the progress may make between two frames. Present ⇒ the gesture
+  // is a TRACE, not a cursor: the progress only advances through what it passes, starts at the path's start
+  // (nothing else is within `step` of 0), and PERSISTS across grabs so lifting the finger and putting it
+  // back where it was resumes. Absent ⇒ the historical behavior (progress = the projection, per grab).
+  step?: number
+  bothEnds?: boolean // axis 'trace' + `step`: the path may be entered from EITHER end (or either way round a closed one); the direction locks on the first advance
+  pointX?: string // axis 'trace': X of the WORLD point at the current progress — where the ink stops, i.e. where to put the finger back
+  pointY?: string // …and its Y
   cells?: string // axis 'reveal': name of an ARRAY variable the scratched grid is written into (1 = cell cleared, index = row * cols + col) — WHERE the finger passed, next to the fraction varX says how much
   erase?: boolean // axis 'reveal': the RUNTIME rubs the target out where it was scratched (the veil disappears under the finger, no cell artwork to author). Visual only — the zone stays grabbable
+  grain?: number // axis 'reveal': side of a grid cell (px) — the RESOLUTION of the coverage and of `erase`. Absent = the brush radius (`grid`), so a wide finger can still have a fine grain
   enabled?: string // expression: the drag is active only when it is true (≠ 0); absent = always active (dynamic lock, no ternary pattern)
   pivot?: Point // WORLD rotation center for axis 'turn'/'turnDeg' (the object points toward the cursor)
 }

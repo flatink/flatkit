@@ -180,10 +180,20 @@ Inside an `object "Name" { … }`, besides `drag x, y` / `dragX` / `dragY`:
   and `gesture.angle`), so `rotation = <angle>` wires directly. To work in **degrees**, use the twin
   **`turnDeg`** (writes degrees) paired with the **`rotationDeg = <angle>`** channel (sugar for
   `rotation = rad(<angle>)`). `snap <deg>` is authored in degrees on both. Great for clock hands, dials, knobs.
-- **`trace <progress> along <TraceGroup> [{ tolerance <px> · enabled <expr> }]`**: follow a
-  path with the finger. While the pointer stays within `tolerance` of the trace (the regions
+- **`trace <progress> along <TraceGroup> [{ tolerance <px> · step <px> · both ends · point <x>,<y> · enabled <expr> }]`**:
+  follow a path with the finger. While the pointer stays within `tolerance` of the trace (the regions
   of the named group), `<progress>` rises from 0 to 1 (monotone, never goes back down).
   Great for tracing a letter, a border, a constellation. (`tolerance` defaults to 24 px.)
+  - ⚠️ **Without `step`, `<progress>` is where the finger PROJECTS, not what it walked** — a press three
+    pixels from the finish reports 1. That is a cursor: right for a slider, wrong for a writing drill.
+    **`step <px>`** makes it a trace: the progress only grows through what the finger passes, by at most
+    `step` px of arc length per frame. It must then be entered at an END (nothing else is within `step` of
+    0), a leap ahead waits instead of counting, and the progress belongs to the OBJECT — lifting the finger
+    and putting it back where it was resumes. Choose `step` bigger than the gap between two pointer samples.
+  - **`both ends`** lets the far end be the entry (or either way round a closed shape); **`point <x>,<y>`**
+    writes the world position of the current progress — the pen tip, and where to put the finger back. It is
+    placed on the path's start at load, so the marker never waits at the origin.
+  - **Restart** by assigning the progress variable (`progress = 0`); there is no other reset.
 - **`reveal <progress> [{ brush <px> · erase · cells <array> · enabled <expr> }]`**: scratch / wipe. The grabbed
   object IS the area to reveal; rubbing it ticks the cells of a grid (cell side =
   `brush`) and `<progress>` rises from 0 to 1 (monotone, and **cumulative across separate grabs**
@@ -191,9 +201,13 @@ Inside an `object "Name" { … }`, besides `drag x, y` / `dragX` / `dragY`:
   cover's opacity with `opacity = 1 - <progress>`. Great for scratch cards, fogged glass, digging.
   (`brush` defaults to 24 px; coverage model, no pixel mask.)
   - **`erase`** makes the RUNTIME rub the target out where it was scratched (one disc per cleared cell,
-    accumulating) — a scratch card is then a grey rectangle and nothing else. A `mask` layer cannot do
-    this: its matter is an even-odd clip path, so two overlapping stamps cancel, and no construct creates
-    a stamp at the pointer.
+    accumulating, with a soft edge) — a scratch card is then a grey rectangle and nothing else. A `mask`
+    layer cannot do this: its matter is an even-odd clip path, so two overlapping stamps cancel, and no
+    construct creates a stamp at the pointer. The composite is cached: once the cells stop changing, a
+    frame costs one blit.
+  - **`brush` is the finger, `grain <px>` is the resolution** — a wide touch with a fine edge is
+    `brush 48` + `grain 12` (absent = the brush, i.e. as coarse as the finger). Keep the grain at or under
+    the brush, or a touch can land between two cell centres and clear nothing.
   - **`cells <array>`** hands you that grid — **where** it was scratched, not only how much:
     `grille[i] = 1` once cell `i` is cleared, `i = row * cols + col` over the object's world bbox,
     `cols = ceil(w / brush)`. One `each "Grain" as i { opacity = 1 - grille[i] }` then erases the veil
