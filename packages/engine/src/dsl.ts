@@ -95,6 +95,8 @@ function printAction(a: Action, depth: number): string {
       return ind + `${a.name} = ${a.value}`
     case 'setIndex':
       return ind + `set ${a.name}[${a.index}] = ${a.value}`
+    case 'fillVar':
+      return ind + `${a.name} = fill(${a.count}, ${a.value})`
     case 'setParam':
       return ind + `${a.target}.${a.param} = ${a.value}`
     case 'if': {
@@ -705,6 +707,17 @@ class Parser {
     }
     this.skipSpace()
     const pos = this.mark()
+    // `name = fill(<count>, <value>)` — the ONE array-valued assignment. Without it, blanking a grid meant
+    // one `name[i] = …` line per cell (five thousand, on a scratch grid), so a finished board reopened with
+    // its holes still in it. Both arguments are ordinary expressions, evaluated when the action runs.
+    if (this.peekIsFillCall()) {
+      this.word()
+      const args = this.callArgs()
+      if (args.length !== 2) { this.err('"fill(<count>, <value>)" expects two arguments', m); this.skipLine(); return null }
+      for (const a of args) this.exprSite(a, pos)
+      this.endStatement()
+      return { do: 'fillVar', name, count: args[0], value: args[1] }
+    }
     const { expr: value, split } = this.splitRhs()
     if (!value) {
       this.err('expression expected after "="', m)
@@ -713,6 +726,17 @@ class Parser {
     this.exprSite(value, pos)
     if (!split) this.endStatement()
     return { do: 'setVar', name, value }
+  }
+
+  /** Lookahead: is what follows a `fill(…)` call? (`fill` is not an expression function — it BUILDS an
+   *  array, which only an assignment or a declaration can hold.) */
+  private peekIsFillCall(): boolean {
+    const save = this.mark()
+    const w = this.word()
+    this.skipSpace()
+    const yes = w === 'fill' && this.peek() === '('
+    this.reset(save)
+    return yes
   }
 
   /** Lookahead: is what follows a `text(…)` call (identifier "text" followed by a "(")? */

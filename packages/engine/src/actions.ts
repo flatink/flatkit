@@ -48,6 +48,8 @@ export interface ActionHost {
   setVar(name: string, v: number): void
   /** Writes `arr[i] = v` (array variable). */
   setIndex(name: string, i: number, v: number): void
+  /** `arr = fill(count, value)` — replaces the whole array (the host bounds the count). */
+  fillVar(name: string, count: number, value: number): void
   /** Sets an instanced symbol's exposed param by instance name (`Door.door = open`). `value` is RAW: a
    *  state NAME (resolved against the symbol's state machine) or an expression (evaluated). No-op if
    *  the instance/param is unknown. */
@@ -93,6 +95,9 @@ function runAction(a: Action, host: ActionHost, budget: Budget): void {
       break
     case 'setIndex':
       host.setIndex(a.name, Math.round(host.evalNumber(a.index)), host.evalNumber(a.value))
+      break
+    case 'fillVar':
+      host.fillVar(a.name, Math.round(host.evalNumber(a.count)), host.evalNumber(a.value))
       break
     case 'setParam':
       host.setParam(a.target, a.param, a.value) // value RAW (state name or expr) → resolved by the host

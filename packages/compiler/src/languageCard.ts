@@ -31,6 +31,7 @@ when clicked|hovered|unhovered|pressed|dragged|released|held { }
 play · pause · go to frame N [and play|and pause] · go to "label"
 name = expr            // set a variable
 arr[i] = expr          // write an array slot
+arr = fill(n, v)       // replace a WHOLE array (the only array-valued assignment; expressions are scalar)
 if cond { } else { } · repeat N times { } · repeat i from A to B { }
 myProc() · send "event"[, expr | text("id") | { a = expr, b … }] · sound "assetId"
 

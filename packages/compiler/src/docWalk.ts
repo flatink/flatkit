@@ -38,6 +38,7 @@ export function forEachActionExpression(actions: Action[] | undefined, fn: (expr
   forEachActionIn(actions, (a) => {
     if (a.do === 'setVar' || a.do === 'setParam') fn(a.value)
     else if (a.do === 'setIndex') { fn(a.value); fn(a.index) }
+    else if (a.do === 'fillVar') { fn(a.count); fn(a.value) }
     else if (a.do === 'if') fn(a.cond)
     else if (a.do === 'repeat') fn(a.count)
     else if (a.do === 'repeatRange') { fn(a.from); fn(a.to) }

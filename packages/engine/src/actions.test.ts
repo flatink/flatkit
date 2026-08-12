@@ -15,6 +15,7 @@ function mock() {
     labelFrame: (n) => labels[n],
     setVar: (n, v) => vars.set(n, v),
     setIndex: (n, i, v) => { const a = vars.get(n); if (Array.isArray(a)) a[i] = v },
+    fillVar: (n, c, v) => { vars.set(n, new Array<number>(Math.max(0, c)).fill(v)); calls.push(`fill:${n}[${c}]=${v}`) },
     setParam: (t, p, v) => calls.push(`setParam:${t}.${p}=${v}`),
     callProc: () => {},
     emit: (name, value, fields) => events.push({ name, ...(value === undefined ? {} : { value }), ...(fields ? { fields } : {}) }),
@@ -252,5 +253,21 @@ describe('actions — interpreter', () => {
       expect(n).toBeGreaterThan(0)
       expect(n).toBeLessThanOrEqual(MAX_ACTIONS_PER_TICK)
     })
+  })
+})
+
+describe('actions — fillVar (`arr = fill(n, v)`)', () => {
+  it('replaces the whole array, with both arguments evaluated', () => {
+    const m = mock()
+    m.vars.set('cols', 3)
+    runActions([{ do: 'fillVar', name: 'grid', count: 'cols * 2', value: '7' }], m.host)
+    expect(m.vars.get('grid')).toEqual([7, 7, 7, 7, 7, 7])
+  })
+
+  it('a fractional count is rounded, a negative one gives an empty array', () => {
+    const m = mock()
+    runActions([{ do: 'fillVar', name: 'a', count: '2.6', value: '1' }, { do: 'fillVar', name: 'b', count: '0 - 5', value: '1' }], m.host)
+    expect(m.vars.get('a')).toEqual([1, 1, 1])
+    expect(m.vars.get('b')).toEqual([])
   })
 })

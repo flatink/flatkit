@@ -108,7 +108,7 @@ function ensureDomGlobals(): () => void {
 const describeGesture = (g: Gesture): string =>
   g.type === 'drag' ? `drag ${g.source}->${g.target}` : g.type === 'tap' ? `tap ${g.target}`
     : g.type === 'connect' ? `connect ${g.source}->${g.target}` : g.type === 'scratch' ? `scratch ${g.target}`
-      : g.type === 'turn' ? `turn ${g.target} ${g.angle}` : g.type === 'set' ? `set ${g.name}=${g.value}`
+      : g.type === 'turn' ? `turn ${g.target} ${g.angle}${g.from ? ` from (${g.from[0]},${g.from[1]})` : ''}` : g.type === 'set' ? `set ${g.name}=${g.value}`
         : g.type === 'wait' ? `wait ${g.frames}` : g.type === 'wheel' ? `wheel ${g.dy}`
           : g.type === 'key' ? `key ${g.name}${g.frames && g.frames !== 1 ? ` x${g.frames}` : ''}` : g.type === 'expect' ? 'expect' : `${g.type} (${g.x},${g.y})`
 
@@ -161,7 +161,10 @@ export function playHeadless(doc: Doc, gestures: Gesture[], opts: { trace?: bool
       const id = g.id ?? 1
       const ti = turnTargetFor(doc, g.target)
       if (!ti) throw new Error(`gesture: object "${g.target}" has no turn/turnDeg interactor`)
-      const start = grabPoint(g.target) // a point ON the object -> starts the grab (fires `when pressed`); the angle is written on the first MOVE
+      // A point ON the object -> starts the grab (fires `when pressed`); the angle is written on the first
+      // MOVE. `from` overrides it: two hands of a clock overlap at noon, and the engine's grab point can
+      // only ever pick the topmost — naming the press point is how a test says which one it means.
+      const start = g.from ? { x: g.from[0], y: g.from[1] } : grabPoint(g.target)
       const piv = ti.pivot
       const R = Math.max(24, Math.hypot(start.x - piv.x, start.y - piv.y)) // radius to place the rotating pointer (only the ANGLE matters, not R)
       const at = (v: number) => { const rad = ti.deg ? (v * Math.PI) / 180 : v; return { x: piv.x + R * Math.cos(rad), y: piv.y + R * Math.sin(rad) } } // target value (deg/rad) -> pointer position

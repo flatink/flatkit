@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { parseUnits, printUnits, type ScriptUnit } from './dsl'
+import type { Action } from '@flatkit/types'
 
 /** Round-trip at the MODEL level: parse(print(u)) must give back u, with no diagnostic. */
 function roundtrip(units: ScriptUnit[]) {
@@ -735,5 +736,32 @@ describe('diagnostics that carry their own repair', () => {
 
   it('a diagnostic with no unambiguous repair carries no fix', () => {
     expect(parseUnits('when clicced {\n  x = 1\n}\n').diagnostics[0].fix).toBeUndefined()
+  })
+})
+
+// `arr = fill(n, v)` — the ONE array-valued assignment. `fill` is not an expression function (expressions
+// are scalar); it is the form a declaration already uses, allowed in one more place.
+describe('dsl — `fill(n, v)` in an assignment', () => {
+  const units = (src: string) => parseUnits(src)
+
+  it('parses into a `fillVar` action with both arguments as expressions', () => {
+    const r = units('when loaded {\n  grid = fill(cols * rows, 0)\n}')
+    expect(r.diagnostics).toEqual([])
+    const body = (r.units[0] as { body: Action[] }).body
+    expect(body[0]).toEqual({ do: 'fillVar', name: 'grid', count: 'cols * rows', value: '0' })
+  })
+
+  it('round-trips through the printer', () => {
+    const src = 'when loaded {\n  grid = fill(300, 0)\n}\n'
+    expect(printUnits(parseUnits(src).units)).toBe(src)
+  })
+
+  it('a wrong argument count is refused with the shape spelled out', () => {
+    expect(units('when loaded {\n  grid = fill(300)\n}').diagnostics.map((d) => d.message).join(' ')).toMatch(/fill\(<count>, <value>\)/)
+  })
+
+  it('a plain assignment is untouched (and `fill` stays out of expressions)', () => {
+    const body = (units('when loaded {\n  score = 1 + 2\n}').units[0] as { body: Action[] }).body
+    expect(body[0]).toEqual({ do: 'setVar', name: 'score', value: '1 + 2' })
   })
 })

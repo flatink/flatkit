@@ -89,7 +89,7 @@ link endX,endY,target to <Group>     // target = hit index 1..n (0=none), WORLD 
 ```
 Self-state & feedback: `self.hovered self.grabbed self.pressed` (0/1) ·
 `feedback lift tilt dim shake(<expr>)`.
-State/funcs: `var a = 0` · `var arr = fill(8,0)` · `fn dist(ax,ay,bx,by) = hypot(ax-bx,ay-by)` ·
+State/funcs: `var a = 0` · `var arr = fill(8,0)` (also as an ASSIGNMENT: `arr = fill(n, 0)` blanks a grid) · `fn dist(ax,ay,bx,by) = hypot(ax-bx,ay-by)` ·
 `fn reset() { score = 0 }`.
 
 ## Factoring (compile-time, vanish from model — use `var` for runtime)

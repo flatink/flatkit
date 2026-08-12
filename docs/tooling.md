@@ -215,6 +215,7 @@ flatc <file> --play --script gestures.json [--trace]
   { "type": "drag",    "source": "Card1", "target": "ZoneA" },
   { "type": "tap",     "target": "Button" },
   { "type": "scratch", "target": "Cover1" },
+  { "type": "turn",    "target": "Hand",  "angle": 120 },
   { "type": "connect", "source": "Word",  "target": "Picture" },
   { "type": "key",     "name": "ArrowRight", "frames": 10 },
   { "type": "wait",    "frames": 30 },
@@ -223,6 +224,10 @@ flatc <file> --play --script gestures.json [--trace]
 ```
 
 - `drag` / `tap` / `scratch` (sweeps a `reveal` zone) / `connect` (pulls a `link` wire) — by name.
+- **`turn`** rotates a `turn`/`turnDeg` target by `angle` (degrees for `turnDeg`, radians for `turn`),
+  swept in sub-steps so a multi-turn rotation lands. It presses the object where the engine finds it, i.e.
+  on **whatever is topmost there** — two clock hands overlapping at noon give the gesture to the one on
+  top. Add **`"from": [x, y]`** to say where the finger lands and pick the other one.
 - `set` drives a variable from the host; `wait` runs N fixed 60 Hz steps (advances `every frame` physics).
 - **`key`** holds a key down (`keys.<name>` reads `1`) for `frames` steps — default `1` — then releases
   it: the way to test a keyboard-driven scene in CI. Use the authored name (`"ArrowRight"`, `"Space"`).
@@ -231,7 +236,11 @@ flatc <file> --play --script gestures.json [--trace]
   **sequence of event names**; to assert a payload, read `sends` from the JSON output (each entry is the
   object the host would receive: `{ name, value?, fields? }` — see
   [host integration](host-integration.md#receiving-events-send--onevent)).
-- Low-level gestures (`down`/`move`/`up`/`cancel` with `x,y`) remain for special cases.
+- Low-level gestures (`down`/`move`/`up`/`cancel` with `x,y`) remain for special cases — and they drive
+  the interactors just as the semantic ones do, `turn`/`turnDeg` included. One trap when hand-writing them
+  for a rotation: the angle written is the one from the PIVOT to the pointer, so a move that stays
+  collinear with the pivot writes the angle that was already there and the object looks stuck. Move to a
+  point that is genuinely at the angle you mean.
 - `--trace` prints a human-readable log per gesture (emitted sends + variable diff) instead of JSON —
   a `send` shows as `name`, `name=value`, or `name{a=1, b=2}` for a record payload.
 

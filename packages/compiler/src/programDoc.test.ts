@@ -826,6 +826,18 @@ describe('programDoc — reveal `cells` grid diagnostics', () => {
     expect(hit(veil('var grid = fill(16, 0)', 50))[0]).toMatch(/2 x 2 = 4 cells/)
   })
 
+  it('…but the GRAIN drives it when there is one — the same rule the engine follows', () => {
+    // Sized on the brush while the player used the grain, the advice was a count too small: every write
+    // past the end was dropped in silence, the fraction climbed normally, and the array stayed at zero.
+    // Reported on 880x404 with brush 36 / grain 8 — advice said 300 cells, the engine made 5610.
+    const mism = veil('var grid = fill(4, 0)', 50).replace('    brush 50', '    brush 50\n    grain 25')
+    expect(hit(mism)[0]).toMatch(/4 x 4 = 16 cells/) // 100 px zone / grain 25 — NOT / brush 50, which would say 4
+    expect(hit(mism)[0]).toMatch(/grain 25/) // …and the message names what it measured with
+    expect(hit(mism)[0]).toMatch(/fill\(16, 0\)/) // …so the declaration it hands over is the engine's count
+    // Declared ON THE GRAIN → silent, where the old rule (brush 50 → 4 cells) called 16 an error.
+    expect(hit(veil('var grid = fill(16, 0)', 50).replace('    brush 50', '    brush 50\n    grain 25'))).toEqual([])
+  })
+
   it('a `reveal` without `cells` is untouched', () => {
     const src = veil('var grid = fill(16, 0)').replace('    cells grid\n', '')
     expect(docStructureWarnings(compileFlatpack(src, [], {})).filter((w) => /cells/.test(w.diag.message))).toEqual([])

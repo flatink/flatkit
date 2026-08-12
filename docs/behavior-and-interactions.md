@@ -96,7 +96,10 @@ var slots = [0, 0, 0]        # array literal
 var seen = fill(8, 0)        # array of 8 zeros
 ```
 
-Read/write them in expressions and actions. `var`s are runtime state — distinct from `def` (a
+Read/write them in expressions and actions. **`fill(n, v)` also works as an assignment** —
+`seen = fill(600, 0)` blanks a whole grid in one line, where `seen[i] = 0` would need six hundred. Both
+arguments are ordinary expressions, evaluated when the action runs. It is the one array-valued assignment:
+expressions themselves are scalar, so `fill` is not a function you can call inside one. `var`s are runtime state — distinct from `def` (a
 compile-time constant, see [factoring](#reuse--factoring)).
 
 ## Channel bindings
@@ -302,7 +305,10 @@ rather than letting a scene show an intact cell over a zone counted as cleared.)
 
 The array reads **both ways**: seed it at load and the veil comes back scratched exactly where it was,
 `erase` included, with the fraction recomputed from it — how a reader resumes a half-scratched image (see
-[host integration](host-integration.md#saving-and-restoring-a-session)).
+[host integration](host-integration.md#saving-and-restoring-a-session)). Writing it **whole** does the same
+at any time, so `grid = fill(<cols*rows>, 0)` is how an activity starts over. (An ELEMENT write —
+`grid[i] = 0` — is cosmetic on purpose: the gesture itself makes thousands of them, so the coverage behind
+the array is left alone and the next grab puts the cell back.)
 
 Declare the array at exactly `cols * rows` — `flatc --check` states the geometry and the exact
 `var … = fill(N, 0)` to write whenever the sizes disagree, because a short array drops the writes past its

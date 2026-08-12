@@ -205,6 +205,9 @@ export type Action =
   | { do: 'gotoLabel'; label: string; play?: boolean }
   | { do: 'setVar'; name: string; value: string } // value = expression evaluated by the host
   | { do: 'setIndex'; name: string; index: string; value: string } // arr[index] = value (array)
+  // `arr = fill(<count>, <value>)` — REPLACES a whole array (both expressions evaluated at run time). The
+  // one array-valued assignment: resetting a grid otherwise meant one `arr[i] = …` line per cell.
+  | { do: 'fillVar'; name: string; count: string; value: string }
   | { do: 'setParam'; target: string; param: string; value: string } // <Instance>.<param> = value — set an instanced symbol's exposed param (e.g. a state); value = state NAME or expression
 
   | { do: 'if'; cond: string; then: Action[]; else?: Action[] } // cond = expression; runs `then` if ≠ 0

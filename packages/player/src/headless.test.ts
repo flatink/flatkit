@@ -575,3 +575,78 @@ describe('headless -- a seeded document brings its derived state back', () => {
     expect(play(veilDoc(seed()), []).covered).toBe(0)
   })
 })
+
+// Two `turn` targets that overlap: the engine's own grab point can only pick the topmost, so a test that
+// wants the one UNDERNEATH has to name where the finger lands.
+describe('headless -- turning one of two overlapping targets', () => {
+  // A clock at noon: both hands start straight up, the minute hand drawn over the hour hand.
+  const clock = [
+    'size 400 400', 'var hourDeg = 0', 'var minuteDeg = 0',
+    'scene { layer "L" {',
+    '  group "Hours" at 200,200 { layer "c" { rect -7 -107 14 119 fill #333333 } }',
+    '  group "Minutes" at 200,200 { layer "c" { rect -5 -155 9 167 fill #777777 } }',
+    '} }', '',
+    'object "Hours" {', '  turnDeg hourDeg around 200,200', '  rotationDeg = hourDeg', '}', '',
+    'object "Minutes" {', '  turnDeg minuteDeg around 200,200', '  rotationDeg = minuteDeg', '}',
+  ].join('\n')
+  const play = (gestures: Gesture[]) => playHeadless(parseProgramFull(clock) as unknown as Doc, gestures).vars
+
+  it('without `from`, the semantic gesture grabs whatever is on TOP (the reported case)', () => {
+    const vars = play([{ type: 'turn', target: 'Hours', angle: 120 }])
+    expect(vars.minuteDeg).toBeCloseTo(120, 6) // …the hand it did not name
+    expect(vars.hourDeg).toBe(0)
+  })
+
+  it('`from` names the press point, so the hand underneath can be turned', () => {
+    // x = 194 is inside the hour hand (193..207) and outside the minute hand (195..204).
+    const vars = play([{ type: 'turn', target: 'Hours', angle: 120, from: [194, 110] }])
+    expect(vars.hourDeg).toBeCloseTo(120, 6)
+    expect(vars.minuteDeg).toBe(0)
+  })
+
+  it('a LOW-LEVEL down/move/up drives a rotation interactor too, and picks by the press point', () => {
+    // Reported as impossible. It works — the trap is that a move COLLINEAR with the pivot writes the angle
+    // that was already there (0 here), so the hand looks stuck: (290,200) is 0°, (200,290) is 90°.
+    const at = (x: number, y: number): Gesture[] => [{ type: 'down', x, y }, { type: 'move', x: 200, y: 290 }, { type: 'up', x: 200, y: 290 }]
+    expect(play(at(194, 110)).hourDeg).toBeCloseTo(90, 6) // hour hand only
+    expect(play(at(200, 60)).minuteDeg).toBeCloseTo(90, 6) // minute hand only (above the hour hand's top)
+    expect(play(at(194, 110)).minuteDeg).toBe(0)
+    // …and the collinear move that made it look broken:
+    expect(play([{ type: 'down', x: 194, y: 110 }, { type: 'move', x: 290, y: 200 }, { type: 'up', x: 290, y: 200 }]).hourDeg).toBe(0)
+  })
+})
+
+// `arr = fill(n, v)` — the one array-valued assignment. Without it, blanking a scratch grid meant one
+// `arr[i] = …` line per cell, so a finished board reopened with its holes still in it.
+describe('headless -- `fill(n, v)` in an assignment', () => {
+  const prog = (body: string, decl = 'var grid = [1, 1, 0, 0]') => [
+    'size 200 200', 'var covered = 0', decl,
+    'scene { layer "L" {', '  group "Veil" at 50,50 { layer "c" { rect -50 -50 100 100 fill #999999 } }', '} }', '',
+    body, '',
+    'object "Veil" {', '  reveal covered {', '    brush 50', '    cells grid', '  }', '}',
+  ].join('\n')
+  const play = (src: string, gestures: Gesture[] = []) => playHeadless(parseProgramFull(src) as unknown as Doc, gestures).vars
+
+  it('replaces the whole array, with both arguments evaluated at run time', () => {
+    const vars = play(prog('when loaded {\n  grid = fill(n, 3)\n}', 'var grid = [1, 1, 0, 0]\nvar n = 6'))
+    expect(vars.grid).toEqual([3, 3, 3, 3, 3, 3])
+  })
+
+  it('blanking a `cells` array RESETS the coverage behind it (not just the numbers)', () => {
+    // The trap this avoids: the array reads 0 everywhere while the interactor still holds the cells, so the
+    // next grab repopulates it and a "reopened" board is already half scratched.
+    const vars = play(prog('when loaded {\n  grid = fill(4, 0)\n}'))
+    expect(vars.grid).toEqual([0, 0, 0, 0])
+    expect(vars.covered).toBe(0) // …the seeded 2 cells are gone from the coverage too
+  })
+
+  it('…and seeding it the other way round restores them (one format, both directions)', () => {
+    expect(play(prog('when loaded {\n  grid = fill(4, 1)\n}')).covered).toBe(1)
+  })
+
+  it('an ELEMENT write stays cosmetic — the coverage is not moved by `grid[i] = 0`', () => {
+    // Deliberate: the gesture itself writes thousands of them. The next grab re-syncs the array.
+    const vars = play(prog('when loaded {\n  grid[0] = 0\n}'))
+    expect(vars.covered).toBeCloseTo(0.5, 6) // still the two seeded cells
+  })
+})

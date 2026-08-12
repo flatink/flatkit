@@ -353,11 +353,17 @@ export function docRevealCellWarnings(doc: Doc): { scope: string; diag: Diagnost
     const declared = Object.hasOwn(doc.variables ?? {}, it.cells) ? doc.variables?.[it.cells] : undefined // hasOwn: a name like `constructor` is not a declaration
     const b = itemBoundsById(doc, it.targetId)
     if (!b) continue // the target itself does not resolve — `object "X"` on nothing is already reported
-    const brush = it.grid && it.grid > 0 ? it.grid : 24 // same default as the player's grid
-    const cols = Math.max(1, Math.ceil((b.maxX - b.minX) / brush))
-    const rows = Math.max(1, Math.ceil((b.maxY - b.minY) / brush))
+    // The cell is the GRAIN when there is one, the brush otherwise — the player's own rule. Sizing this on
+    // the brush while the engine used the grain handed out a count that was right-looking and too small:
+    // every write past the end was dropped in silence, the fraction climbed normally, and the array stayed
+    // at zero (so a restored session came back untouched). Measured on 880x404, brush 36 / grain 8: this
+    // said 300 cells where the engine made 5610.
+    const cell = it.grain && it.grain > 0 ? it.grain : it.grid && it.grid > 0 ? it.grid : 24
+    const cols = Math.max(1, Math.ceil((b.maxX - b.minX) / cell))
+    const rows = Math.max(1, Math.ceil((b.maxY - b.minY) / cell))
     const n = cols * rows
-    const geom = `${cols} x ${rows} = ${n} cells (zone ${Math.round(b.maxX - b.minX)}x${Math.round(b.maxY - b.minY)} px, brush ${brush})`
+    const from = it.grain && it.grain > 0 ? `grain ${it.grain}` : `brush ${it.grid && it.grid > 0 ? it.grid : 24}`
+    const geom = `${cols} x ${rows} = ${n} cells (zone ${Math.round(b.maxX - b.minX)}x${Math.round(b.maxY - b.minY)} px, ${from})`
     if (!Array.isArray(declared)) {
       out.push(warn(`\`reveal … cells ${it.cells}\` (object "${who}") writes into "${it.cells}", which is ${declared === undefined ? 'not declared' : 'a scalar, not an array'} — the scratched grid goes nowhere. Declare it with the grid's size: \`var ${it.cells} = fill(${n}, 0)\` — ${geom}, index = row * ${cols} + col.`))
     } else if (declared.length !== n) {

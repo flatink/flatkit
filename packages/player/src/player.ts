@@ -35,7 +35,11 @@ export type Gesture =
   | { type: 'tap'; target: string; id?: number } // clicks at the center of the `target` object
   | { type: 'scratch'; target: string; id?: number } // sweeps a `reveal` target's bbox (covers it -> fraction ~1)
   | { type: 'connect'; source: string; target: string; id?: number } // pulls a `link` wire from `source` to `target` (resolves the target index)
-  | { type: 'turn'; target: string; angle: number; settle?: number; id?: number } // rotates a `turn`/`turnDeg` target by `angle` around its pivot (signed; DEGREES for turnDeg, RADIANS for turn), swept in sub-steps; `settle` = sim frames advanced between sub-steps (default 1) so a delta-accumulating `every frame` integrates the turn
+  // rotates a `turn`/`turnDeg` target by `angle` around its pivot (signed; DEGREES for turnDeg, RADIANS for
+  // turn), swept in sub-steps; `settle` = sim frames advanced between sub-steps (default 1) so a
+  // delta-accumulating `every frame` integrates the turn. `from` = where the press lands (WORLD): the way to
+  // name WHICH of two overlapping targets is grabbed, since the engine's own grab point picks the topmost.
+  | { type: 'turn'; target: string; angle: number; from?: [number, number]; settle?: number; id?: number }
   // Low-level (scene coords).
   | { type: 'down' | 'move' | 'up' | 'cancel'; x: number; y: number; id?: number }
   | { type: 'set'; name: string; value: number } // drives a variable from the "host"
@@ -180,6 +184,7 @@ const HOVER_EVENTS: readonly ItemEvent[] = ['enter', 'leave']
 // Grabbing: an item carrying one of these handlers becomes "grabbed" on pointerdown. While it is,
 // pointermove sends it `drag` (even if the pointer leaves the item), and pointerup -> `release`.
 const GRAB_EVENTS: readonly ItemEvent[] = ['press', 'release', 'drag', 'longpress']
+const MAX_FILL = 100_000 // bound of `arr = fill(n, v)` — mirrors the declaration's own cap
 const LONGPRESS_MS = 500 // hold without moving -> `held`
 const LONGPRESS_TOL = 6 // movement tolerance (world px) before canceling the hold
 const TAP_TOL = 6 // movement tolerance (world px) under which a press+release counts as a `click` (tap, not drag)
@@ -580,14 +585,19 @@ export class FlatPlayer {
       if (it.axis !== 'reveal' || !it.cells) continue
       const seeded = this.vars.get(it.cells)
       if (!Array.isArray(seeded) || !seeded.some((v) => v)) continue // nothing scratched (or no grid seeded)
-      const st = this.revealGridFor(it.targetId, it)
-      if (!('revealGrid' in st) || !st.revealGrid) continue
-      const total = st.revealGrid.cols * st.revealGrid.rows
-      for (let i = 0; i < seeded.length && i < total; i++) if (seeded[i]) st.revealCells.add(i)
-      // The fraction is DERIVED from the grid, so restore it from the cells rather than trusting a second
-      // seeded number: one array is enough to bring a half-scratched veil back exactly as it was.
-      if (it.varX && st.revealCells.size) this.setVarLive(it.varX, st.revealCells.size / total)
+      // The fraction is DERIVED from the grid, so it is recomputed from the cells rather than trusting a
+      // second seeded number: one array brings a half-scratched veil back exactly as it was.
+      this.reseatReveal(it, seeded)
     }
+  }
+  /** The reveal state a GRAB starts from: the grid, plus the author's array brought back in line with the
+   *  coverage we hold. An ELEMENT write (`grid[i] = 0`) is cosmetic — the coverage behind it did not move —
+   *  so it is corrected here rather than letting a scene show an intact cell over a cleared zone. (Writing
+   *  the array WHOLE is the other thing entirely: that one re-seats the coverage, see `reseatReveal`.) */
+  private revealGrabState(id: string, it: Interactor): RevealState | Record<string, never> {
+    const st = this.revealGridFor(id, it)
+    if (it.cells && 'revealCells' in st) for (const idx of st.revealCells) this.markCell(it.cells, idx)
+    return st
   }
   /** WORLD bbox of every `reveal` target — the zones the hit test honours whatever their content looks like
    *  (see `GrabZones` in hit.ts). Built once per document: a zone is the item's GEOMETRY, which erasing the
@@ -600,13 +610,7 @@ export class FlatPlayer {
    *  PERSISTED across grabs (`revealStates`) so coverage accumulates monotonically over several strokes. */
   private revealGridFor(id: string, it: Interactor): RevealState | Record<string, never> {
     const cached = this.revealStates.get(id)
-    if (cached) {
-      // Re-sync the author's array with the coverage we hold, so the two can never tell different stories:
-      // the array is writable from the scene (`grid[i] = 0`) while the coverage is monotone and has no
-      // reset. One pass over the ticked cells at the START of a grab — never during the stroke.
-      if (it.cells) for (const idx of cached.revealCells) this.markCell(it.cells, idx)
-      return cached // keep accumulating from a previous grab
-    }
+    if (cached) return cached // keep accumulating from a previous grab
     const b = this.grabZones?.get(id) ?? itemBoundsById(this.doc, id) // same bbox the hit test uses as the zone
     if (!b) return {}
     // The grid's RESOLUTION (`grain`) is not the finger's radius (`brush`): a wide finger with a fine grain
@@ -747,7 +751,7 @@ export class FlatPlayer {
         const ctx = this.exprCtx()
         const pos = objectChannelsById(this.doc, grabId, this.frame, ctx, this.fps)
         const parent = objectParentTransform(this.doc, grabId, this.frame, ctx, this.fps) ?? IDENTITY
-        this.dragActive = { it: inter, offX: (pos?.x ?? p.x) - p.x, offY: (pos?.y ?? p.y) - p.y, parentInv: invert(parent), ...(inter.axis === 'trace' ? traceGrab(this.doc, inter) : {}), ...(inter.axis === 'reveal' ? this.revealGridFor(grabId, inter) : {}) }
+        this.dragActive = { it: inter, offX: (pos?.x ?? p.x) - p.x, offY: (pos?.y ?? p.y) - p.y, parentInv: invert(parent), ...(inter.axis === 'trace' ? traceGrab(this.doc, inter) : {}), ...(inter.axis === 'reveal' ? this.revealGrabState(grabId, inter) : {}) }
       }
       this.canvas.setPointerCapture?.(e.pointerId) // keep the drag even if the pointer leaves the canvas
       this.fireEvent(grabId, 'press')
@@ -810,6 +814,7 @@ export class FlatPlayer {
     labelFrame: (name) => this.doc.timeline?.labels?.find((l) => l.name === name)?.frame,
     setVar: (name, v) => { this.setVarLive(name, v) },
     setIndex: (name, i, v) => { const a = this.vars.get(name); if (Array.isArray(a) && i >= 0 && i < a.length) a[i] = v }, // in-place: ctx shares the array ref
+    fillVar: (name, count, value) => this.setVarLive(name, new Array<number>(Math.max(0, Math.min(MAX_FILL, Math.floor(count)))).fill(value)),
     setParam: (target, param, value) => this.setParam(target, param, value),
     callProc: (name, args) => this.callProc(name, args),
     evalNumber: (src) => this.evalNumber(src),
@@ -933,6 +938,21 @@ export class FlatPlayer {
     // source of truth — without this, `avance = 0` would blank the ink and the next touch would jump back
     // to where the finger had got to.
     if (this.traceOutputs.size && this.traceOutputs.has(name) && typeof value === 'number') this.syncTraceState(name, value)
+    // Same rule for a scratch: the `cells` array is the truth, in BOTH directions. Writing it WHOLE
+    // (`grid = fill(n, 0)` to blank a reopened board, or a host seeding a saved one) re-seats the coverage
+    // — otherwise the zeroed array would be silently repopulated from the grid on the next grab.
+    // Element writes (`grid[i] = …`) are left alone: the gesture itself makes thousands of them.
+    if (Array.isArray(value)) for (const it of this.doc.interactors ?? []) if (it.axis === 'reveal' && it.cells === name) this.reseatReveal(it, value)
+  }
+  /** Rebuild a `reveal`'s ticked cells from its `cells` array, and recompute the fraction from them. The
+   *  mask the renderer holds is the same `Set`, so `erase` follows without anything to invalidate. */
+  private reseatReveal(it: Interactor, cells: number[]): void {
+    const st = this.revealGridFor(it.targetId, it)
+    if (!('revealGrid' in st) || !st.revealGrid) return
+    const total = st.revealGrid.cols * st.revealGrid.rows
+    st.revealCells.clear()
+    for (let i = 0; i < cells.length && i < total; i++) if (cells[i]) st.revealCells.add(i)
+    if (it.varX) this.setVarLive(it.varX, st.revealCells.size / total)
   }
   /** Re-seat every continuous trace whose progress variable is `name` on the value the scene just wrote. */
   private syncTraceState(name: string, value: number): void {
