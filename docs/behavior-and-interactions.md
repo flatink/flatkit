@@ -207,7 +207,9 @@ sane start: big enough never to stall a real gesture, small enough that skipping
 impossible.
 
 **Restarting**: assign the progress variable (`progress = 0`) — the trace re-seats itself on what the scene
-wrote, and the entry end opens again. There is no other reset, on purpose: the variable is the truth.
+wrote, and the entry end opens again. There is no other reset, on purpose: the variable is the truth. The
+same rule **restores** a session: seed the progress (in `doc.variables`, or `setVar` from the host) and the
+ink, the marker and the finger all resume together — see [host integration](host-integration.md#saving-and-restoring-a-session).
 
 ### Drawing what a `trace` traced
 
@@ -297,6 +299,10 @@ so a single touch clears a small plus-shape, not one square. Cells are written *
 the grid is as monotone as the fraction, and both agree. (The array is yours to read *and* write, but the
 coverage behind it has no reset — so each new grab re-syncs the array from the interactor's own state,
 rather than letting a scene show an intact cell over a zone counted as cleared.)
+
+The array reads **both ways**: seed it at load and the veil comes back scratched exactly where it was,
+`erase` included, with the fraction recomputed from it — how a reader resumes a half-scratched image (see
+[host integration](host-integration.md#saving-and-restoring-a-session)).
 
 Declare the array at exactly `cols * rows` — `flatc --check` states the geometry and the exact
 `var … = fill(N, 0)` to write whenever the sizes disagree, because a short array drops the writes past its

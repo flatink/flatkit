@@ -519,3 +519,59 @@ describe('headless -- continuous trace (`step`)', () => {
     expect(after.tipY).toBeCloseTo(100, 6)
   })
 })
+
+// Restoring an activity: `doc.variables` is the seed a host replays a reader's state from, and it carried
+// only what IS a variable. A continuous trace's progress and a scratched grid live beside them — seeded
+// alone, the numbers were right and the gestures had forgotten everything.
+describe('headless -- a seeded document brings its derived state back', () => {
+  const traceDoc = (seed: number) => [
+    `size 600 200`, `var progress = ${seed}`, 'var tipX = 0', 'var tipY = 0',
+    'scene { layer "L" {',
+    '  group "Path" at 0,0 { layer "c" { path "M60 100L540 100" nofill stroke #cccccc 18 cap round } }',
+    '} }', '',
+    'object "Path" {', '  trace progress along Path {', '    tolerance 30', '    step 40', '    point tipX, tipY', '  }', '}',
+  ].join('\n')
+  const play = (src: string, gestures: Gesture[]) => playHeadless(parseProgramFull(src) as unknown as Doc, gestures).vars
+
+  it('a seeded progress puts the pen tip where the ink stops, not at the start', () => {
+    const vars = play(traceDoc(0.6), [])
+    expect(vars.progress).toBe(0.6)
+    expect(vars.tipX).toBeCloseTo(60 + 0.6 * 480, 6) // 348 — it used to report the path's start
+  })
+
+  it('…and the finger RESUMES there instead of having to start over', () => {
+    const vars = play(traceDoc(0.6), [
+      { type: 'down', x: 348, y: 100 }, { type: 'move', x: 380, y: 100 }, { type: 'move', x: 410, y: 100 }, { type: 'up', x: 410, y: 100 },
+    ])
+    expect(vars.progress).toBeCloseTo((410 - 60) / 480, 6)
+  })
+
+  it('the host `setVar` re-seats it too — the public write is the scene-side write', () => {
+    // Measured from outside: `setVar` used to write the map directly, so the variable moved, the stroke
+    // was inked to the new value, and the marker stayed at the start. Nothing about it looked wrong.
+    const vars = play(traceDoc(0), [{ type: 'set', name: 'progress', value: 0.6 }])
+    expect(vars.tipX).toBeCloseTo(348, 6)
+  })
+
+  const veilDoc = (grid: number[]) => [
+    'size 200 200', 'var covered = 0', `var grid = [${grid.join(', ')}]`,
+    'scene { layer "L" {', '  group "Veil" at 50,50 { layer "c" { rect -50 -50 100 100 fill #999999 } }', '} }', '',
+    'object "Veil" {', '  reveal covered {', '    brush 25', '    cells grid', '  }', '}',
+  ].join('\n')
+  const seed = (...on: number[]) => Array.from({ length: 16 }, (_v, i) => (on.includes(i) ? 1 : 0))
+
+  it('a seeded `cells` grid restores the scratched zone AND its fraction', () => {
+    // The array `cells` writes is the same array that seeds it back: one format, both directions.
+    expect(play(veilDoc(seed(0, 1, 4)), []).covered).toBeCloseTo(3 / 16, 6)
+  })
+
+  it('…and the next stroke accumulates on top of it', () => {
+    const vars = play(veilDoc(seed(0, 1, 4)), [{ type: 'down', x: 99, y: 99 }, { type: 'move', x: 99, y: 99 }, { type: 'up', x: 99, y: 99 }])
+    expect(vars.covered).toBeCloseTo(4 / 16, 6)
+    expect((vars.grid as number[])[15]).toBe(1)
+  })
+
+  it('an empty grid seeds nothing (a fresh document is still fresh)', () => {
+    expect(play(veilDoc(seed()), []).covered).toBe(0)
+  })
+})

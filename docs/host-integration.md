@@ -90,6 +90,30 @@ player.allVars()                      // snapshot of everything, for debugging/s
 `getVar`/`allVars` return **copies**: mutating the result never touches the running scene. Symmetrically
 `setVar` clones what you pass in.
 
+### Saving and restoring a session
+
+`allVars()` is the save file, and a document's `variables` (or `setVar`) is how you put it back — a reader
+returning to a half-finished activity finds it where they left it:
+
+```js
+const saved = player.allVars()                 // …persist it however you like
+player.load({ ...doc, variables: saved })      // …and the activity resumes
+```
+
+The gestures that keep state **beside** the variables re-seat themselves on what you seed, so a restored
+scene is coherent and not merely correct-looking:
+
+- a **continuous [`trace`](behavior-and-interactions.md#a-cursor-or-a-trace-step)** picks its progress back
+  up from its own variable — the ink, the pen-tip marker and the finger all resume at the same place
+  (rather than the stroke being drawn to three quarters while the next touch starts from zero);
+- a **[`reveal … cells`](behavior-and-interactions.md#seeing-where-it-was-scratched-reveal--cells)** grid
+  is restored from the array it writes: seed that array and the veil comes back scratched exactly where it
+  was, `erase` included, with the fraction recomputed from it. The same format both directions.
+
+This happens once per `load()` (and at construction), before the first paint. Writing the variable later —
+from the host with `setVar`, or from the scene with an assignment — re-seats it just the same: the two are
+the same path on purpose.
+
 Playback control mirrors the DSL actions: `play()`, `pause()`, `toggle()`, `stop()`, `seek(frame)`,
 plus the read-only `currentFrame`, `isPlaying`, `fps`, `duration`. `load(doc)` swaps the document in
 place, and `render()` forces a repaint (useful after a late font settles).

@@ -100,7 +100,7 @@ describe('player -- a scratched `reveal … erase` reaches the renderer', () => 
   const program = (slots: string) => [
     VEIL, '',
     'object "Veil" {', '  reveal covered {', `${slots}`, '  }', '}',
-  ].join('\n').replace('size 200 200', 'size 200 200\nvar covered = 0')
+  ].join('\n').replace('size 200 200', 'size 200 200\nvar covered = 0\nvar grid = fill(16, 0)')
 
   /** Drives a real player through a scratch stroke. Returns what the STROKE drew, and a `repaint()` that
    *  renders again with nothing changed — the case that used to re-composite for the rest of the activity. */
@@ -145,6 +145,25 @@ describe('player -- a scratched `reveal … erase` reaches the renderer', () => 
       expect(again.filter((o) => o.op === 'fill')).toHaveLength(0) // …and the veil itself is not redrawn
       expect(mainDraws).toBe(1) // one blit of the baked bitmap
     } finally { s.done() }
+  })
+
+  it('a veil SEEDED as half-scratched is punched on its very first paint (no gesture at all)', () => {
+    // Restoring an activity: the host seeds the `cells` array, and the veil must come back with its holes
+    // — until now `scratched` was rebuilt by the finger only, so a returning reader found the image intact.
+    const src = program('    brush 25\n    erase\n    cells grid').replace('var grid = fill(16, 0)', 'var grid = [1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]')
+    const canvas = {
+      getContext: () => mainCtx(),
+      getBoundingClientRect: () => ({ width: 200, height: 200, left: 0, top: 0, right: 200, bottom: 200 }),
+      addEventListener: () => {}, removeEventListener: () => {}, setPointerCapture: () => {}, releasePointerCapture: () => {}, style: {},
+      width: 200, height: 200,
+    } as unknown as HTMLCanvasElement
+    ops = []
+    const pl = new FlatPlayer(canvas, parseProgramFull(src) as unknown as Doc, { input: true, padding: 0, loop: false })
+    try {
+      const arcs = ops.filter((o) => o.op === 'arc')
+      expect(arcs).toHaveLength(3) // one per seeded cell: (0,0) (0,1) (1,0)
+      expect(arcs.map((a) => [a.args[0], a.args[1]])).toEqual([[12.5, 12.5], [37.5, 12.5], [12.5, 37.5]])
+    } finally { pl.destroy() }
   })
 
   it('without `erase`, the same stroke changes nothing on screen (the fraction is all you get)', () => {

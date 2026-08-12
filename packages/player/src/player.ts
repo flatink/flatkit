@@ -551,13 +551,42 @@ export class FlatPlayer {
     this.writeOut(it.pointX, pt.x)
     this.writeOut(it.pointY, pt.y)
   }
-  /** Places every `trace … { point x, y }` marker at its current progress (0 on a fresh document) — the
-   *  scene shows where to start before anything is touched. Called on load, with the geometry known. */
-  private initTracePoints(): void {
+  /**
+   * Re-seats the state a gesture keeps OUTSIDE the variables on the variables the document was seeded with
+   * — the moment a host restores an activity where a reader left it. `doc.variables` is that seed, and it
+   * carried everything that IS a variable; what the player held on the side (a continuous trace's progress,
+   * a scratched grid) came back empty, so a restored trace said "three quarters done", drew its ink to
+   * three quarters, and sent the finger back to the start on the first touch.
+   *
+   * Both directions of the same format: a `trace`'s progress is its own variable, and a `reveal`'s grid is
+   * the `cells` array it writes. Seed either and the gesture picks up where it was. Runs once per load,
+   * before the first paint.
+   */
+  private reseedDerivedState(): void {
     for (const it of this.doc.interactors ?? []) {
-      if (it.axis !== 'trace' || !it.pointX || !it.pointY || !it.confine) continue
-      const path = tracePathByName(this.doc, it.confine)
-      if (path?.subpaths.length) this.writeTracePoint(it, path, this.tracePos(it.targetId, it, 0))
+      if (it.axis === 'trace') {
+        const seeded = it.varX ? this.vars.get(it.varX) : undefined
+        if (it.step !== undefined && typeof seeded === 'number' && seeded > 0) {
+          // The END it was entered from is NOT in the seed: `dir` stays undecided and re-locks on the first
+          // advance, which is right for a one-way path and picks the finger's side on a `both ends` one.
+          this.traceStates.set(it.targetId, { progress: seeded > 1 ? 1 : seeded, dir: 0 })
+        }
+        if (it.pointX && it.pointY && it.confine) { // …and the marker lands where the ink stops, not at the origin
+          const path = tracePathByName(this.doc, it.confine)
+          if (path?.subpaths.length) this.writeTracePoint(it, path, this.tracePos(it.targetId, it, 0))
+        }
+        continue
+      }
+      if (it.axis !== 'reveal' || !it.cells) continue
+      const seeded = this.vars.get(it.cells)
+      if (!Array.isArray(seeded) || !seeded.some((v) => v)) continue // nothing scratched (or no grid seeded)
+      const st = this.revealGridFor(it.targetId, it)
+      if (!('revealGrid' in st) || !st.revealGrid) continue
+      const total = st.revealGrid.cols * st.revealGrid.rows
+      for (let i = 0; i < seeded.length && i < total; i++) if (seeded[i]) st.revealCells.add(i)
+      // The fraction is DERIVED from the grid, so restore it from the cells rather than trusting a second
+      // seeded number: one array is enough to bring a half-scratched veil back exactly as it was.
+      if (it.varX && st.revealCells.size) this.setVarLive(it.varX, st.revealCells.size / total)
     }
   }
   /** WORLD bbox of every `reveal` target — the zones the hit test honours whatever their content looks like
@@ -814,7 +843,7 @@ export class FlatPlayer {
     this.resolveAsset = opts.resolveAsset ?? ((a) => (isEmbeddedData(a.data) ? a.data : null))
     this.vars = cloneVars(doc.variables)
     this.buildFunctions()
-    this.initTracePoints() // …once `vars` exists: the pen-tip markers start ON the path, not at the origin
+    this.reseedDerivedState() // …once `vars` exists: a seeded trace/scratch comes back where it was
     this.measure()
     this.render()
     this.fireLoad()
@@ -1135,7 +1164,11 @@ export class FlatPlayer {
    * driving channel (the host sets the difficulty, injects a value, etc.). Clones the arrays.
    */
   setVar(name: string, value: number | number[]): void {
-    this.vars.set(name, Array.isArray(value) ? [...value] : value)
+    // The SAME path as an assignment written in the scene (`setVarLive`), never a bare `vars.set`: the two
+    // used to differ, and the difference was invisible from outside — a host restoring a continuous trace's
+    // progress got the right number, the right inked stroke, and a pen-tip marker still sitting at the
+    // start, because only the scene-side path re-seated the derived state.
+    this.setVarLive(name, Array.isArray(value) ? [...value] : value) // (arrays cloned: the host keeps its own)
     this.bustNamed() // host-driven change -> named objects bound to this variable must be refreshed
     this.render()
   }
@@ -1166,6 +1199,7 @@ export class FlatPlayer {
     this.scratched.clear() // …and so does what the renderer rubs out (`erase`)
     this.traceOutputs = traceOutputNames(this.doc)
     this.buildGrabZones() // new document -> new geometry for the `reveal` grab zones
+    this.reseedDerivedState() // …then the seeded variables put the derived state back (trace progress, scratched grid)
     this.instNameCache = undefined // new document -> name→instance lookup stale
     this.paramRt.clear() // new document -> per-instance param transitions reset
     this.channelState.clear() // new document -> modifier integrator state resets

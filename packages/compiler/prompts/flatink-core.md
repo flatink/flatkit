@@ -197,7 +197,8 @@ link  <endX>,<endY>,<target> to <Group>            // elastic thread → target 
 `trace avance along Chemin` on one, `draw "avance"` on the other — the ink follows the finger by arc
 length. Add **`step <px>`** or the drill is free: without it the progress is where the finger PROJECTS, so
 one press near the finish completes it. With it, the run must start at an end and pass through everything
-(and it resumes across a lift, since a child stops mid-letter). Restart with `avance = 0`. **A scratch card is `reveal cleared { brush 28 · erase }` on a grey rectangle** — nothing else: `erase`
+(and it resumes across a lift, since a child stops mid-letter). Restart with `avance = 0` — and the same variable RESTORES a session: seed it (or the `cells` array of a
+`reveal`) and the gesture resumes where the reader left it. **A scratch card is `reveal cleared { brush 28 · erase }` on a grey rectangle** — nothing else: `erase`
 makes the runtime rub the veil out under the finger (a `mask` layer CANNOT do it, its matter is an even-odd
 clip path where two overlapping stamps cancel). **`reveal … cells grille`** is the other half, for a scene
 that must REACT to the uncovered area: it writes `grille[i] = 1` for each cleared cell (`i = row * cols + col`,
