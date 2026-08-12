@@ -1000,6 +1000,39 @@ describe('flatFormat — filter on path (region)', () => {
   })
 })
 
+describe('flatFormat — `draw` (stroke extent by arc length)', () => {
+  const shape = (attrs: string) => `    path "M0 0L100 0" nofill stroke #ffffff 18 cap round${attrs}`
+  const prog = (attrs: string) => ['size 100 100', '', 'scene {', '  layer "L" {', shape(attrs), '  }', '}', ''].join('\n')
+
+  it('a literal fraction parses and round-trips', () => {
+    const src = prog(' draw 0.35')
+    expect(parseProgramFull(src).layers[0].items[0] as Region).toMatchObject({ draw: 0.35 })
+    expect(printProgramFull(parseProgramFull(src))).toBe(src)
+  })
+
+  it('a QUOTED value is an expression (re-evaluated per frame), with an optional `from` window', () => {
+    const src = prog(' draw "progress" from "progress - 0.2"')
+    const reg = parseProgramFull(src).layers[0].items[0] as Region
+    expect(reg).toMatchObject({ drawExpr: 'progress', drawFromExpr: 'progress - 0.2' })
+    expect(reg.draw).toBeUndefined() // the numeric value is the renderer's, resolved per frame
+    expect(printProgramFull(parseProgramFull(src))).toBe(src)
+  })
+
+  it('`draw 1` is the default → not printed; a bare `from` still prints its (implicit) end', () => {
+    expect(printProgramFull(parseProgramFull(prog(' draw 1')))).toBe(prog(''))
+    expect(printProgramFull(parseProgramFull(prog(' draw 1 from 0.4')))).toBe(prog(' draw 1 from 0.4'))
+  })
+
+  it('it sits AFTER the stroke options, and leaves the rest of the attributes alone', () => {
+    const src = ['size 100 100', '', 'scene {', '  layer "L" {',
+      '    path "M0 0L100 0" nofill stroke #ffffff 18 cap round dash 6,5 draw "p" opacity 0.5 nohit', '  }', '}', ''].join('\n')
+    const reg = parseProgramFull(src).layers[0].items[0] as Region
+    expect(reg).toMatchObject({ drawExpr: 'p', opacity: 0.5, noHit: true })
+    expect(reg.stroke).toMatchObject({ width: 18, cap: 'round', dash: [6, 5] })
+    expect(printProgramFull(parseProgramFull(src))).toBe(src)
+  })
+})
+
 describe('flatFormat — reveal / link gestures (object → model → text)', () => {
   const src = [
     'size 200 200', 'scene {', '  layer "c" {',
@@ -1007,14 +1040,14 @@ describe('flatFormat — reveal / link gestures (object → model → text)', ()
     '    group "Capital" at 50,50 { layer "c" { path "M0 0L1 0L1 1Z" fill #000000 } }',
     '    group "Country" at 100,100 { layer "c" { path "M0 0L1 0L1 1Z" fill #000000 } }',
     '  }', '}', '',
-    'object "Card" {', '  reveal seen {', '    brush 30', '  }', '}', '',
+    'object "Card" {', '  reveal seen {', '    brush 30', '    erase', '    cells grid', '  }', '}', '',
     'object "Capital" {', '  link ex, ey, target to Country', '}', '',
   ].join('\n')
 
   it('parse the reveal/link interactors with their fields', () => {
     const doc = parseProgramFull(src)
     const reveal = doc.interactors!.find((i) => i.axis === 'reveal')!
-    expect(reveal).toMatchObject({ axis: 'reveal', varX: 'seen', grid: 30 })
+    expect(reveal).toMatchObject({ axis: 'reveal', varX: 'seen', grid: 30, erase: true, cells: 'grid' })
     const link = doc.interactors!.find((i) => i.axis === 'link')!
     expect(link).toMatchObject({ axis: 'link', varX: 'ex', varY: 'ey', varT: 'target', confine: 'Country' })
   })
@@ -1022,7 +1055,7 @@ describe('flatFormat — reveal / link gestures (object → model → text)', ()
   it('stable round-trip (idempotent) + canonical gesture lines', () => {
     const once = printProgramFull(parseProgramFull(src))
     expect(printProgramFull(parseProgramFull(once))).toBe(once) // print∘parse idempotent
-    expect(once).toContain('reveal seen {\n    brush 30\n  }')
+    expect(once).toContain('reveal seen {\n    brush 30\n    erase\n    cells grid\n  }')
     expect(once).toContain('link ex, ey, target to Country')
   })
 })

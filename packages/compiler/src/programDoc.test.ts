@@ -772,3 +772,76 @@ object "P" {
     expect(dead(prog('over == 0').replace('var over = 0', 'var over = 0\nvar orphan = 3')).join(' ')).toMatch(/"orphan"/)
   })
 })
+
+// A variable read only by a LEAF (a dynamic text's `bind`, a shape's animated `draw`) is read every frame,
+// but no channel and no action carries it — so the "never used" pass, which only walked those two, called
+// it dead. Same family as the nested-object case above: the pass has to see everything that reads.
+describe('unused globals — leaf expressions count as reads', () => {
+  const deadIn = (src: string) =>
+    docStructureWarnings(compileFlatpack(src, [], {})).filter((w) => /never used/.test(w.diag.message)).map((w) => w.diag.message).join(' ')
+
+  it('a variable read only by a dynamic text `bind` is not dead', () => {
+    expect(deadIn('size 200 200\nvar score = 0\nscene { layer "a" {\n  text "{}" at 10,10 font "sans-serif" size 20 align left line 1.2 color #111111 box 80 30 bind "score"\n} }')).toBe('')
+  })
+
+  it('a variable read only by an animated `draw` is not dead', () => {
+    expect(deadIn('size 200 200\nvar progress = 0\nscene { layer "a" {\n  path "M0 0L100 0" nofill stroke #111111 6 draw "progress"\n} }')).toBe('')
+  })
+
+  it('…and a genuinely untouched variable is still reported', () => {
+    expect(deadIn('size 200 200\nvar progress = 0\nvar orphan = 3\nscene { layer "a" {\n  path "M0 0L100 0" nofill stroke #111111 6 draw "progress"\n} }')).toMatch(/"orphan"/)
+  })
+})
+
+// `reveal … cells <array>`: the grid is DERIVED (zone bbox / brush), so the count the author has to declare
+// is the one number they cannot read off their own scene. A short array loses its writes in silence.
+describe('programDoc — reveal `cells` grid diagnostics', () => {
+  // A 100x100 veil at 50,50 (world 0..100) with brush 25 → a 4 x 4 grid = 16 cells.
+  const veil = (decl: string, brush = 25) => [
+    'size 200 200', decl, 'var covered = 0',
+    'scene { layer "L" {', '  group "Veil" at 50,50 { layer "c" { rect -50 -50 100 100 fill #999999 } }', '} }', '',
+    'object "Veil" {', '  reveal covered {', `    brush ${brush}`, '    cells grid', '  }', '}',
+  ].join('\n')
+  const hit = (src: string) => docStructureWarnings(compileFlatpack(src, [], {})).filter((w) => /cells grid/.test(w.diag.message)).map((w) => w.diag.message)
+
+  it('a grid of the right size says nothing', () => {
+    expect(hit(veil('var grid = fill(16, 0)'))).toEqual([])
+  })
+
+  it('a mismatched length names the geometry AND the declaration to write', () => {
+    const m = hit(veil('var grid = fill(9, 0)'))[0]
+    expect(m).toMatch(/4 x 4 = 16 cells/)
+    expect(m).toMatch(/zone 100x100 px, brush 25/)
+    expect(m).toMatch(/holds 9/)
+    expect(m).toMatch(/fill\(16, 0\)/)
+    expect(m).toMatch(/row \* 4 \+ col/) // the index rule, so the author can lay the cells out
+  })
+
+  it('a scalar (or an undeclared name) is reported the same way', () => {
+    expect(hit(veil('var grid = 0'))[0]).toMatch(/a scalar, not an array/)
+    expect(hit(veil('var other = 0'))[0]).toMatch(/not declared/)
+  })
+
+  it('the brush drives the count (a coarser brush = fewer cells)', () => {
+    expect(hit(veil('var grid = fill(16, 0)', 50))[0]).toMatch(/2 x 2 = 4 cells/)
+  })
+
+  it('a `reveal` without `cells` is untouched', () => {
+    const src = veil('var grid = fill(16, 0)').replace('    cells grid\n', '')
+    expect(docStructureWarnings(compileFlatpack(src, [], {})).filter((w) => /cells/.test(w.diag.message))).toEqual([])
+  })
+})
+
+describe('programDoc — `draw` without a stroke', () => {
+  const hit = (shape: string) =>
+    docStructureWarnings(compileFlatpack(`size 200 200\nscene { layer "L" {\n  ${shape}\n} }`, [], {})).filter((w) => /`draw` on a shape/.test(w.diag.message))
+
+  it('trimming an outline that does not exist draws nothing — and says so', () => {
+    expect(hit('path "M0 0L100 0" fill #111111 draw 0.5')).toHaveLength(1)
+    expect(hit('path "M0 0L100 0" fill #111111 draw "p"')[0].diag.message).toMatch(/nofill stroke/)
+  })
+
+  it('with a stroke, nothing is reported', () => {
+    expect(hit('path "M0 0L100 0" nofill stroke #111111 6 draw 0.5')).toEqual([])
+  })
+})

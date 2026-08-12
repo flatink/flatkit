@@ -34,7 +34,7 @@ export function objectToUnits(
 ): ScriptUnit[] {
   const units: ScriptUnit[] = []
   const drag = interactors?.find((i) => i.targetId === targetId)
-  if (drag) units.push({ kind: 'interactor', axis: drag.axis, varX: drag.varX, varY: drag.varY, confine: drag.confine, grid: drag.grid, ...(drag.varT ? { varT: drag.varT } : {}), ...(drag.enabled ? { enabled: drag.enabled } : {}), ...(drag.pivot ? { pivot: drag.pivot } : {}) })
+  if (drag) units.push({ kind: 'interactor', axis: drag.axis, varX: drag.varX, varY: drag.varY, confine: drag.confine, grid: drag.grid, ...(drag.erase ? { erase: true } : {}), ...(drag.cells ? { cells: drag.cells } : {}), ...(drag.varT ? { varT: drag.varT } : {}), ...(drag.enabled ? { enabled: drag.enabled } : {}), ...(drag.pivot ? { pivot: drag.pivot } : {}) })
   for (const ev of ITEM_EVENTS) {
     const it = interactions?.find((i) => i.targetId === targetId && i.event === ev)
     if (it) units.push({ kind: 'event', event: ev, body: it.actions })
@@ -63,7 +63,7 @@ export function unitsToObject(units: ScriptUnit[]): ObjectScript {
   for (const u of units) {
     if (u.kind === 'event' && u.event !== 'load' && u.event !== 'enterFrame' && ITEM_EVENT_SET.has(u.event)) events.push({ event: u.event as ItemEvent, actions: u.body })
     else if (u.kind === 'drop') drops.push({ over: u.over, ...(u.atPointer ? { atPointer: true } : {}), actions: u.body })
-    else if (u.kind === 'interactor') interactor = { axis: u.axis, varX: u.varX, varY: u.varY, confine: u.confine, grid: u.grid, ...(u.varT ? { varT: u.varT } : {}), ...(u.enabled ? { enabled: u.enabled } : {}), ...(u.pivot ? { pivot: u.pivot } : {}) }
+    else if (u.kind === 'interactor') interactor = { axis: u.axis, varX: u.varX, varY: u.varY, confine: u.confine, grid: u.grid, ...(u.erase ? { erase: true } : {}), ...(u.cells ? { cells: u.cells } : {}), ...(u.varT ? { varT: u.varT } : {}), ...(u.enabled ? { enabled: u.enabled } : {}), ...(u.pivot ? { pivot: u.pivot } : {}) }
     else if (u.kind === 'binding') expressions[u.channel] = u.expr
     else if (u.kind === 'modifier') modifiers[u.channel] = u.modifier
   }

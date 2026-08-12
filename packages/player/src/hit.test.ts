@@ -279,3 +279,36 @@ describe('warmHitCache (pre-flatten hittable paths)', () => {
     expect(hitChain(doc, 0, {}, { x: 0, y: 0 })).toEqual([]) // outside
   })
 })
+
+// Grab zones: a rectangle hit as a whole, whatever its content currently looks like. The `reveal` case —
+// a veil whose cells the child has already erased to `opacity 0` (which normally lets the pointer through).
+describe('hitChains -- grab zones (a scratched-out veil stays grabbable)', () => {
+  const veil = (childOpacity: number): Doc => ({
+    width: 200, height: 200, symbols: [],
+    layers: [layerOf([{
+      id: 'Veil', kind: 'group', name: 'Veil', transform: translation(100, 100), opacity: 1,
+      layers: [layerOf([{ ...region('cell', square(0, 0, 50)), opacity: childOpacity }])],
+    }])],
+  } as unknown as Doc)
+  const zones = new Map([['Veil', { minX: 50, minY: 50, maxX: 150, maxY: 150 }]])
+
+  it('content visible: hit through the content, zone or not (unchanged behavior)', () => {
+    expect(hitChains(veil(1), 0, {}, { x: 100, y: 100 })).toEqual([['Veil', 'cell']])
+    expect(hitChains(veil(1), 0, {}, { x: 100, y: 100 }, zones)).toEqual([['Veil', 'cell']])
+  })
+
+  it('content erased (opacity 0): nothing is hit WITHOUT a zone, the container is hit WITH one', () => {
+    expect(hitChains(veil(0), 0, {}, { x: 100, y: 100 })).toEqual([])
+    expect(hitChains(veil(0), 0, {}, { x: 100, y: 100 }, zones)).toEqual([['Veil']])
+  })
+
+  it('the zone is a rectangle, not the whole canvas', () => {
+    expect(hitChains(veil(0), 0, {}, { x: 180, y: 100 }, zones)).toEqual([])
+  })
+
+  it('a zone on a HIDDEN container stays unhittable (hidden is hidden)', () => {
+    const doc = veil(0)
+    ;(doc.layers[0].items[0] as { hidden?: boolean }).hidden = true
+    expect(hitChains(doc, 0, {}, { x: 100, y: 100 }, zones)).toEqual([])
+  })
+})

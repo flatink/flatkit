@@ -147,6 +147,12 @@ function printRegion(r: Region, d: string): string {
     if (r.stroke.miterLimit != null) s += ` miter ${n(r.stroke.miterLimit)}`
     if (r.stroke.dash?.length) s += ` dash ${r.stroke.dash.map(n).join(',')}`
   }
+  // `draw <to> [from <start>]` — stroke extent by arc length; a quoted value is an expression (per frame).
+  // `from` only ever follows a `draw`, so a window that starts late still prints its (implicit) end.
+  const drawsFrom = !!r.drawFromExpr || (r.drawFrom != null && r.drawFrom > 0)
+  if (r.drawExpr) s += ` draw ${q(r.drawExpr)}`
+  else if ((r.draw != null && r.draw < 1) || drawsFrom) s += ` draw ${n(r.draw ?? 1)}`
+  if (drawsFrom) s += r.drawFromExpr ? ` from ${q(r.drawFromExpr)}` : ` from ${n(r.drawFrom ?? 0)}`
   if (r.opacity != null && r.opacity < 1) s += ` opacity ${n(r.opacity)}`
   if (r.filters) for (const f of r.filters) s += ' ' + printFilter(f)
   if (r.noHit) s += ' nohit'
@@ -1567,6 +1573,8 @@ class FlatParser {
     let filters: Filter[] | undefined
     let color = '#000000'
     let fillParam: string | undefined, strokeParam: string | undefined
+    let draw: number | undefined, drawFrom: number | undefined // stroke extent by arc length (`draw … from …`)
+    let drawExpr: string | undefined, drawFromExpr: string | undefined // …their animated (quoted) forms
     // `fill`/`stroke` accept a bare identifier = a symbol COLOR param ref (not a #color, linear/radial, none).
     const isParamRef = () => { const k = this.peek(); return !!k && k.k === 'id' && k.v !== 'linear' && k.v !== 'radial' && k.v !== 'none' }
     for (;;) {
@@ -1593,6 +1601,13 @@ class FlatParser {
         }
         stroke = st; if (!paint && !noFill && !strokeParam) color = paintColor(sp)
       }
+      // `draw <to> [from <start>]` — how much of the OUTLINE is stroked, as a fraction of its arc length.
+      // A quoted value is an expression re-evaluated per frame (`draw "progress"` = ink following a finger).
+      else if (this.is('draw')) {
+        this.next()
+        if (this.peek()?.k === 'str') drawExpr = this.str(); else draw = this.num()
+        if (this.is('from')) { this.next(); if (this.peek()?.k === 'str') drawFromExpr = this.str(); else drawFrom = this.num() }
+      }
       else if (this.is('opacity')) { this.next(); opacity = this.num() }
       else if (this.is('nohit')) { this.next(); noHit = true }
       else break
@@ -1604,6 +1619,10 @@ class FlatParser {
     if (strokeParam) r.strokeParam = strokeParam
     if (noFill) r.noFill = true
     if (stroke) r.stroke = stroke
+    if (draw != null && draw < 1) r.draw = draw
+    if (drawFrom) r.drawFrom = drawFrom
+    if (drawExpr) r.drawExpr = drawExpr
+    if (drawFromExpr) r.drawFromExpr = drawFromExpr
     if (opacity != null) r.opacity = opacity
     if (filters) r.filters = filters
     if (noHit) r.noHit = true

@@ -62,6 +62,16 @@
   coords) — e.g. hide the "feet" of an emerging shape: `group "Arc" clip -100 -60 200 60 { … }`. For an
   arbitrary clip shape, use a `mask` layer instead. **Render-only**: hit-testing and the preview/auto-size
   bbox ignore it (clipped-away area stays clickable / counts toward the framing) — it's a visual cut.
+- **A `mask` layer is a CLIPPING PATH in even-odd, not an alpha mask.** Its material contributes its
+  *outline*, nothing else: an alpha in the paint is ignored (`fill radial(…)` → hard edge, no falloff), a
+  `filter blur` on the matter changes nothing, and **two overlapping shapes cancel** where they overlap (a
+  third brings it back). So "stamp a soft brush repeatedly into a mask" does not accumulate — it flickers
+  holes in and out. For a scratch/wipe, do not build a mask at all: `reveal … { erase }` accumulates in the
+  runtime. For a progressive line, trim a stroke with
+  [`draw`](scene-and-drawing.md#drawing-a-stroke-progressively-draw); for a sliding window, pilot a GROUP
+  used as the mask's matter (a rectangle whose `scaleX` follows the progress).
+- **A partially drawn stroke (`draw`) still hits over the WHOLE path**: the trim is visual (like `clip`).
+  Ink meant to be untouchable takes `nohit`.
 
 ## Text
 
@@ -174,12 +184,26 @@ Inside an `object "Name" { … }`, besides `drag x, y` / `dragX` / `dragY`:
   path with the finger. While the pointer stays within `tolerance` of the trace (the regions
   of the named group), `<progress>` rises from 0 to 1 (monotone, never goes back down).
   Great for tracing a letter, a border, a constellation. (`tolerance` defaults to 24 px.)
-- **`reveal <progress> [{ brush <px> · enabled <expr> }]`**: scratch / wipe. The grabbed
-  object IS the area to reveal; rubbing it ticks the cells of an internal grid (cell side =
+- **`reveal <progress> [{ brush <px> · erase · cells <array> · enabled <expr> }]`**: scratch / wipe. The grabbed
+  object IS the area to reveal; rubbing it ticks the cells of a grid (cell side =
   `brush`) and `<progress>` rises from 0 to 1 (monotone, and **cumulative across separate grabs**
   — a child rubbing in several short strokes keeps adding coverage, it does not reset). Drive a
   cover's opacity with `opacity = 1 - <progress>`. Great for scratch cards, fogged glass, digging.
   (`brush` defaults to 24 px; coverage model, no pixel mask.)
+  - **`erase`** makes the RUNTIME rub the target out where it was scratched (one disc per cleared cell,
+    accumulating) — a scratch card is then a grey rectangle and nothing else. A `mask` layer cannot do
+    this: its matter is an even-odd clip path, so two overlapping stamps cancel, and no construct creates
+    a stamp at the pointer.
+  - **`cells <array>`** hands you that grid — **where** it was scratched, not only how much:
+    `grille[i] = 1` once cell `i` is cleared, `i = row * cols + col` over the object's world bbox,
+    `cols = ceil(w / brush)`. One `each "Grain" as i { opacity = 1 - grille[i] }` then erases the veil
+    under the finger. Declare the array at exactly `cols * rows` — `--check` states the number.
+    See [Behavior](behavior-and-interactions.md#seeing-where-it-was-scratched-reveal--cells).
+  - A `reveal` target is grabbable **over its whole zone**, whatever its content looks like — so a veil
+    stays scratchable where its cells have already gone to `opacity 0`. (Everywhere else, an item at
+    `opacity 0` lets the pointer through; a group whose children are ALL invisible is not hit, and
+    `hitbox` does not change that — it is the drop-zone rectangle, not a hit surface. Only a replayed
+    `down/move/up` script shows this class of bug: a static render looks perfect.)
 - **`link <endX>, <endY>, <target> to <TargetsGroup> [{ enabled <expr> }]`**: pull an elastic
   thread toward a target. During the drag, `<endX>`/`<endY>` = pointer position (DRAW the
   thread yourself with expressions, e.g. a region connecting the object to `endX,endY`). On

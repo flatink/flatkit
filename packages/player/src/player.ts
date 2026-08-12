@@ -19,11 +19,12 @@ import { sanitizeDoc } from '@flatkit/engine/validateDoc'
 import { applyInstanceBinds } from '@flatkit/engine/instanceBind'
 import { importedFunctions } from '@flatkit/engine/stdlib'
 import { namedChannels, objectChannelsById, objectParentTransform, type NamedChannels, type ObjectChannels } from '@flatkit/engine/sceneRefs'
-import { itemBoundsByName, itemBoundsById, dropZoneBounds, tracePathByName, groupTargets } from '@flatkit/engine/groups'
+import { itemBoundsByName, itemBoundsById, itemBoundsByIds, dropZoneBounds, tracePathByName, groupTargets } from '@flatkit/engine/groups'
 import { projectToPath, samplePathAt, type Path } from '@flatkit/engine/path'
 import { apply, invert, spaceConversions, IDENTITY, type Transform } from '@flatkit/engine/transform'
 import type { Interactor } from '@flatkit/types'
-import { hitChains, warmHitCache as warmHitPaths } from './hit'
+import { hitChains, warmHitCache as warmHitPaths, type GrabZones } from './hit'
+import type { ScratchMask } from './drawScene'
 
 /** A replayable gesture (`--play` / `--record` format). Coords in SCENE units. `id` = pointerId (default 1).
  *  Prefer SEMANTIC gestures (`drag`/`tap` by object NAME): robust, readable, and it is the engine that
@@ -281,6 +282,15 @@ export class FlatPlayer {
   // `reveal` coverage PERSISTED per target across grabs → true monotonicity (a child scratching with
   // several short strokes keeps accumulating instead of resetting to the current stroke each grab).
   private readonly revealStates = new Map<string, RevealState>()
+  // Grab zones handed to the hit test: the WORLD bbox of each `reveal` target, so a veil stays grabbable
+  // where the child already scratched it away (its cells sit at `opacity 0`, which normally lets the
+  // pointer through). Built on load, when the scene geometry is known; UNDEFINED when the doc declares no
+  // `reveal` — the hit test then skips the whole zone path (the overwhelmingly common case).
+  private grabZones: GrabZones | undefined
+  // `reveal … erase`: what the renderer must rub out of each target, by item id. The mask holds the SAME
+  // `Set` the gesture ticks (a live view — no rebuild per frame, no copy per stroke) plus the grid geometry.
+  // Filled on the first grab of an erasing `reveal`; empty otherwise, and the renderer then skips the branch.
+  private readonly scratched = new Map<string, ScratchMask>()
   // Per-instance exposed-param runtime (P3 states): instanceId → param → in-progress transition.
   // `value` is the current eased value; it drives the instance's local playhead (see drawScene.paramsFor).
   private readonly paramRt = new Map<string, Map<string, { value: number; from: number; target: number; elapsed: number; dur: number; ease?: Easing }>>()
@@ -400,6 +410,13 @@ export class FlatPlayer {
     const i = Math.round(this.evalNumber(target.slice(lb + 1, target.lastIndexOf(']'))))
     if (i >= 0 && i < a.length) a[i] = value
   }
+  /** `reveal … { cells <array> }`: marks the cell `i` as cleared. Silent when the name is not a declared
+   *  array or the index is past its end — `--check` states the grid's exact size, which is where a
+   *  mismatch belongs (a runtime throw would kill the gesture mid-stroke). */
+  private markCell(name: string, i: number): void {
+    const a = this.vars.get(name)
+    if (Array.isArray(a) && i >= 0 && i < a.length) a[i] = 1
+  }
   private applyDrag(p: Point): void {
     const d = this.dragActive
     if (!d) return
@@ -437,7 +454,14 @@ export class FlatPlayer {
         for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
           const cx = g.minX + (c + 0.5) * g.cell
           const cy = g.minY + (r + 0.5) * g.cell
-          if (Math.hypot(p.x - cx, p.y - cy) <= brush) cells.add(r * g.cols + c) // cell center within the brush -> ticked
+          if (Math.hypot(p.x - cx, p.y - cy) > brush) continue // cell center outside the brush -> untouched
+          const idx = r * g.cols + c
+          const fresh = !cells.has(idx)
+          cells.add(idx) // ticked (monotone: a cell never comes back)
+          // `cells <array>`: hand the author WHERE it was scratched, not only how much. Written once per
+          // cell (on the tick that clears it) — a full-frame grid is hundreds of cells and the pointer
+          // sweeps it at ~120 Hz, so re-writing the whole array per move would be the expensive way.
+          if (fresh && d.it.cells) this.markCell(d.it.cells, idx)
         }
         if (d.it.varX) this.writeOut(d.it.varX, cells.size / (g.cols * g.rows))
         this.bustNamed()
@@ -462,18 +486,34 @@ export class FlatPlayer {
     if (d.it.axis !== 'x' && d.it.varY) this.writeOut(d.it.varY, local.y)
     this.bustNamed()
   }
+  /** WORLD bbox of every `reveal` target — the zones the hit test honours whatever their content looks like
+   *  (see `GrabZones` in hit.ts). Built once per document: a zone is the item's GEOMETRY, which erasing the
+   *  veil that fills it does not change. */
+  private buildGrabZones(): void {
+    const ids = new Set((this.doc.interactors ?? []).filter((i) => i.axis === 'reveal').map((i) => i.targetId))
+    this.grabZones = ids.size ? itemBoundsByIds(this.doc, ids) : undefined // ONE walk for all of them
+  }
   /** Reveal state for a target: the grid of cells (side = brush) over its WORLD bbox, with the ticked cells
    *  PERSISTED across grabs (`revealStates`) so coverage accumulates monotonically over several strokes. */
   private revealGridFor(id: string, it: Interactor): RevealState | Record<string, never> {
     const cached = this.revealStates.get(id)
-    if (cached) return cached // keep accumulating from a previous grab
-    const b = itemBoundsById(this.doc, id)
+    if (cached) {
+      // Re-sync the author's array with the coverage we hold, so the two can never tell different stories:
+      // the array is writable from the scene (`grid[i] = 0`) while the coverage is monotone and has no
+      // reset. One pass over the ticked cells at the START of a grab — never during the stroke.
+      if (it.cells) for (const idx of cached.revealCells) this.markCell(it.cells, idx)
+      return cached // keep accumulating from a previous grab
+    }
+    const b = this.grabZones?.get(id) ?? itemBoundsById(this.doc, id) // same bbox the hit test uses as the zone
     if (!b) return {}
     const cell = it.grid && it.grid > 0 ? it.grid : 24
     const cols = Math.max(1, Math.ceil((b.maxX - b.minX) / cell))
     const rows = Math.max(1, Math.ceil((b.maxY - b.minY) / cell))
     const state: RevealState = { revealCells: new Set<number>(), revealGrid: { minX: b.minX, minY: b.minY, cell, cols, rows } }
     this.revealStates.set(id, state)
+    // `erase`: hand the renderer a LIVE view of this grid (same Set) — every ticked cell shows up on the
+    // next paint with nothing to copy or invalidate. `brush` = the radius the gesture itself rubs with.
+    if (it.erase) this.scratched.set(id, { cells: state.revealCells, minX: b.minX, minY: b.minY, cell, cols })
     return state
   }
   /** On release of a `link`: 1st target (named child of the group) containing the pointer -> index 1..n (0 = none).
@@ -553,7 +593,7 @@ export class FlatPlayer {
       return
     }
     if (this.doc.interactions?.length || this.doc.interactors?.length) {
-      const chains = hitChains(this.doc, this.frame, this.exprCtx(), p)
+      const chains = hitChains(this.doc, this.frame, this.exprCtx(), p, this.grabZones)
       this.hoverIds = new Set(chains[0] ?? []) // topmost stack under the pointer → drives self.hovered feedback
       this.canvas.style.cursor = (this.pickTarget(chains, GRAB_EVENTS) ?? this.pickInteractor(chains)) ? 'grab' : this.pickTarget(chains, CLICK_EVENTS) ? 'pointer' : 'default'
       const hov = this.pickTarget(chains, HOVER_EVENTS)
@@ -589,7 +629,7 @@ export class FlatPlayer {
     const p = this.worldPoint(e)
     this.trackPointerPos(p) // mouse.* must reflect the press point for `when pressed`/`when clicked` (touch: no prior hover)
     this.record('down', p, e.pointerId)
-    const chains = hitChains(this.doc, this.frame, this.exprCtx(), p)
+    const chains = hitChains(this.doc, this.frame, this.exprCtx(), p, this.grabZones)
     const clickId = this.pickTarget(chains, CLICK_EVENTS)
     const grabId = this.pickTarget(chains, GRAB_EVENTS) ?? this.pickInteractor(chains) // grabbable = handler OR interactor
     this.grabStart = p // press point (tap/long-press movement tolerance) — set for the click case too, not only grabs
@@ -686,6 +726,7 @@ export class FlatPlayer {
     this.readKeys = docReadKeys(this.doc)
     this.usesMousePos = docReadsMousePos(this.doc)
     this.hasModifiers = docHasModifiers(this.doc)
+    this.buildGrabZones()
     this.loop = opts.loop ?? true
     this.pad = opts.padding ?? 0
     this.audioOn = opts.audio ?? true
@@ -1025,6 +1066,8 @@ export class FlatPlayer {
     this.ctxCache = null // new document -> cached expr context stale (vars Map replaced just above)
     this.filterCache.clear() // new document -> filter bitmaps stale
     this.revealStates.clear() // new document -> reveal coverage resets
+    this.scratched.clear() // …and so does what the renderer rubs out (`erase`)
+    this.buildGrabZones() // new document -> new geometry for the `reveal` grab zones
     this.instNameCache = undefined // new document -> name→instance lookup stale
     this.paramRt.clear() // new document -> per-instance param transitions reset
     this.channelState.clear() // new document -> modifier integrator state resets
@@ -1070,7 +1113,7 @@ export class FlatPlayer {
     const expr = this.playing && this.simActive && this.prevSimVars && this.simAlpha < 1
       ? this.exprCtx(lerpVars(this.prevSimVars, this.vars, this.simAlpha))
       : this.exprCtx()
-    renderLayers(ctx, doc, doc.layers, this.frame, null, new Set(), { fps: this.fps, expr, image: (id) => this.imageFor(id), filterCache: this.filterCache, imageEpoch: this.imageEpoch, itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), monoTime: this.mono / this.fps, ...(this.hasModifiers ? { statePath: '', channelValue: (key: string, ch: string) => this.channelValueFor(key, ch) } : {}) })
+    renderLayers(ctx, doc, doc.layers, this.frame, null, new Set(), { fps: this.fps, expr, image: (id) => this.imageFor(id), filterCache: this.filterCache, imageEpoch: this.imageEpoch, itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), monoTime: this.mono / this.fps, ...(this.scratched.size ? { scratched: this.scratched } : {}), ...(this.hasModifiers ? { statePath: '', channelValue: (key: string, ch: string) => this.channelValueFor(key, ch) } : {}) })
     ctx.restore()
   }
 

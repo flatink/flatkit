@@ -245,6 +245,8 @@ export type Interactor = {
   varT?: string // axis 'link': INDEX (1..n) of the target reached on release, 0 if none
   confine?: string // clamp zone (drag); name of the GROUP-path to follow ('trace'); name of the GROUP of targets ('link')
   grid?: number // snap: grid step (drag, px), angle step (turn/turnDeg, ALWAYS degrees), TOLERANCE (trace, px), or BRUSH radius (reveal, px)
+  cells?: string // axis 'reveal': name of an ARRAY variable the scratched grid is written into (1 = cell cleared, index = row * cols + col) — WHERE the finger passed, next to the fraction varX says how much
+  erase?: boolean // axis 'reveal': the RUNTIME rubs the target out where it was scratched (the veil disappears under the finger, no cell artwork to author). Visual only — the zone stays grabbable
   enabled?: string // expression: the drag is active only when it is true (≠ 0); absent = always active (dynamic lock, no ternary pattern)
   pivot?: Point // WORLD rotation center for axis 'turn'/'turnDeg' (the object points toward the cursor)
 }
@@ -301,6 +303,14 @@ export type Region = {
   stroke?: Stroke // stroke; absent = none
   strokeParam?: string // stroke color bound to a symbol COLOR param (`stroke <paramName> <width>`); resolved per instance
   noFill?: boolean // true = no fill (path/stroke only, e.g. a pen line)
+  // STROKE EXTENT by ARC LENGTH (`draw`) — the window of the outline that is actually stroked, as
+  // fractions 0..1 of the path's TOTAL arc length (subpaths in order: the first is drawn whole before the
+  // next starts). Same measure as a `trace` interactor's progress → `draw = <progress>` follows the finger.
+  // Trims the STROKE only: the fill, the bbox and the hit shape stay those of the whole path.
+  draw?: number // end of the drawn window (absent = 1 = the whole outline)
+  drawFrom?: number // start of the drawn window (absent = 0); `from > to` ⇒ nothing is stroked
+  drawExpr?: string // `draw "<expr>"`: re-evaluated per frame (the ink follows a variable); overrides `draw`
+  drawFromExpr?: string // `from "<expr>"`: idem for the window's start (comet trail); overrides `drawFrom`
   xform?: Transform // accumulated display orientation (transform frame) — geometry stays baked; present = "oriented object" (no re-merge)
   opacity?: number // object opacity 0..1 (absent = 1)
   filters?: Filter[] // filter stack (blur/shadow/glow/adjust) — rendered via offscreen composition (cf. group/leaf)

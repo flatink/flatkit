@@ -188,6 +188,20 @@ export function hitChain(doc: Doc, frame: number, ctx: ExprContext, worldPt: Poi
 }
 
 /**
+ * GRAB ZONES: world rectangles that are hit as a whole, whatever their content currently looks like —
+ * keyed by container id. A `reveal` target is the case that needs it: its zone IS its bbox (that is how the
+ * scratch grid is built), but the veil filling it gets erased as the child scratches, and an item at
+ * `opacity 0` stops being hittable. Without this the gesture dies exactly where it already worked, and only
+ * a replayed `down/move/up` shows it — a static render looks perfect. Tested at the container's own place in
+ * the z-order (never in front of what covers it), and only when nothing DEEPER was hit.
+ */
+export type GrabZones = Map<string, { minX: number; minY: number; maxX: number; maxY: number }>
+const inZone = (zones: GrabZones, id: string, world: Point): boolean => {
+  const z = zones.get(id)
+  return !!z && world.x >= z.minX && world.x <= z.maxX && world.y >= z.minY && world.y <= z.maxY
+}
+
+/**
  * ALL item chains under `worldPt`, in Z order (from TOPMOST to bottom). Where `hitChain` returns
  * only the topmost chain, this one returns them all -- which lets the player make a click/hover
  * "fall" through a NON-interactive item placed on top, down to the clickable one beneath (otherwise
@@ -206,8 +220,12 @@ function collectInScope(
   out: string[][],
   parent: Transform = IDENTITY,
   depth = 0,
+  zones?: GrabZones,
 ): void {
   if (depth > MAX_NEST) return // pathological nesting -> stop
+  // World point of this scope, computed ONCE and only when a zone can match: `pt` is scope-local and
+  // `parent` maps it back, but a scene without `reveal` must not pay a conversion per container.
+  const world = zones?.size ? apply(parent, pt) : null
   const fps = timeline?.fps ?? 24
   const { hidden: hid, masks, guides } = layerStructure(layers) // one pass for all three
   for (let li = layers.length - 1; li >= 0; li--) {
@@ -230,8 +248,10 @@ function collectInScope(
         const { pose: subFrame, clock: subClock } = subScopeFrames(it, sym, frame, clock, ctx, freeze, fps)
         const next = inst ? new Set([...seen, it.symbolId]) : seen
         const deeper: string[][] = []
-        collectInScope(doc, containerLayers(doc, it), subTl, subFrame, subClock, ctx, local, next, freeze, deeper, compose(parent, it.transform), depth + 1)
-        for (const d of deeper) out.push([it.id, ...d]) // container hit only via a descendant
+        collectInScope(doc, containerLayers(doc, it), subTl, subFrame, subClock, ctx, local, next, freeze, deeper, compose(parent, it.transform), depth + 1, zones)
+        for (const d of deeper) out.push([it.id, ...d]) // container hit only via a descendant…
+        // …or by its declared grab zone (`reveal`), which survives its content being erased.
+        if (!deeper.length && zones && world && inZone(zones, it.id, world)) out.push([it.id])
       } else if (isText(it)) {
         if (pointInBox(it.transform, it.box.w, it.box.h, pt)) out.push([it.id])
       } else if (isImage(it)) {
@@ -243,10 +263,11 @@ function collectInScope(
   }
 }
 
-/** All hit chains under `worldPt`, from topmost to bottom (see `collectInScope`). */
-export function hitChains(doc: Doc, frame: number, ctx: ExprContext, worldPt: Point): string[][] {
+/** All hit chains under `worldPt`, from topmost to bottom (see `collectInScope`). `zones` = grab zones
+ *  hit whatever their content looks like (see `GrabZones`); absent = content only, as before. */
+export function hitChains(doc: Doc, frame: number, ctx: ExprContext, worldPt: Point, zones?: GrabZones): string[][] {
   const out: string[][] = []
-  collectInScope(doc, doc.layers, doc.timeline, frame, frame, ctx, worldPt, new Set(), false, out)
+  collectInScope(doc, doc.layers, doc.timeline, frame, frame, ctx, worldPt, new Set(), false, out, IDENTITY, 0, zones)
   return out
 }
 

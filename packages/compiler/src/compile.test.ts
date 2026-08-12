@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { compileFlatpack, type MediaMap } from './compile'
+import { compileFlatpack, packToJSON, type MediaMap } from './compile'
 import { exportFlatProject } from '@flatkit/engine/flatFormat'
 import { parsePathData } from '@flatkit/engine/svgPath'
 import { resolveLayerAt } from '@flatkit/engine/cel'
@@ -195,5 +195,25 @@ describe('font assets: family defaults to id', () => {
   it('an explicit family is preserved (not overwritten by the id)', () => {
     const doc = compileFlatpack('size 10 10\nasset "slug" "b.woff2" font "Real Family"\nscene { layer "L" {} }', [], media)
     expect(doc.assets?.find((a) => a.id === 'slug')?.family).toBe('Real Family')
+  })
+})
+
+// The .flatpack is JSON of the Doc: what the player reads for `draw` / `cells` has to make it through
+// `compileFlatpack` AND `JSON.stringify` — a field added to the model but dropped in transit is a feature
+// that works in every unit test and in no browser.
+describe('compile — `draw` and `reveal … cells` reach the .flatpack', () => {
+  const src = [
+    'size 200 200', 'var progress = 0', 'var covered = 0', 'var grid = fill(16, 0)',
+    'scene { layer "L" {',
+    '  path "M0 0L100 0" nofill stroke #ffffff 8 cap round draw "progress" from "progress - 0.2"',
+    '  group "Veil" at 50,50 { layer "c" { rect -50 -50 100 100 fill #999999 } }',
+    '} }', '',
+    'object "Veil" {', '  reveal covered {', '    brush 25', '    erase', '    cells grid', '  }', '}',
+  ].join('\n')
+
+  it('survives compilation and JSON serialization', () => {
+    const pack = JSON.parse(packToJSON(compileFlatpack(src, [], {}))) as Doc
+    expect(pack.layers[0].items[0]).toMatchObject({ drawExpr: 'progress', drawFromExpr: 'progress - 0.2' })
+    expect(pack.interactors?.[0]).toMatchObject({ axis: 'reveal', varX: 'covered', grid: 25, erase: true, cells: 'grid' })
   })
 })

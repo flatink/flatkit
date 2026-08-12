@@ -178,6 +178,22 @@ export function itemBoundsById(doc: Doc, id: string): BBox | null {
   return result
 }
 
+/** WORLD bbox of SEVERAL items, by id, in ONE walk of the scene — for the `reveal` grab zones, computed
+ *  per document rather than per gesture. One pass whatever the number of ids (a per-id `itemBoundsById`
+ *  would re-walk the whole tree each time). Ids that match nothing are simply absent from the result. */
+export function itemBoundsByIds(doc: Doc, ids: Set<string>): Map<string, BBox> {
+  const out = new Map<string, BBox>()
+  const walk = (layers: Layer[], matrix: Transform) => {
+    for (const l of layers) for (const it of l.items) {
+      if (out.size === ids.size) return // every id found
+      if (ids.has(it.id) && !out.has(it.id)) { const b = itemBBox(doc, it); if (b) out.set(it.id, transformBBox(b, matrix)) }
+      if (isGroup(it)) walk(it.layers, compose(matrix, it.transform))
+    }
+  }
+  walk(doc.layers, IDENTITY)
+  return out
+}
+
 /** Targets of a `link`: the DIRECT named children of the group `name`, in order, with their world bbox
  *  (like `dropZoneBounds`: a sub-group's `hitbox` is honored). The 1-based index is the `target` output. */
 export function groupTargets(doc: Doc, name: string): { name: string; bbox: BBox }[] {

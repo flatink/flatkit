@@ -64,7 +64,13 @@ fill radial(0.5, 0.5, 0.5, 0:#fff, 1:#000)         // cx, cy, r (0..1), then sto
 filter glow <blur> <color> | shadow <dx> <dy> <blur> <color> | blur <r> | adjust <b> <c> <s> <h>
 tint <color> <amount(0..1)>                        // Flash-style tint
 nohit                                              // drawn but ignored by hit-test
+draw <to> [from <start>]                           // stroke extent by ARC LENGTH (0..1); quoted = expression
 ```
+
+`draw` is how a line DRAWS ITSELF: `path "…" nofill stroke #fff 18 cap round draw "avance"` strokes the
+first `avance` of the path's LENGTH — the same measure `trace` reports, so ink lands under the finger even
+on a steep curve (an x-driven mask does not). `from` opens a window (comet trail). It trims the stroke
+only: fill, bbox and hit shape stay whole.
 
 ## Animation — timeline / cel / pose
 
@@ -176,10 +182,23 @@ drag x, y [{ confine to <Zone>
              enabled <expr> }]   // ONE OPTION PER LINE. dragX / dragY too
 turn    <angle> around <x>,<y> [{ snap <deg> }]    // → <angle> in RADIANS → rotation = <angle> directly
 turnDeg <angle> around <x>,<y> [{ snap <deg> }]    // → <angle> in DEGREES → pair with rotationDeg = <angle>
-trace <progress> along <Group> [{ tolerance <px> }]// follow a path → 0..1 monotone
-reveal <progress> [{ brush <px> }]                 // scratch/wipe → 0..1 cumulative
+trace <progress> along <Group> [{ tolerance <px> }]// follow a path → 0..1 monotone (pairs with `draw`)
+reveal <progress> [{ brush <px>
+                     erase                         // …and the runtime RUBS THE TARGET OUT where it was scratched
+                     cells <array> }]              // scratch/wipe → 0..1 cumulative; `cells` = WHERE (1 per cleared cell)
 link  <endX>,<endY>,<target> to <Group>            // elastic thread → target = hit index 1..n (0=none)
 ```
+
+**`trace` + `draw` is the tracing exercise**: give the guide shape and the ink shape the SAME path data,
+`trace avance along Chemin` on one, `draw "avance"` on the other — the ink follows the finger by arc
+length. **A scratch card is `reveal cleared { brush 28 · erase }` on a grey rectangle** — nothing else: `erase`
+makes the runtime rub the veil out under the finger (a `mask` layer CANNOT do it, its matter is an even-odd
+clip path where two overlapping stamps cancel). **`reveal … cells grille`** is the other half, for a scene
+that must REACT to the uncovered area: it writes `grille[i] = 1` for each cleared cell (`i = row * cols + col`,
+`cols = ceil(zone_width / brush)` over the object's world bbox), so `each "Grain" as i {
+opacity = 1 - grille[i] }` erases the veil WHERE it was rubbed. Declare `var grille = fill(cols*rows, 0)` —
+`--check` states the exact number. A `reveal` target stays grabbable over its whole zone even once its
+cells are invisible.
 
 **`link` gives you the end point and the target index -- it does NOT draw the thread.** Nobody writes
 anything but these two lines, so here they are, as a program that compiles:

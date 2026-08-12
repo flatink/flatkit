@@ -59,6 +59,8 @@ dragX vx · dragY vy            // single-axis
 drag x, y { confine to Zone  snap 10 }   // bound to a named object's box · grid snap
 turn a around cx,cy { snap 15 }    // dial/knob → a = pivot→cursor angle in RADIANS (pair: rotation = a)
 turnDeg a around cx,cy { snap 15 } // same in DEGREES (pair: rotationDeg = a) · snap is degrees on both
+trace p along Route { tolerance 30 }   // follow a named guide with the finger → p = 0..1 by ARC LENGTH (pair: draw "p" on the SAME geometry)
+reveal c { brush 32  erase  cells grid }  // scratch → c = cleared fraction; erase = the runtime rubs the target out where scratched; grid[row*cols+col] = 1 says WHERE
 when dropped on Zone { … }     // fires on release when the object's center is inside the named zone
 
 ## Declarations

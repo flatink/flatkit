@@ -163,12 +163,98 @@ Higher-level pointer behaviors (each writes into your variables; all accept `{ e
 turn    <angle> around <x>,<y> [{ snap <deg> }]    # dial / clock hand → angle in RADIANS → rotation = angle
 turnDeg <angle> around <x>,<y> [{ snap <deg> }]    # …in DEGREES → rotationDeg = angle  (rotationDeg = sugar for rotation = rad(…))
 trace <progress> along <Group> [{ tolerance <px> }]# follow a path → progress 0..1 (monotone)
-reveal <progress> [{ brush <px> }]                 # scratch/wipe the grabbed area → fraction 0..1 (cumulative across grabs)
+reveal <progress> [{ brush <px> · erase · cells <array> }]  # scratch/wipe the grabbed area → fraction 0..1 (cumulative across grabs)
 link  <endX>, <endY>, <target> to <Group>          # pull a thread → end follows the pointer; <target> = hit index 1..n on release (0 = none)
 ```
 
 Each output also accepts an **array element** (`drag hx[i], hy[i]`, `reveal seen[2]`) — the natural form
 under `each` (see below).
+
+### Drawing what a `trace` traced
+
+`trace` gives you **how far** along the path the finger got, in arc length. Feed it to a shape's
+[`draw`](scene-and-drawing.md#drawing-a-stroke-progressively-draw) — the same path, the same measure — and
+the ink appears exactly under the finger:
+
+```
+scene { layer "Ink" {
+  group "Route" { layer "c" { path "M60 300C220 120 340 480 500 300" nofill stroke #dddddd 18 cap round } }
+  path "M60 300C220 120 340 480 500 300" nofill stroke #2255ff 18 cap round draw "progress" nohit
+} }
+
+object "Route" { trace progress along Route { tolerance 30 } }
+```
+
+The guide and the ink carry the **same path data**: `trace` measures on it, `draw` cuts on it. (Driving a
+rectangular mask by `scaleX` instead ties the ink to *screen x*, which drifts from path length wherever the
+curve is steep.)
+
+### Rubbing a veil out (`reveal … erase`)
+
+`reveal <p>` reports how MUCH of the zone was cleared. Add **`erase`** and the runtime *shows* it: the
+grabbed object is drawn minus what the finger rubbed out. A scratch card is then a grey rectangle:
+
+```
+scene { layer "Jeu" {
+  text "BRAVO" at 90,120 font "sans-serif" size 64 align left line 1.2 color #10141c
+  group "Veil" at 200,150 { layer "c" { rect -180 -120 360 240 fill #8a94a6 } }
+} }
+
+object "Veil" {
+  reveal cleared {
+    brush 28
+    erase              // the veil disappears under the finger — no cell artwork to author
+  }
+}
+```
+
+Nothing else to write: no grid of tiles, no `each`, no array. What disappears is exactly what the fraction
+counts (one disc per cleared cell, sized to merge with its neighbours), so `cleared` and the picture always
+agree. Erasing is **visual only** — the zone stays grabbable where it has been cleared, which is what lets
+the scratching continue there.
+
+> **Why not a `mask` layer?** Because a mask is an even-odd **clipping path**: two overlapping brush stamps
+> *cancel* instead of accumulating, and nothing in the language creates a stamp at the pointer anyway
+> (the scene's geometry is fixed; only channels move). `erase` does the accumulation in the runtime, where
+> the gesture already keeps the state.
+
+### Seeing WHERE it was scratched (`reveal … cells`)
+
+`erase` rubs the veil out for you. `cells <array>` is the other half: it hands you the grid behind the
+number — **where** — for when the scene has to *react* to the uncovered area rather than just show it
+(score a region, light up the object underneath, drive your own cell artwork):
+
+```
+var cleared = 0
+var scratched = fill(551, 0)         # one slot per cell; --check tells you the count
+
+object "Veil" {
+  reveal cleared {
+    brush 32
+    cells scratched                  # scratched[i] = 1 once cell i is cleared
+  }
+}
+
+each "Cell" as i { opacity = 1 - scratched[i] }    # …and the veil disappears where it was rubbed
+```
+
+The grid is derived from the zone, so it is reproducible on paper: it covers the object's **world bbox**,
+each cell is a **`brush` × `brush`** square, `cols = ceil(width / brush)`, `rows = ceil(height / brush)`,
+and **`i = row * cols + col`** (cell `(col,row)` is centred at `minX + (col + 0.5) * brush`,
+`minY + (row + 0.5) * brush`). A cell is cleared once its **centre** falls within `brush` of the pointer —
+so a single touch clears a small plus-shape, not one square. Cells are written **once**, never back to 0:
+the grid is as monotone as the fraction, and both agree. (The array is yours to read *and* write, but the
+coverage behind it has no reset — so each new grab re-syncs the array from the interactor's own state,
+rather than letting a scene show an intact cell over a zone counted as cleared.)
+
+Declare the array at exactly `cols * rows` — `flatc --check` states the geometry and the exact
+`var … = fill(N, 0)` to write whenever the sizes disagree, because a short array drops the writes past its
+end in silence.
+
+> A `reveal` target is grabbable **over its whole zone**, whatever its content currently looks like — under
+> `erase`, and equally when the cells you fade to `opacity 0` stop being hittable (invisible things let the
+> pointer through). Without that rule the scratching would work on the first stroke and then stall on the
+> cleared area — invisible in a static render, visible only in a replayed `down/move/up`.
 
 ### Drawing the thread of a `link`
 

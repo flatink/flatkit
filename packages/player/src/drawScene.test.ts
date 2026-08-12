@@ -421,3 +421,86 @@ describe('an effect dropped for lack of an off-screen canvas says so', () => {
     }
   })
 })
+
+// `draw` — the STROKE is trimmed by arc length (ink appearing behind a finger). The fill is not.
+describe('drawScene -- `draw` (stroke extent by arc length)', () => {
+  const realPath2D = (globalThis as { Path2D?: unknown }).Path2D
+  type Rec = { pts: { x: number; y: number }[]; moves: number; closes: number }
+  // Recording Path2D: each instance keeps its own polyline, so the path handed to `stroke` can be
+  // measured on its own (the FILL path is built too, and mixing the two measures nothing).
+  beforeEach(() => {
+    (globalThis as { Path2D?: unknown }).Path2D = class {
+      rec: Rec = { pts: [], moves: 0, closes: 0 }
+      moveTo(x: number, y: number) { this.rec.moves++; this.rec.pts.push({ x, y }) }
+      lineTo(x: number, y: number) { this.rec.pts.push({ x, y }) }
+      bezierCurveTo(_a: number, _b: number, _c: number, _d: number, x: number, y: number) { this.rec.pts.push({ x, y }) }
+      quadraticCurveTo() {} closePath() { this.rec.closes++ } addPath() {} rect() {} arc() {} ellipse() {}
+    }
+  })
+  afterEach(() => { (globalThis as { Path2D?: unknown }).Path2D = realPath2D })
+
+  const mkCtx = () => {
+    const state = { fill: 0, stroke: 0, stroked: null as Rec | null }
+    const ctx = new Proxy(state, {
+      get(t: typeof state, k: string) {
+        if (k === 'state') return t
+        if (k === 'canvas') return { width: 400, height: 300 }
+        if (k === 'measureText') return () => ({ width: 10 })
+        if (k === 'getTransform') return () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })
+        if (k === 'fill') return () => { t.fill++ }
+        if (k === 'stroke') return (p: { rec?: Rec }) => { t.stroke++; t.stroked = p?.rec ?? null }
+        return () => {}
+      },
+      set: () => true,
+    }) as unknown as CanvasRenderingContext2D & { state: typeof state }
+    return ctx
+  }
+  const lengthOf = (r: Rec | null) => (r ? r.pts.slice(1).reduce((s, p, i) => s + Math.hypot(p.x - r.pts[i].x, p.y - r.pts[i].y), 0) : 0)
+  // Renders ONE shape and reports what was actually stroked.
+  const strokeOf = (attrs: string, vars: Record<string, number> = {}) => {
+    const doc = parseProgramFull(`size 200 100\nscene {\n  layer "c" {\n    path "M0 0L100 0" nofill stroke #ffffff 8 cap round${attrs}\n  }\n}`)
+    const ctx = mkCtx()
+    renderItems(ctx, doc, resolveLayerAt(doc.layers[0], 0, { ctx: vars }), 0, null, new Set(), { fps: 60 })
+    return { drawn: lengthOf(ctx.state.stroked), strokes: ctx.state.stroke, fills: ctx.state.fill, moves: ctx.state.stroked?.moves ?? 0 }
+  }
+
+  it('without `draw`, the whole outline is stroked', () => {
+    expect(strokeOf('').drawn).toBeCloseTo(100, 6)
+  })
+
+  it('`draw <f>` strokes the first fraction of the ARC LENGTH', () => {
+    expect(strokeOf(' draw 0.25').drawn).toBeCloseTo(25, 6)
+    expect(strokeOf(' draw 0.6').drawn).toBeCloseTo(60, 6)
+  })
+
+  it('`draw "<expr>"` follows a variable (the finger\'s progress), per frame', () => {
+    expect(strokeOf(' draw "progress"', { progress: 0.3 }).drawn).toBeCloseTo(30, 6)
+    expect(strokeOf(' draw "progress"', { progress: 0.8 }).drawn).toBeCloseTo(80, 6)
+  })
+
+  it('`from` opens a window in the middle (comet trail)', () => {
+    const r = strokeOf(' draw 0.7 from 0.4')
+    expect(r.drawn).toBeCloseTo(30, 6)
+    expect(r.moves).toBe(1) // one piece
+  })
+
+  it('an EMPTY window strokes nothing at all (no zero-length dot under a round cap)', () => {
+    expect(strokeOf(' draw 0').strokes).toBe(0)
+  })
+
+  it('the FILL is untouched — `draw` trims the line, not the shape', () => {
+    const doc = parseProgramFull('size 200 100\nscene {\n  layer "c" {\n    circle 50 50 40 fill #ff0000 stroke #ffffff 4 draw 0.1\n  }\n}')
+    const ctx = mkCtx()
+    renderItems(ctx, doc, resolveLayerAt(doc.layers[0], 0, {}), 0, null, new Set(), { fps: 60 })
+    expect(ctx.state.fill).toBe(1) // the disc is whole…
+    expect(ctx.state.stroke).toBe(1) // …while its outline is a tenth
+    expect(lengthOf(ctx.state.stroked)).toBeCloseTo(2 * Math.PI * 40 * 0.1, 0)
+  })
+
+  it('a shape with an animated extent is NOT render-static (the cache must not freeze it)', () => {
+    const anim = parseProgramFull('size 100 50\nscene {\n  layer "c" { path "M0 0L99 0" nofill stroke #fff 4 draw "p" }\n}')
+    expect(isRenderStatic(anim as never, anim.layers[0].items[0])).toBe(false)
+    const still = parseProgramFull('size 100 50\nscene {\n  layer "c" { path "M0 0L99 0" nofill stroke #fff 4 draw 0.5 }\n}')
+    expect(isRenderStatic(still as never, still.layers[0].items[0])).toBe(true)
+  })
+})

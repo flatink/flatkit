@@ -37,7 +37,7 @@ export type ScriptUnit =
   | { kind: 'use'; name: string } // use "collision" — imports a package
   // "move" interactor (cf. RFC interactors): moves the object to the mouse, writes the position into explicit
   // variables. `drag x, y` (2 axes) · `dragX x` · `dragY y`. Slots: confine (zone) / snap (grid).
-  | { kind: 'interactor'; axis: 'xy' | 'x' | 'y' | 'turn' | 'turnDeg' | 'trace' | 'reveal' | 'link'; varX?: string; varY?: string; varT?: string; confine?: string; grid?: number; enabled?: string; pivot?: { x: number; y: number } }
+  | { kind: 'interactor'; axis: 'xy' | 'x' | 'y' | 'turn' | 'turnDeg' | 'trace' | 'reveal' | 'link'; varX?: string; varY?: string; varT?: string; confine?: string; grid?: number; cells?: string; erase?: boolean; enabled?: string; pivot?: { x: number; y: number } }
   | { kind: 'drop'; over: string; atPointer?: boolean; body: Action[] } // when dropped on Zone [at pointer] { … } — released over a named zone
 
 /** A mechanical repair carried BY the diagnostic: replace [line,col -> endLine,endCol) with `replacement`
@@ -170,7 +170,7 @@ function printUnit(u: ScriptUnit): string {
       const block = (head: string, slots: string[]) => (slots.length ? `${head} {\n${slots.join('\n')}\n}` : head)
       if (u.axis === 'turn' || u.axis === 'turnDeg') return block(`${u.axis} ${u.varX} around ${u.pivot?.x ?? 0},${u.pivot?.y ?? 0}`, [...(u.grid !== undefined ? [INDENT + `snap ${u.grid}`] : []), ...enabledSlot])
       if (u.axis === 'trace') return block(`trace ${u.varX} along ${u.confine}`, [...(u.grid !== undefined ? [INDENT + `tolerance ${u.grid}`] : []), ...enabledSlot])
-      if (u.axis === 'reveal') return block(`reveal ${u.varX}`, [...(u.grid !== undefined ? [INDENT + `brush ${u.grid}`] : []), ...enabledSlot])
+      if (u.axis === 'reveal') return block(`reveal ${u.varX}`, [...(u.grid !== undefined ? [INDENT + `brush ${u.grid}`] : []), ...(u.erase ? [INDENT + 'erase'] : []), ...(u.cells ? [INDENT + `cells ${u.cells}`] : []), ...enabledSlot])
       if (u.axis === 'link') return block(`link ${u.varX}, ${u.varY}, ${u.varT} to ${u.confine}`, [...enabledSlot])
       const kw = u.axis === 'x' ? 'dragX' : u.axis === 'y' ? 'dragY' : 'drag'
       const vars = u.axis === 'x' ? u.varX! : u.axis === 'y' ? u.varY! : `${u.varX}, ${u.varY}`
@@ -184,7 +184,7 @@ function printUnit(u: ScriptUnit): string {
 /** A "block" unit spans several lines ({ … }) → we space it out; declarations/bindings/
  *  labels fit on one line → we stack them with no blank line (otherwise the code looks gappy). */
 const isBlockUnit = (u: ScriptUnit): boolean =>
-  u.kind === 'event' || u.kind === 'frameActions' || u.kind === 'each' || u.kind === 'drop' || (u.kind === 'func' && u.func.kind === 'proc') || (u.kind === 'interactor' && (!!u.confine || u.grid !== undefined || !!u.enabled))
+  u.kind === 'event' || u.kind === 'frameActions' || u.kind === 'each' || u.kind === 'drop' || (u.kind === 'func' && u.func.kind === 'proc') || (u.kind === 'interactor' && (!!u.confine || u.grid !== undefined || !!u.cells || !!u.erase || !!u.enabled))
 
 /**
  * Prints a list of units as DSL source. A blank line between two units ONLY if one of the
@@ -218,7 +218,7 @@ type Mark = { i: number; line: number; col: number }
 /** A comparison between `when` and the `{` — the signature of a condition written where a gesture goes. */
 const CONDITION_AFTER_WHEN = /[<>]|==|!=/
 
-const INTERACTOR_SLOT = /^[^\n]*\b(confine|snap|enabled)\b/
+const INTERACTOR_SLOT = /^[^\n]*\b(confine|snap|tolerance|brush|erase|cells|enabled)\b/
 
 class Parser {
   private i = 0
@@ -282,7 +282,7 @@ class Parser {
     const text = this.s.slice(start, nl === -1 ? this.s.length : nl).trim()
     const m = /^(.*?\{)(.*?)\}\s*$/.exec(text)
     if (!m) return undefined
-    const slots = m[2].trim().split(/\s+(?=(?:confine|snap|enabled)\b)/).map((t) => t.trim()).filter(Boolean)
+    const slots = m[2].trim().split(/\s+(?=(?:confine|snap|tolerance|brush|erase|cells|enabled)\b)/).map((t) => t.trim()).filter(Boolean)
     if (slots.length < 2) return undefined
     return this.lineEdit(`${m[1].trim()}\n${slots.map((t) => '  ' + t).join('\n')}\n}`)
   }
@@ -456,7 +456,7 @@ class Parser {
     // separate them with a decorative `·`, so a reader writes `{ confine to Zone  snap 20 }` on one
     // line and gets `end of line expected` pointing at a column that says nothing about the rule.
     const runOn = INTERACTOR_SLOT.test(this.s.slice(this.i, this.s.indexOf('\n', this.i) + 1 || undefined))
-    this.err(runOn ? 'one option per LINE inside an interactor block — `confine to …`, `snap …` and `enabled …` are statements, not a comma list. Put each on its own line.' : 'end of line expected', undefined, runOn ? this.oneSlotPerLine() : undefined)
+    this.err(runOn ? 'one option per LINE inside an interactor block — `confine to …`, `snap …`, `brush …`, `erase`, `cells …`, `tolerance …` and `enabled …` are statements, not a comma list. Put each on its own line.' : 'end of line expected', undefined, runOn ? this.oneSlotPerLine() : undefined)
     this.skipLine()
   }
 
@@ -1132,14 +1132,17 @@ class Parser {
         return { kind: 'interactor', axis: 'trace', varX: v, confine: path, ...(grid !== undefined ? { grid } : {}), ...(enabled ? { enabled } : {}) }
       }
       case 'reveal': {
-        // `reveal <progress> [{ brush N · enabled <expr> }]` — scratch/wipe: the object IS the revealed zone,
-        // the progress 0..1 climbs (monotonically) as the finger covers its surface.
+        // `reveal <progress> [{ brush N · cells <array> · enabled <expr> }]` — scratch/wipe: the object IS the
+        // revealed zone, the progress 0..1 climbs (monotonically) as the finger covers its surface. `cells`
+        // hands out the grid BEHIND that fraction (1 = cleared), so the author can draw WHERE it was scratched.
         const v = this.outVar()
         if (!v) { this.err('variable name (progress) expected after "reveal"', m); this.recoverBlockOrLine(); return null }
         let grid: number | undefined
+        let cells: string | undefined
+        let erase = false
         let enabled: string | undefined
         this.skipSpace()
-        if (this.peek() === '{') { // slots: { brush N · enabled <expr> }
+        if (this.peek() === '{') { // slots: { brush N · erase · cells <array> · enabled <expr> }
           this.next()
           for (;;) {
             this.skipWs()
@@ -1148,12 +1151,14 @@ class Parser {
             const sm = this.mark()
             const slot = this.word()
             if (slot === 'brush') { const n = this.number(); if (n === null) { this.err('value expected after "brush"', sm); this.skipLine(); continue } grid = n }
+            else if (slot === 'erase') { erase = true } // the runtime rubs the target out where it was scratched
+            else if (slot === 'cells') { const name = this.word(); if (!name) { this.err('array variable name expected after "cells"', sm); this.skipLine(); continue } cells = name }
             else if (slot === 'enabled') { this.skipSpace(); const epos = this.mark(); const ex = this.lineExpr(); if (!ex) { this.err('expression expected after "enabled"', sm); this.skipLine(); continue } this.exprSite(ex, epos); enabled = ex }
-            else { this.err(`unknown slot "${slot}" (expected: brush, enabled)`, sm); this.skipLine(); continue }
+            else { this.err(`unknown slot "${slot}" (expected: brush, erase, cells, enabled)`, sm); this.skipLine(); continue }
             this.endStatement()
           }
         } else this.endStatement()
-        return { kind: 'interactor', axis: 'reveal', varX: v, ...(grid !== undefined ? { grid } : {}), ...(enabled ? { enabled } : {}) }
+        return { kind: 'interactor', axis: 'reveal', varX: v, ...(grid !== undefined ? { grid } : {}), ...(erase ? { erase } : {}), ...(cells ? { cells } : {}), ...(enabled ? { enabled } : {}) }
       }
       case 'link': {
         // `link <endX>, <endY>, <target> to <Targets> [{ enabled <expr> }]` — pulls an elastic thread toward a

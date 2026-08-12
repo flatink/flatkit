@@ -35,6 +35,31 @@ path "…" nofill stroke #888 2                                   # outline only
 rect 0 0 40 40 fill #00aaff opacity 0.5                         # 0..1 (8-digit hex alpha also works)
 ```
 
+### Drawing a stroke progressively (`draw`)
+
+`draw` sets **how much of an outline is stroked**, as a fraction of its **arc length** — ink that appears
+behind a finger, a signature that writes itself, a route that grows:
+
+```
+path "…" nofill stroke #fff 18 cap round draw 0.35          # the first 35 % of the LINE's length
+path "…" nofill stroke #fff 18 cap round draw "progress"    # …driven by a variable, every frame
+path "…" nofill stroke #fff 18 draw "p" from "p - 0.15"     # a WINDOW: a comet trail chasing `p`
+```
+
+- `draw <to>` = the end of the drawn window (`1` = whole, the default), `from <start>` its beginning (`0`
+  by default). A **quoted** value is an expression re-evaluated per frame; a bare number is fixed. Both are
+  clamped to 0..1, and `from > to` draws nothing.
+- The measure is **arc length**, the same one [`trace`](behavior-and-interactions.md#interactors) reports
+  and text-on-path's `start` uses. So `draw = <the trace's progress>` puts the ink exactly under the
+  finger — on a steep slope, where an x-driven mask drifts by whole stroke-widths.
+- Several subpaths are traversed **in order**: the first is drawn whole before the next starts (a letter's
+  stem, then its dot).
+- It trims the **stroke only**. The fill, the gradient box, the bbox and the hit shape stay those of the
+  whole path — so a half-drawn outline over a full disc is what you asked for, and an ink trail that must
+  not catch the pointer takes `nohit`.
+- `draw` on a shape **without a stroke** has nothing to trim; `flatc --check` says so rather than letting
+  you animate an invisible thing.
+
 ### Paints (gradients)
 
 ```
@@ -82,6 +107,11 @@ mask layer "Window" { circle 60 60 50 fill #fff  layer "c" { … } }  // arbitra
   framing) — it's a visual cut, not a hit/layout change.
 - For an **arbitrary** clip shape, use a **`mask` layer**: its material (the shapes drawn directly in it)
   clips its **child layers**. See the [gotchas](dsl-gotchas.md) for the clip/mask details.
+- ⚠️ A mask is a **clipping path, evaluated even-odd — not an alpha mask.** Only the *outline* of its
+  material counts: a `fill radial(…)` in it gives a hard edge (no soft falloff), a `filter blur` on it
+  changes nothing, and two overlapping shapes **cancel** where they overlap (a third brings it back).
+  A soft or accumulating reveal is not a mask — animate the matter itself (a piloted group as the mask's
+  material, or `draw` on a stroke).
 
 ## Text
 

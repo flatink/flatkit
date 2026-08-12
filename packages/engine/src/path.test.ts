@@ -14,6 +14,8 @@ import {
   lerpPath,
   makePathSampler,
   normalizeClosedForText,
+  trimPath,
+  pathArcLength,
   type Path,
 } from './path'
 import { circlePath, parsePathData } from './svgPath'
@@ -297,5 +299,77 @@ describe('normalizeClosedForText (top-anchored, tangent +x for closed sources)',
   it('open path is returned unchanged (author owns orientation)', () => {
     const open = parsePathData('M0 80 C 120 0 360 0 480 80')
     expect(normalizeClosedForText(open)).toBe(open) // same reference, no reparam
+  })
+})
+
+// `draw`: how much of an outline is stroked, measured in ARC LENGTH — the same measure `samplePathAt` /
+// `projectToPath` (hence a `trace` interactor's progress) walk, so ink under a finger lands where the
+// finger is, not where its x-coordinate is.
+describe('trimPath (stroke extent by arc length)', () => {
+  const len = (pts: { x: number; y: number }[]) => pts.slice(1).reduce((s, p, i) => s + Math.hypot(p.x - pts[i].x, p.y - pts[i].y), 0)
+
+  it('a straight line: the window is measured in length, from the start', () => {
+    const line = parsePathData('M0 0L100 0')
+    expect(pathArcLength(line)).toBeCloseTo(100, 6)
+    const half = trimPath(line, 0, 0.5)
+    expect(half).toHaveLength(1)
+    expect(half[0].pts[0]).toEqual({ x: 0, y: 0 })
+    expect(half[0].pts[half[0].pts.length - 1].x).toBeCloseTo(50, 6)
+    const mid = trimPath(line, 0.25, 0.75) // comet window: both ends cut
+    expect(mid[0].pts[0].x).toBeCloseTo(25, 6)
+    expect(mid[0].pts[mid[0].pts.length - 1].x).toBeCloseTo(75, 6)
+  })
+
+  it('the cut lands where the SAME arc-length parameter puts `samplePathAt` (the `trace` measure)', () => {
+    const curve = parsePathData('M0 300C250 100 350 500 500 300') // the shape of a tracing exercise
+    for (const t of [0.1, 0.37, 0.5, 0.83]) {
+      const tip = trimPath(curve, 0, t)[0].pts.at(-1)!
+      const ref = samplePathAt(curve, t).point
+      expect(Math.hypot(tip.x - ref.x, tip.y - ref.y)).toBeLessThan(0.5) // < half a pixel, i.e. under a stroke width
+    }
+  })
+
+  it('subpaths are traversed IN ORDER (the first is drawn whole before the next starts)', () => {
+    const two = parsePathData('M0 0L100 0M0 50L100 50') // two 100 px strokes, total 200
+    expect(pathArcLength(two)).toBeCloseTo(200, 6)
+    expect(trimPath(two, 0, 0.25)).toHaveLength(1) // still inside the FIRST subpath
+    const most = trimPath(two, 0, 0.75)
+    expect(most).toHaveLength(2)
+    expect(len(most[0].pts)).toBeCloseTo(100, 6) // first: whole
+    expect(len(most[1].pts)).toBeCloseTo(50, 6) // second: half
+  })
+
+  it('a subpath inside the window comes back untouched, and a CLOSED one keeps its `closed`', () => {
+    const ring = circlePath(0, 0, 20)
+    const whole = trimPath(ring, 0, 1)
+    expect(whole).toHaveLength(1)
+    expect(whole[0].closed).toBe(true) // full ring → joins, instead of two round caps meeting
+    expect(trimPath(ring, 0, 0.5)[0].closed).toBe(false) // a cut piece is an open stroke
+  })
+
+  it('an empty or inverted window draws nothing; a degenerate path is safe', () => {
+    const line = parsePathData('M0 0L100 0')
+    expect(trimPath(line, 0, 0)).toEqual([])
+    expect(trimPath(line, 0.8, 0.2)).toEqual([]) // from > to
+    expect(trimPath({ subpaths: [] }, 0, 1)).toEqual([])
+    expect(pathArcLength({ subpaths: [] })).toBe(0)
+  })
+
+  it('out-of-range fractions are clamped (an expression may overshoot)', () => {
+    const line = parsePathData('M0 0L100 0')
+    expect(len(trimPath(line, -5, 42)[0].pts)).toBeCloseTo(100, 6)
+  })
+
+  it('a NON-FINITE bound falls back to the default window instead of poisoning the geometry', () => {
+    // An untrusted `.flatpack` can carry `draw: NaN`, and an expression can divide by zero for one frame.
+    // NaN through the arithmetic would reach `moveTo(NaN, NaN)` — a stroke that vanishes with no error.
+    const line = parsePathData('M0 0L100 0')
+    for (const bad of [NaN, Infinity, -Infinity, undefined as unknown as number]) {
+      const pieces = trimPath(line, bad, bad)
+      expect(pieces).toHaveLength(1)
+      expect(len(pieces[0].pts)).toBeCloseTo(100, 6) // from → 0, to → 1: the whole outline
+      expect(pieces[0].pts.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))).toBe(true)
+    }
+    expect(len(trimPath(line, NaN, 0.5)[0].pts)).toBeCloseTo(50, 6) // only the broken bound falls back
   })
 })

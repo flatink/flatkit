@@ -16,12 +16,12 @@ import { regionBBox, type BBox } from '@flatkit/engine/bbox'
 import { regionPaint, resolveStopColor, resolveTintColor, type Paint, type Tint } from '@flatkit/engine/paint'
 import { cssFilterString, type Filter } from '@flatkit/engine/filters'
 import { containerLayers, getSymbol, isContainer, isGroup, isInstance, isPoseable, isText, isImage, isRegion, layerStructure } from '@flatkit/engine/layers'
-import { pathToBezier, transformPath, makePathSampler, pathBBox, type Path } from '@flatkit/engine/path'
+import { pathToBezier, transformPath, makePathSampler, pathBBox, trimPath, type Path } from '@flatkit/engine/path'
 import { type BaseOf } from '@flatkit/engine/timeline'
 import { resolveInstanceParams, instanceFrames } from '@flatkit/engine/params'
 import { resolveLayerAt } from '@flatkit/engine/cel'
 import type { ExprContext } from '@flatkit/engine/expr'
-import { apply, compose, IDENTITY, type Transform } from '@flatkit/engine/transform'
+import { apply, compose, invert, IDENTITY, type Transform } from '@flatkit/engine/transform'
 
 /**
  * Render context for a scope: fps (for `time` expressions) + expression context.
@@ -62,7 +62,15 @@ export type RenderCtx = {
   // Absent (editor/preview) = no cache. `imageEpoch` moves on every decoded image -> invalidates the cache.
   filterCache?: Map<string, FilterCacheEntry>
   imageEpoch?: number
+  // PLAYER: `reveal … erase` — what the child has SCRATCHED AWAY, per target item id. The renderer rubs
+  // those discs out of the item (see `compositeScratched`). Absent (the ordinary case, and every editor
+  // path) = nothing to erase, and the whole branch is skipped.
+  scratched?: Map<string, ScratchMask>
 }
+
+/** A `reveal` target's scratched-away area, in WORLD coordinates: the grid it ticks (`cells`, cleared cell
+ *  indices — a LIVE set, mutated by the gesture) plus the geometry to place them. */
+export type ScratchMask = { cells: ReadonlySet<number>; minX: number; minY: number; cell: number; cols: number }
 
 /** Entry of the filtered composite cache: FINAL bitmap (content+tint+filter) in screen px at (ox,oy).
  *  `canvas` absent = we have only RECORDED the signature (1 observation frame before baking) -- used
@@ -240,7 +248,7 @@ function layersStatic(doc: Doc, layers: Layer[], seen: Set<string>): boolean {
 export function isRenderStatic(doc: Doc, it: Item, seen: Set<string> = new Set()): boolean {
   const memo = staticMemo.get(it)
   if (memo !== undefined) return memo // structural result (stable as long as the doc does not change)
-  if ((isText(it) && (it.bind || it.textPath?.startExpr || it.textPath?.spacingExpr)) || hasExpr(it) || hasMod(it)) { staticMemo.set(it, false); return false }
+  if ((isText(it) && (it.bind || it.textPath?.startExpr || it.textPath?.spacingExpr)) || (isRegion(it) && (it.drawExpr || it.drawFromExpr)) || hasExpr(it) || hasMod(it)) { staticMemo.set(it, false); return false }
   let result = true
   if (isInstance(it)) {
     if (seen.has(it.symbolId)) return true // cycle: DO NOT memoize (depends on `seen`)
@@ -408,6 +416,8 @@ function compositeMasked(
   blit: GlobalCompositeOperation,
   drawContent: (octx: CanvasRenderingContext2D) => void,
   drawMatter: (octx: CanvasRenderingContext2D) => void,
+  matterOp: GlobalCompositeOperation = 'destination-in', // KEEP under the matter; `destination-out` = RUB OUT under it (`reveal … erase`)
+  what = 'mask', // named in the no-DOM warning
 ): void {
   const cw = ctx.canvas.width
   const ch = ctx.canvas.height
@@ -420,14 +430,14 @@ function compositeMasked(
     if (ow >= cw && oh >= ch) { ox = 0; oy = 0; ow = cw; oh = ch }
   }
   const scratch = acquireScratch(ow, oh, cw, ch)
-  if (!scratch) { warnScratchless('mask'); ctx.save(); ctx.globalAlpha *= opacity; drawContent(ctx); ctx.restore(); return }
+  if (!scratch) { warnScratchless(what); ctx.save(); ctx.globalAlpha *= opacity; drawContent(ctx); ctx.restore(); return }
   const octx = scratch.ctx
   try {
     const dev = ctx.getTransform()
     octx.setTransform(dev.a, dev.b, dev.c, dev.d, dev.e - ox, dev.f - oy) // off-screen origin = (ox,oy) screen
     drawContent(octx)
     octx.setTransform(dev.a, dev.b, dev.c, dev.d, dev.e - ox, dev.f - oy)
-    octx.globalCompositeOperation = 'destination-in' // keep the content only under the matter's alpha
+    octx.globalCompositeOperation = matterOp // 'destination-in' = keep only under the matter's alpha; 'destination-out' = rub it out
     drawMatter(octx)
     octx.globalCompositeOperation = 'source-over'
     ctx.save()
@@ -439,6 +449,48 @@ function compositeMasked(
   } finally {
     releaseScratch()
   }
+}
+
+const TAU = Math.PI * 2
+
+/**
+ * `reveal … erase`: draw an item MINUS what the child has scratched away. The gesture already ticks a grid
+ * of cells; here each cleared cell is rubbed out as a disc of radius `brush` around its centre — overlapping
+ * discs simply union (`destination-out` accumulates alpha), which is the thing a `mask` layer cannot do
+ * (its matter is an even-odd clip path, so two overlapping stamps CANCEL).
+ *
+ * The mask lives in WORLD coordinates while the context is in the item's PARENT space, so the punch runs
+ * under `ctm ∘ parent⁻¹` — a veil nested in a transformed group is rubbed where the finger actually went,
+ * and a scaled one gets scaled discs. Erasing is VISUAL only: the zone stays grabbable (that is what keeps
+ * the scratching alive over the cleared area), exactly like `clip`.
+ */
+function compositeScratched(
+  ctx: CanvasRenderingContext2D,
+  devBBox: BBox | null,
+  mask: ScratchMask,
+  parent: Transform,
+  drawContent: (octx: CanvasRenderingContext2D) => void,
+): void {
+  compositeMasked(ctx, 1, devBBox, 'source-over', drawContent, (octx) => {
+    const dev = matOf(octx.getTransform()) // parent space → buffer (compositeMasked re-applied it)
+    const world = compose(dev, invert(parent)) // …composed back to WORLD, where the grid is measured
+    octx.setTransform(world.a, world.b, world.c, world.d, world.e, world.f)
+    octx.fillStyle = '#000' // any opaque colour: only its ALPHA is used by `destination-out`
+    // One disc per CLEARED CELL — so what disappears is exactly what the fraction counts. The radius covers
+    // the cell (side × 0.75 > half a diagonal) so neighbours merge with no lattice gaps, and no wider: rub
+    // the full brush radius around each centre and the hole grows to twice the finger.
+    // ALL the discs go into ONE path and ONE fill: a fully scratched full-frame veil is ~1000 cells, and
+    // that is a thousand fill calls per frame otherwise. Same winding for every disc → they union.
+    const r = mask.cell * 0.75
+    octx.beginPath()
+    for (const idx of mask.cells) {
+      const cx = mask.minX + ((idx % mask.cols) + 0.5) * mask.cell
+      const cy = mask.minY + (Math.floor(idx / mask.cols) + 0.5) * mask.cell
+      octx.moveTo(cx + r, cy) // start each subpath on its own circle (no connecting line between discs)
+      octx.arc(cx, cy, r, 0, TAU)
+    }
+    octx.fill()
+  }, 'destination-out', 'erase')
 }
 
 /** Does a mask's matter contain text/an image? (-> alpha clipping rather than vector). */
@@ -515,12 +567,12 @@ function renderContainerChildren(
     // the subtree → nested loops play under a pinned state. `clockFrame: clock` carries that forward.
     const childFps = subFps(sym?.timeline?.fps, rctx)
     const { pose, clock } = instanceFrames(sym, it, clockOf(frame, rctx), rctx.freezeNested, subExpr, monoFrameOf(childFps, rctx))
-    renderLayers(ctx, doc, containerLayers(doc, it), pose, hidden, seen, { fps: childFps, expr: subExpr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, paramsFor: rctx.paramsFor, clockFrame: clock, monoTime: rctx.monoTime, colorParams: color, statePath: rctx.channelValue ? (rctx.statePath ?? '') + it.id + '/' : undefined, channelValue: rctx.channelValue }, parent, depth + 1)
+    renderLayers(ctx, doc, containerLayers(doc, it), pose, hidden, seen, { fps: childFps, expr: subExpr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, paramsFor: rctx.paramsFor, clockFrame: clock, monoTime: rctx.monoTime, colorParams: color, scratched: rctx.scratched, statePath: rctx.channelValue ? (rctx.statePath ?? '') + it.id + '/' : undefined, channelValue: rctx.channelValue }, parent, depth + 1)
   } else if (isGroup(it) && it.timeline) {
     // Local symbol (group with its own timeline) = a nested timeline too → rides the advancing clock so it
     // keeps playing under a state-pinned ancestor (frozen only in the editor's freezeNested mode).
     const groupFrame = rctx.freezeNested ? 0 : clockOf(frame, rctx)
-    renderLayers(ctx, doc, it.layers, groupFrame, hidden, seen, { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, clockFrame: groupFrame, monoTime: rctx.monoTime, statePath: rctx.statePath, channelValue: rctx.channelValue }, parent, depth + 1)
+    renderLayers(ctx, doc, it.layers, groupFrame, hidden, seen, { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, clockFrame: groupFrame, monoTime: rctx.monoTime, scratched: rctx.scratched, statePath: rctx.statePath, channelValue: rctx.channelValue }, parent, depth + 1)
   } else {
     // Group without a timeline = same scope as the parent (not a sub-scope) -> follows the scope's frame.
     renderLayers(ctx, doc, containerLayers(doc, it), frame, hidden, seen, rctx, parent, depth + 1)
@@ -721,7 +773,17 @@ export function renderItems(
     const pm = rctx.preview?.ids.has(it.id) ? rctx.preview.m : null
     if (pm) ctx.save()
     if (pm) applyTransform(ctx, pm)
-    renderOneItem(ctx, doc, it, frame, hidden, seen, rctx, opacity, parent, depth)
+    // `reveal … erase`: the veil is drawn minus what the finger already rubbed out. Isolated off-screen so
+    // the punch takes away the VEIL only, never what is drawn under it.
+    const scratched = rctx.scratched?.get(it.id)
+    if (scratched?.cells.size) {
+      const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
+      accumDevBBox(doc, [it], frame, matOf(ctx.getTransform()), seen, acc, rctx)
+      compositeScratched(ctx, acc.minX <= acc.maxX ? acc : null, scratched, parent, (octx) =>
+        renderOneItem(octx, doc, it, frame, hidden, seen, rctx, opacity, parent, depth))
+    } else {
+      renderOneItem(ctx, doc, it, frame, hidden, seen, rctx, opacity, parent, depth)
+    }
     if (pm) ctx.restore()
     if (op) ctx.restore()
   }
@@ -801,14 +863,44 @@ function renderOneItem(
   }
 }
 
+/** Does this region stroke only a WINDOW of its outline (`draw`/`from`)? `null` = the whole thing, the
+ *  case that must stay free. A non-finite bound is left to `trimPath`, which falls back to the default. */
+function strokeWindow(reg: Region): { from: number; to: number } | null {
+  const to = reg.draw ?? 1
+  const from = reg.drawFrom ?? 0
+  return from <= 0 && to >= 1 ? null : { from, to }
+}
+
+/**
+ * The path actually STROKED under a `draw` window: the piece of the outline between two ARC-LENGTH
+ * fractions (ink appearing behind a finger). `null` = nothing to stroke (empty window). The fill, the
+ * gradient box and the hit shape keep using the WHOLE path: `draw` trims the line, not the shape.
+ */
+function trimmedPath(reg: Region, w: { from: number; to: number }): Path2D | null {
+  const pieces = trimPath(reg.path, w.from, w.to)
+  if (!pieces.length) return null
+  const p = new Path2D()
+  for (const { pts, closed } of pieces) {
+    p.moveTo(pts[0].x, pts[0].y)
+    for (let i = 1; i < pts.length; i++) p.lineTo(pts[i].x, pts[i].y)
+    if (closed) p.closePath() // a subpath drawn WHOLE keeps its join; a cut piece stays open (two caps)
+  }
+  return p
+}
+
 /** Paints a region (fill + outline) into `c`. Module function (zero allocation per call). */
 function paintRegion(c: CanvasRenderingContext2D, reg: Region, colorParams?: Record<string, string>) {
-  const path = regionPath(reg)
-  if (!reg.noFill) {
+  const trim = strokeWindow(reg)
+  // The whole outline is needed to FILL, and to stroke when there is no window — so an ink trail
+  // (`nofill` + `draw`, the tracing case, rebuilt every frame) never pays for it.
+  const path = !reg.noFill || !trim ? regionPath(reg) : null
+  if (!reg.noFill && path) {
     c.fillStyle = fillStyleFor(c, reg, colorParams)
     c.fill(path, 'evenodd')
   }
   if (reg.stroke) {
+    const line = trim ? trimmedPath(reg, trim) : path
+    if (!line) return
     const s = reg.stroke
     c.lineWidth = s.width
     c.lineCap = s.cap ?? 'round'
@@ -817,7 +909,7 @@ function paintRegion(c: CanvasRenderingContext2D, reg: Region, colorParams?: Rec
     c.setLineDash(s.dash ?? [])
     const paramColor = reg.strokeParam ? colorParams?.[reg.strokeParam] : undefined // `stroke <param>` → instance color
     c.strokeStyle = paramColor || paintStyle(c, s.paint, regionBBox(reg), reg.color, colorParams) // empty/undefined → literal paint (gradient stops resolved per param)
-    c.stroke(path)
+    c.stroke(line)
   }
 }
 

@@ -31,6 +31,7 @@ fill #rrggbb | #rrggbbaa · nofill
 fill linear(<angle>, 0:#…, 1:#…)           // angle: 0 = →, 90 = ↓ ; stops are offset:color
 fill radial(<cx>, <cy>, <r>, 0:#…, 1:#…)   // cx/cy/r as 0..1 of the box
 stroke <paint> <width> [cap butt|round|square] [join miter|round|bevel] [miter <n>] [dash a,b]
+draw <0..1> [from <0..1>]                  // how much of the OUTLINE is stroked, by ARC LENGTH; "quoted" = per-frame expression
 opacity <0..1>                             // opacities MULTIPLY down the tree
 
 ## Filters — on any item, no wrapper group needed

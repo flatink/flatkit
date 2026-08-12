@@ -38,6 +38,8 @@ group "Name" at x,y pivot px,py { layer "c" { … } }      // nests its own laye
 instance "Symbol" as "Name" at x,y                        // place a symbol from a .flat
 ```
 Style: `fill #rrggbb | nofill` · `stroke #rgb <w> [cap round][join round][dash a,b]` · `opacity 0..1` ·
+`draw <0..1> [from <0..1>]` (stroke extent by ARC LENGTH; quoted = expression: `draw "avance"` = ink drawn
+behind a finger, the measure `trace` reports) ·
 `fill linear(90, 0:#a, 1:#b)` (0=→,90=↓) · `fill radial(0.5,0.5,0.5, 0:#fff,1:#000)` ·
 `filter glow <blur> <color> | shadow <dx> <dy> <blur> <color> | blur <r>` · `tint <color> <amt>` · `nohit`.
 
@@ -73,7 +75,10 @@ Drag/interactors (write into your vars; all take `{ enabled <expr> }`):
 ```
 drag x, y [{ confine to <Zone>
              snap <grid> }]   // ONE OPTION PER LINE. Then USE them: x = px, y = py
-turn <angle> around x,y    ·    trace <progress> along <Group>    ·    reveal <progress>
+turn <angle> around x,y    ·    trace <progress> along <Group>    // pair with `draw "<progress>"` on the SAME path data
+reveal <progress> [{ brush <px>
+                     erase              // the runtime rubs the target out where scratched (a scratch card = a grey rect + this)
+                     cells <array> }]   // fraction + WHERE: cells[row*cols+col] = 1, cols = ceil(zone_w/brush)
 link endX,endY,target to <Group>     // target = hit index 1..n (0=none), WORLD coords
   // link draws NO thread. A bar drawn from its own origin, then:
   //   rotation = angle(srcX, srcY, endX, endY)   scaleX = dist(srcX, srcY, endX, endY) / <drawn length>

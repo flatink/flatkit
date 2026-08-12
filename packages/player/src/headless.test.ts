@@ -369,3 +369,79 @@ describe('headless -- scratch / connect (semantic gestures for reveal/link)', ()
     expect(() => playHeadless(doc, [{ type: 'connect', source: 'Source', target: 'Ghost' }])).toThrow(/Ghost.*not found/)
   })
 })
+
+// `reveal … cells <array>`: the grid BEHIND the fraction — WHERE the finger passed, so the author can draw
+// the cleared zone instead of recomputing it beside the interactor.
+describe('headless -- reveal cells (the scratched grid)', () => {
+  // A 100x100 veil at 50,50 → world 0..100; brush 25 → a 4x4 grid, cell centers at 12.5 / 37.5 / 62.5 / 87.5.
+  // A pointer in a corner of the zone is within the brush of exactly ONE cell center → unambiguous indices.
+  const veilProgram = (cellBody: string) => [
+    'size 200 200', 'var covered = 0', 'var grid = fill(16, 0)',
+    'scene {', '  layer "L" {',
+    `    group "Veil" at 50,50 { layer "c" { ${cellBody} } }`,
+    '  }', '}', '',
+    'object "Veil" {', '  reveal covered {', '    brush 25', '    cells grid', '  }', '}',
+  ].join('\n')
+  const cleared = (grid: unknown) => (grid as number[]).flatMap((v, i) => (v ? [i] : []))
+
+  it('writes 1 where the brush passed, indexed row * cols + col', () => {
+    const doc = parseProgramFull(veilProgram('rect -50 -50 100 100 fill #999999')) as unknown as Doc
+    const res = playHeadless(doc, [
+      { type: 'down', x: 1, y: 1 },
+      { type: 'move', x: 1, y: 1 }, // top-left corner → cell (0,0) = index 0
+      { type: 'move', x: 99, y: 1 }, // top-right → cell (0,3) = index 3
+      { type: 'move', x: 1, y: 99 }, // bottom-left → cell (3,0) = index 12
+      { type: 'up', x: 1, y: 99 },
+    ])
+    expect(cleared(res.vars.grid)).toEqual([0, 3, 12])
+    expect(res.vars.covered).toBeCloseTo(3 / 16, 6) // the fraction agrees with the grid
+  })
+
+  it('accumulates across strokes, and a cleared cell is never written back to 0 (monotone, like the fraction)', () => {
+    const doc = parseProgramFull(veilProgram('rect -50 -50 100 100 fill #999999')) as unknown as Doc
+    const res = playHeadless(doc, [
+      { type: 'down', x: 1, y: 1 }, { type: 'move', x: 1, y: 1 }, { type: 'up', x: 1, y: 1 },
+      { type: 'down', x: 99, y: 99 }, { type: 'move', x: 99, y: 99 }, { type: 'up', x: 99, y: 99 },
+    ])
+    expect(cleared(res.vars.grid)).toEqual([0, 15]) // the first stroke's cell survived the second grab
+    expect(res.vars.covered).toBeCloseTo(2 / 16, 6)
+  })
+
+  it('a grid declared too SHORT drops the writes past its end instead of throwing (--check states the size)', () => {
+    const doc = parseProgramFull(veilProgram('rect -50 -50 100 100 fill #999999').replace('fill(16, 0)', 'fill(2, 0)')) as unknown as Doc
+    const res = playHeadless(doc, [{ type: 'down', x: 99, y: 99 }, { type: 'move', x: 99, y: 99 }, { type: 'up', x: 99, y: 99 }])
+    expect(res.vars.grid).toEqual([0, 0]) // index 15 is past the end — dropped, gesture unharmed
+    expect(res.vars.covered).toBeCloseTo(1 / 16, 6) // the fraction still counts it
+  })
+
+  it('the grid is re-synced with the coverage when a grab starts (the two can never disagree)', () => {
+    // The array is writable from the scene, the coverage is monotone and has no reset — so a scene that
+    // zeroes a slot would otherwise show an intact cell over a zone the interactor counts as cleared.
+    // Zeroed ONCE, after the first stroke (the guard), and restored when the next grab opens.
+    const doc = parseProgramFull(veilProgram('rect -50 -50 100 100 fill #999999')
+      .replace('var covered = 0', 'var covered = 0\nvar wiped = 0')
+      .replace('object "Veil" {', ['object "Veil" {', '  when released {', '    if wiped < 0.5 {', '      wiped = 1', '      grid[0] = 0', '    }', '  }'].join('\n'))) as unknown as Doc
+    const res = playHeadless(doc, [
+      { type: 'down', x: 1, y: 1 }, { type: 'move', x: 1, y: 1 }, { type: 'up', x: 1, y: 1 }, // clears cell 0, the handler zeroes the slot…
+      { type: 'down', x: 99, y: 99 }, { type: 'move', x: 99, y: 99 }, { type: 'up', x: 99, y: 99 },
+    ])
+    expect(cleared(res.vars.grid)).toEqual([0, 15]) // …and the next grab restored it from the coverage
+  })
+
+  it('the veil stays grabbable where it has already been erased (the gesture does not stall)', () => {
+    // The cells ARE the grid: each fades out as it is cleared (`opacity = 1 - grid[i]`), which is the whole
+    // point of `cells` — and an item at opacity 0 lets the pointer through. The second stroke STARTS on an
+    // already-cleared cell: without the reveal ZONE it would grab nothing and the scratching would stop
+    // dead, on a scene that looks perfectly normal.
+    const at = (i: number) => ({ x: -50 + (i % 4) * 25 + 12.5, y: -50 + Math.floor(i / 4) * 25 + 12.5 })
+    const cells = Array.from({ length: 16 }, (_, i) => `group "C${i}" at ${at(i).x},${at(i).y} { layer "c" { rect -12.5 -12.5 25 25 fill #999999 } }`).join(' ')
+    const fades = Array.from({ length: 16 }, (_, i) => `object "C${i}" {\n  opacity = 1 - grid[${i}]\n}`).join('\n\n')
+    const doc = parseProgramFull(`${veilProgram(cells)}\n\n${fades}`) as unknown as Doc
+    const res = playHeadless(doc, [
+      { type: 'down', x: 1, y: 1 }, { type: 'move', x: 1, y: 1 }, { type: 'up', x: 1, y: 1 }, // clears cell 0
+      { type: 'down', x: 1, y: 1 }, { type: 'move', x: 99, y: 1 }, { type: 'up', x: 99, y: 1 }, // starts ON the cleared cell
+    ])
+    expect(cleared(res.vars.grid)).toEqual([0, 3]) // the second stroke landed
+    expect(res.vars.covered).toBeCloseTo(2 / 16, 6)
+  })
+})

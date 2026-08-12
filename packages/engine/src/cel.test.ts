@@ -551,6 +551,37 @@ describe('cel — text-on-path animated channels (phase 3)', () => {
   })
 })
 
+describe('cel — animated stroke extent (`draw "<expr>"`)', () => {
+  const ink = (extra: object): Region => ({ ...region('ink'), stroke: { width: 8, paint: { type: 'solid', color: '#fff' } }, noFill: true, ...extra })
+  const drawOf = (item: unknown) => (item as { draw?: number }).draw
+  const fromOf = (item: unknown) => (item as { drawFrom?: number }).drawFrom
+
+  it('resolves to a numeric `draw` per frame, from a scene variable (the finger\'s progress)', () => {
+    const l = layer([ink({ drawExpr: 'progress' })])
+    expect(drawOf(resolveLayerAt(l, 0, { ctx: { progress: 0.4 } })[0])).toBeCloseTo(0.4)
+    expect(drawOf(resolveLayerAt(l, 0, { ctx: { progress: 0.9 } })[0])).toBeCloseTo(0.9)
+  })
+
+  it('`from` animates too (comet window), and an invalid expression keeps the static value', () => {
+    const l = layer([ink({ drawExpr: 'frame / 100', drawFromExpr: 'frame / 100 - 0.2' })])
+    const at50 = resolveLayerAt(l, 50, { ctx: {} })[0]
+    expect(drawOf(at50)).toBeCloseTo(0.5)
+    expect(fromOf(at50)).toBeCloseTo(0.3)
+    expect(drawOf(resolveLayerAt(layer([ink({ drawExpr: '(((', draw: 0.25 })]), 3, { ctx: {} })[0])).toBeCloseTo(0.25)
+  })
+
+  it('a shape with no animated extent is returned as-is (same reference, zero cost)', () => {
+    const items = [ink({ draw: 0.5 })]
+    expect(resolveLayerAt(layer(items), 5, { ctx: {} })[0]).toBe(items[0])
+  })
+
+  it('resolves in the MATTER of an animated (cel) layer too, not only on a static one', () => {
+    const matter = [ink({ drawExpr: 'progress' })]
+    const cels = [{ frame: 0, poses: [], matter }] as unknown as Cel[]
+    expect(drawOf(resolveLayerAt(layer([], cels), 0, { ctx: { progress: 0.6 } })[0])).toBeCloseTo(0.6)
+  })
+})
+
 describe('cel — pose patch semantics + rotate/scale sugar (degrees, around pivot)', () => {
   const gAt = (id: string, e: number, f: number, pivot?: { x: number; y: number }): Group =>
     ({ id, kind: 'group', name: id, transform: translation(e, f), layers: [], ...(pivot ? { pivot } : {}) })

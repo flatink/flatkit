@@ -18,14 +18,14 @@ import { importedFunctions } from '@flatkit/engine/stdlib'
 import { EXPR_CHANNELS } from '@flatkit/engine/timeline'
 import { objectNames } from '@flatkit/engine/sceneRefs'
 import { behaviorRegions } from '@flatkit/engine/flatFormat'
-import { itemBBox, dropZoneBounds, transformBBox } from '@flatkit/engine/groups'
+import { itemBBox, itemBoundsById, dropZoneBounds, transformBBox } from '@flatkit/engine/groups'
 import { IDENTITY, apply, compose } from '@flatkit/engine/transform'
 import { makePathSampler } from '@flatkit/engine/path'
 import { bboxIntersects } from '@flatkit/engine/bbox'
 import { lint, localVariables, type LintContext } from './lint'
 import { forEachAction, forEachExpression } from './docWalk'
 import { parseUnits } from '@flatkit/engine/dsl'
-import type { Image, Item, Layer, ParamDef, SymbolDef, Text, Transform } from '@flatkit/types'
+import type { Image, Item, Layer, ParamDef, Region, SymbolDef, Text, Transform } from '@flatkit/types'
 
 /** Rebuilds the "program" text of a scope (imports + variables + functions + scene cycle
  *  + one `object "Name" { … }` block per scripted container with a unique name). Pure, round-trip via printUnits. */
@@ -198,7 +198,7 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
     forEachAction(doc, (a) => { for (const v of Object.values(a)) if (typeof v === 'string') used.push(v) })
     // An interactor writes its variables through named SLOTS rather than an expression, and guards itself
     // with `enabled` -- neither is an expression the walkers see. That guard was the reported case.
-    for (const i of doc.interactors ?? []) used.push(i.varX ?? '', i.varY ?? '', i.varT ?? '', i.enabled ?? '')
+    for (const i of doc.interactors ?? []) used.push(i.varX ?? '', i.varY ?? '', i.varT ?? '', i.cells ?? '', i.enabled ?? '')
     const allText = used.join('\n')
     for (const name of names0) {
       if (!new RegExp(`(?<![\\w-])${escapeRe(name)}(?![\\w-])`).test(allText))
@@ -281,6 +281,8 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
   out.push(...docPaintParamWarnings(doc))
   out.push(...docCelLayerWarnings(doc))
   out.push(...docLayoutWarnings(doc))
+  out.push(...docRevealCellWarnings(doc))
+  out.push(...docDrawWarnings(doc))
   return out
 }
 
@@ -333,6 +335,55 @@ export function docCelLayerWarnings(doc: Doc): { scope: string; diag: Diagnostic
   }
   checkScope('scene', doc.layers)
   for (const s of doc.symbols) checkScope(s.name, s.layers)
+  return out
+}
+
+/**
+ * `reveal <p> { cells <array> }` — the grid the player writes into is DERIVED (zone bbox ÷ brush), so the
+ * one number the author cannot guess is how many cells to declare. An array of the wrong length loses the
+ * writes past its end IN SILENCE (the veil clears where nothing shows). So: state the geometry, every time
+ * the sizes disagree, and name the exact declaration to write.
+ */
+export function docRevealCellWarnings(doc: Doc): { scope: string; diag: Diagnostic }[] {
+  const out: { scope: string; diag: Diagnostic }[] = []
+  for (const it of doc.interactors ?? []) {
+    if (it.axis !== 'reveal' || !it.cells) continue
+    const who = itemNameById(doc, it.targetId) ?? it.targetId
+    const declared = Object.hasOwn(doc.variables ?? {}, it.cells) ? doc.variables?.[it.cells] : undefined // hasOwn: a name like `constructor` is not a declaration
+    const b = itemBoundsById(doc, it.targetId)
+    if (!b) continue // the target itself does not resolve — `object "X"` on nothing is already reported
+    const brush = it.grid && it.grid > 0 ? it.grid : 24 // same default as the player's grid
+    const cols = Math.max(1, Math.ceil((b.maxX - b.minX) / brush))
+    const rows = Math.max(1, Math.ceil((b.maxY - b.minY) / brush))
+    const n = cols * rows
+    const geom = `${cols} x ${rows} = ${n} cells (zone ${Math.round(b.maxX - b.minX)}x${Math.round(b.maxY - b.minY)} px, brush ${brush})`
+    if (!Array.isArray(declared)) {
+      out.push(warn(`\`reveal … cells ${it.cells}\` (object "${who}") writes into "${it.cells}", which is ${declared === undefined ? 'not declared' : 'a scalar, not an array'} — the scratched grid goes nowhere. Declare it with the grid's size: \`var ${it.cells} = fill(${n}, 0)\` — ${geom}, index = row * ${cols} + col.`))
+    } else if (declared.length !== n) {
+      out.push(warn(`\`reveal … cells ${it.cells}\` (object "${who}"): the grid is ${geom}, but "${it.cells}" holds ${declared.length} — ${declared.length < n ? 'every cell past the end is dropped in silence' : 'the extra cells are never written'}. Declare \`var ${it.cells} = fill(${n}, 0)\`, index = row * ${cols} + col.`))
+    }
+  }
+  return out
+}
+
+/** `draw` trims the STROKE by arc length — on a shape with no stroke it has nothing to trim, so the ink
+ *  the author is animating simply never appears (and the fill they DO have is untouched, so the scene
+ *  looks plausible). */
+export function docDrawWarnings(doc: Doc): { scope: string; diag: Diagnostic }[] {
+  const out: { scope: string; diag: Diagnostic }[] = []
+  const check = (scope: string, r: Region): void => {
+    if (r.stroke) return
+    if (r.draw == null && !r.drawExpr && r.drawFrom == null && !r.drawFromExpr) return
+    out.push({ scope, diag: { line: 1, col: 1, severity: 'warning', message: `\`draw\` on a shape with no \`stroke\` — it trims the OUTLINE by arc length, so with nothing stroked it changes nothing on screen. Add \`stroke <color> <width>\` (an ink trail is usually \`nofill stroke … cap round\`).` } })
+  }
+  const scan = (scope: string, layers: Layer[]): void => {
+    for (const l of layers) {
+      for (const it of l.items) { if (isRegion(it)) check(scope, it); else if (isGroup(it)) scan(scope, it.layers) }
+      for (const c of l.cels ?? []) for (const r of c.matter ?? []) check(scope, r)
+    }
+  }
+  scan('scene', doc.layers)
+  for (const s of doc.symbols ?? []) scan(s.name, s.layers)
   return out
 }
 

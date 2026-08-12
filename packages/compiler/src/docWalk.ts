@@ -8,7 +8,7 @@
 //  and missing one is a silent hole. Collected here once so the linter and the manifest agree.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Action, Doc, Item, Layer } from '@flatkit/types'
-import { isGroup, isPoseable } from '@flatkit/engine/layers'
+import { isGroup, isPoseable, isRegion, isText } from '@flatkit/engine/layers'
 import { EXPR_CHANNELS } from '@flatkit/engine/timeline'
 
 /** Every action of a body, nested `if` / `repeat` bodies included. */
@@ -54,17 +54,42 @@ export function forEachItemExpression(it: Item, fn: (expr: string, channel: stri
   if (it.modifiers) for (const ch of EXPR_CHANNELS) { const m = it.modifiers[ch]; if (m) fn(m.target, ch) }
 }
 
-/** Every EXPRESSION text of the Doc: channel bindings and modifier targets (scene + symbols, nested
- *  groups included), plus everything the actions carry. */
+/**
+ * The per-frame expressions a LEAF carries in its CONTENT rather than in a channel: a dynamic text's
+ * `bind`, a text-on-path's animated `start`/`spacing`, a shape's `draw`/`from` stroke extent. They pose
+ * nothing — so they are not channels, and `forEachItemExpression` (whose channel list is part of the
+ * manifest contract) leaves them alone — but they READ variables every frame. Anything asking "what does
+ * this program read" has to see them, or a variable used only by a `bind` reads as dead.
+ */
+export function forEachLeafExpression(it: Item, fn: (expr: string) => void): void {
+  if (isText(it)) {
+    if (it.bind) fn(it.bind)
+    if (it.textPath?.startExpr) fn(it.textPath.startExpr)
+    if (it.textPath?.spacingExpr) fn(it.textPath.spacingExpr)
+    return
+  }
+  if (isRegion(it)) {
+    if (it.drawExpr) fn(it.drawExpr)
+    if (it.drawFromExpr) fn(it.drawFromExpr)
+  }
+}
+
+/** Every EXPRESSION text of the Doc: channel bindings, modifier targets and leaf content expressions
+ *  (scene + symbols, nested groups AND the material of animated layers included), plus everything the
+ *  actions carry. */
 export function forEachExpression(doc: Doc, fn: (expr: string) => void): void {
   const visit = (items: Item[]): void => {
     for (const it of items) {
       forEachItemExpression(it, (e) => fn(e))
-      if (isGroup(it)) for (const l of it.layers) visit(l.items)
+      forEachLeafExpression(it, fn)
+      if (isGroup(it)) for (const l of it.layers) { visit(l.items); visitCels(l) }
     }
   }
-  for (const l of doc.layers) visit(l.items)
-  for (const s of doc.symbols ?? []) for (const l of s.layers) visit(l.items)
+  // A cel (animated) layer keeps its material in the keyframes, not in `items` — a `draw "<expr>"` on a
+  // shape that lives on such a layer is only reachable there.
+  const visitCels = (l: Layer): void => { for (const c of l.cels ?? []) for (const r of c.matter ?? []) forEachLeafExpression(r, fn) }
+  for (const l of doc.layers) { visit(l.items); visitCels(l) }
+  for (const s of doc.symbols ?? []) for (const l of s.layers) { visit(l.items); visitCels(l) }
   for (const i of doc.interactions ?? []) forEachActionExpression(i.actions, fn)
   for (const f of doc.functions ?? []) if (f.kind === 'proc') forEachActionExpression(f.body, fn)
   for (const t of [doc.timeline, ...(doc.symbols ?? []).map((s) => s.timeline)]) {

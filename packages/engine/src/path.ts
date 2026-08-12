@@ -281,6 +281,107 @@ export function makePathSampler(path: Path, tol = 0.25): { length: number; close
   return { length, closed, at }
 }
 
+// ── Trim by arc length (`draw`: how much of the outline is stroked) ──────────
+
+/** One subpath, flattened as the RENDER curve draws it, with the cumulative length at each point. */
+type SubMeasure = { pts: Point[]; cum: number[]; closed: boolean; length: number }
+/** A path's subpaths measured end to end: `total` = the sum, so an offset in [0,total] addresses the
+ *  whole outline (subpaths in order — the first is traversed whole before the next begins). */
+type PathMeasure = { subs: SubMeasure[]; total: number }
+
+// Memoized at the default tolerance, like `polygonCache`: a path's geometry is invariant (dynamic geometry
+// yields NEW path objects), and `draw` re-trims on EVERY frame — without this each frame would re-subdivide
+// every Bezier. WeakMap → freed with the path.
+const measureCache = new WeakMap<Path, PathMeasure>()
+
+/**
+ * Flatten + measure a path for arc-length work. Uses `flattenSubpath` (i.e. `pathToBezier`), so the measure
+ * is taken on the curve the renderer DRAWS and the one `samplePathAt`/`projectToPath` — hence a `trace`
+ * interactor's progress — walk. `total` = 0 for a degenerate path.
+ */
+function measurePath(path: Path, tol = 0.25): PathMeasure {
+  if (tol === 0.25) { const cached = measureCache.get(path); if (cached) return cached }
+  const subs: SubMeasure[] = []
+  let total = 0
+  for (const sub of path.subpaths) {
+    if (sub.segments.length === 0) continue
+    const raw = flattenSubpath(sub, tol)
+    // Drop coincident points so no segment has zero length (an interpolation on it would divide by 0).
+    const pts: Point[] = []
+    for (const p of raw) { const last = pts[pts.length - 1]; if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 1e-9) pts.push(p) }
+    if (pts.length < 2) continue
+    const cum = new Array<number>(pts.length)
+    cum[0] = 0
+    for (let i = 1; i < pts.length; i++) cum[i] = cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y)
+    const length = cum[pts.length - 1]
+    if (length <= 0) continue
+    subs.push({ pts, cum, closed: sub.closed, length })
+    total += length
+  }
+  const out: PathMeasure = { subs, total }
+  if (tol === 0.25) measureCache.set(path, out)
+  return out
+}
+
+/** Total arc length of a path (all its subpaths), measured on the rendered curve. */
+export const pathArcLength = (path: Path, tol = 0.25): number => measurePath(path, tol).total
+
+/** First index of `cum` past `s` — `>` for the window's start, `>=` for its end, so the slice between the
+ *  two holds exactly the points STRICTLY inside the window (its cut ends are interpolated separately). */
+function boundIn(cum: number[], s: number, orEqual: boolean): number {
+  let lo = 0, hi = cum.length
+  while (lo < hi) { const m = (lo + hi) >> 1; if (orEqual ? cum[m] >= s : cum[m] > s) hi = m; else lo = m + 1 }
+  return lo
+}
+
+/** Point at absolute arc length `s` within a measured subpath (binary search + linear interpolation). */
+function pointAtIn(sub: SubMeasure, s: number): Point {
+  const { pts, cum } = sub
+  const target = s < 0 ? 0 : s > sub.length ? sub.length : s
+  let lo = 0, hi = pts.length - 2
+  while (lo < hi) { const m = (lo + hi) >> 1; if (cum[m + 1] < target) lo = m + 1; else hi = m }
+  const a = pts[lo], b = pts[lo + 1]
+  const seg = cum[lo + 1] - cum[lo]
+  const u = seg > 0 ? (target - cum[lo]) / seg : 0
+  return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u }
+}
+
+/**
+ * The piece of an outline between two ARC-LENGTH fractions (`draw`/`from`) — flattened polylines ready to
+ * stroke. `from`/`to` are 0..1 of the path's TOTAL length, subpaths taken IN ORDER (subpath 1 is drawn
+ * whole before subpath 2 starts), which is what a handwriting/tracing reveal wants. A subpath entirely
+ * inside the window comes back untouched (`closed` kept, so a full ring still joins instead of showing two
+ * caps); a partial one is cut at the exact arc position. Empty window / degenerate path → `[]`.
+ */
+export function trimPath(path: Path, from: number, to: number, tol = 0.25): { pts: Point[]; closed: boolean }[] {
+  const m = measurePath(path, tol)
+  if (m.total <= 0) return []
+  // A window bound may arrive as NaN/Infinity — from an untrusted `.flatpack`, or an expression that
+  // divided by zero one frame. Fall back to the DEFAULT window (the whole outline) rather than propagating
+  // a NaN into the geometry, which would silently drop the stroke.
+  const a = frac(from, 0) * m.total
+  const b = frac(to, 1) * m.total
+  if (b - a <= 1e-9) return []
+  const out: { pts: Point[]; closed: boolean }[] = []
+  let off = 0
+  for (const sub of m.subs) {
+    const start = off
+    const end = off + sub.length
+    off = end
+    if (end <= a || start >= b) continue // this subpath is entirely outside the window
+    if (a <= start && b >= end) { out.push({ pts: sub.pts, closed: sub.closed }); continue } // whole subpath (shared, read-only)
+    const lo = Math.max(0, a - start)
+    const hi = Math.min(sub.length, b - start)
+    // Interpolated cut, then the points strictly inside, then the other cut.
+    const pts = [pointAtIn(sub, lo), ...sub.pts.slice(boundIn(sub.cum, lo, false), boundIn(sub.cum, hi, true)), pointAtIn(sub, hi)]
+    out.push({ pts, closed: false }) // a cut piece is an open stroke, whatever the source subpath was
+  }
+  return out
+}
+
+/** A 0..1 window bound: clamped, with a non-finite value falling back to `fallback`. */
+const frac = (v: number, fallback: number): number => (Number.isFinite(v) ? (v < 0 ? 0 : v > 1 ? 1 : v) : fallback)
+
 /**
  * Bake a source path for TEXT-ON-PATH (RFC §6). For a CLOSED source, re-emit it as a closed polyline
  * re-anchored at the TOPMOST point (min-y, leftmost on tie) and oriented so the forward tangent there
