@@ -1,5 +1,12 @@
 # @flatkit/sugarflat
 
+## 0.3.13
+
+### Patch Changes
+
+- Updated dependencies [[`15bc1f0`](https://github.com/flatink/flatkit/commit/15bc1f0f433b948ed5c993b0d0131ce89d934580)]:
+  - @flatkit/compiler@0.33.0
+
 ## 0.3.12
 
 ### Patch Changes
