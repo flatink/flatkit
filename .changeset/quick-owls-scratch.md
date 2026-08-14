@@ -37,3 +37,10 @@ so the count `--check` advises is always declarable.
 **`arr = fill(n, v)` is charged to the tick budget by what it WRITES.** The budget counts actions, assuming
 each costs about the same; this one writes up to a hundred thousand slots, so a `repeat` full of them ran
 200k of them under a green ceiling.
+
+**And two silent numbers named.** A `step` of 0 or less is the one option here that does not fall back: the
+progress may grow by at most `step` px per frame, so nothing ever advanced -- a drill impossible to
+complete, drawing its guide, following the finger, ink empty, `--check` green. A non-positive `tolerance`,
+`brush` or `grain` is the milder cousin: silently replaced by the default, so the number written in the
+source described nothing. Both are reported now.
+

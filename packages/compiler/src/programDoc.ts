@@ -378,6 +378,18 @@ export function docGestureOptionWarnings(doc: Doc): { scope: string; diag: Diagn
   const out: { scope: string; diag: Diagnostic }[] = []
   for (const it of doc.interactors ?? []) {
     const who = itemNameById(doc, it.targetId) ?? it.targetId
+    // A `step` of 0 (or less) is the one number here that does not fall back: the progress may advance by
+    // at most `step` px per frame, so nothing can ever advance. The drill draws its guide, the finger
+    // follows it, the ink stays empty and `--check` was green — an exercise impossible to complete, in
+    // silence. The others below are milder: they are IGNORED, which is its own kind of quiet wrong.
+    if (it.axis === 'trace' && it.step !== undefined && !(it.step > 0)) {
+      out.push(warn(`\`step ${it.step}\` (object "${who}") — the progress may grow by at most \`step\` px of arc length per frame, so at ${it.step} it can never move and the trace can never be completed. Use the distance a finger may cover between two frames (a quarter of the path is a sane start).`))
+    }
+    for (const [slot, value] of [['tolerance', it.axis === 'trace' ? it.grid : undefined], ['brush', it.axis === 'reveal' ? it.grid : undefined], ['grain', it.axis === 'reveal' ? it.grain : undefined]] as const) {
+      if (value !== undefined && !(value > 0)) {
+        out.push(warn(`\`${slot} ${value}\` (object "${who}") is ignored — a non-positive value falls back to the default, so the number in the source describes nothing. Write the one you mean, or drop the line.`))
+      }
+    }
     if (it.axis === 'trace' && it.bothEnds && it.step === undefined) {
       out.push(warn(`\`both ends\` without \`step\` (object "${who}") — it picks which END the run is measured from, and a \`trace\` without \`step\` has no run: its progress is wherever the finger projects, from anywhere. Add \`step <px>\` (the max jump between two frames) or drop \`both ends\`.`))
     }

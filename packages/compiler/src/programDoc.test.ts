@@ -882,6 +882,21 @@ describe('programDoc — gesture options that need a partner', () => {
     expect(hit(veil('    brush 40\n    grain 10'), /grain/)).toEqual([]) // fine grain, wide finger: the point
   })
 
+  it('a `step` of 0 or less is named: the trace could never be completed', () => {
+    // The one number here that does not fall back. Measured: a full run of the path leaves the progress at
+    // 0.000, `--check` green — an exercise impossible to finish, with nothing on screen to say so.
+    expect(hit(trace('    step 0'), /step 0/)[0]).toMatch(/can never move/)
+    expect(hit(trace('    step -5'), /step -5/)).toHaveLength(1)
+    expect(hit(trace('    step 40'), /step/)).toEqual([])
+  })
+
+  it('a non-positive `tolerance` / `brush` / `grain` is named as IGNORED (it falls back)', () => {
+    expect(hit(trace('    step 40\n    tolerance 0'), /tolerance 0/)[0]).toMatch(/is ignored/)
+    expect(hit(veil('    brush 0'), /brush 0/)[0]).toMatch(/is ignored/)
+    expect(hit(veil('    brush 25\n    grain -2'), /grain -2/)).toHaveLength(1)
+    expect(hit(veil('    brush 25\n    grain 8'), /ignored/)).toEqual([])
+  })
+
   it('the pen-tip variables of `point` count as used', () => {
     const dead = docStructureWarnings(compileFlatpack(trace('    step 40\n    point tipX, tipY').replace('var progress = 0', 'var progress = 0\nvar tipX = 0\nvar tipY = 0'), [], {}))
     expect(dead.filter((w) => /never used/.test(w.diag.message))).toEqual([])
