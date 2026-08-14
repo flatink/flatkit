@@ -178,6 +178,37 @@ export function itemBoundsById(doc: Doc, id: string): BBox | null {
   return result
 }
 
+/** Hard cap on a `reveal` grid. It bounds everything the grid drives: the cells scanned per pointer move,
+ *  the Set that holds them, the discs `erase` stamps, and the array an author declares for `cells` (whose
+ *  own `fill(n, v)` caps at the same 100k — so the count `--check` advises is always declarable). Without
+ *  it a `grain` of 0.01 on a full-frame zone asks for billions of cells and freezes the tab on the first
+ *  touch, which an untrusted `.flatpack` is entitled to try. */
+export const MAX_REVEAL_CELLS = 100_000
+
+/**
+ * Geometry of a `reveal`'s grid over its world zone — THE definition, used by the player that ticks the
+ * cells and by `--check` that tells the author how many to declare. It lived in both, drifted the day
+ * `grain` was added (the check kept measuring on the brush), and the consumer following its advice lost
+ * every write past the end in silence. One function now, so they cannot disagree again.
+ *
+ * The cell is the GRAIN when there is one, the brush otherwise; never sub-pixel, and grown until the grid
+ * fits `MAX_REVEAL_CELLS`.
+ */
+export function revealGrid(b: BBox, it: { grid?: number; grain?: number }): { cell: number; cols: number; rows: number; total: number } {
+  const w = Math.max(0, b.maxX - b.minX)
+  const h = Math.max(0, b.maxY - b.minY)
+  const asked = it.grain && it.grain > 0 ? it.grain : it.grid && it.grid > 0 ? it.grid : 24
+  let cell = Math.max(1, asked) // a sub-pixel grid buys nothing on screen and costs everything to sweep
+  let cols = Math.max(1, Math.ceil(w / cell))
+  let rows = Math.max(1, Math.ceil(h / cell))
+  if (cols * rows > MAX_REVEAL_CELLS) { // too fine for its zone → coarsen until it fits (never silently huge)
+    cell *= Math.sqrt((cols * rows) / MAX_REVEAL_CELLS)
+    cols = Math.max(1, Math.ceil(w / cell))
+    rows = Math.max(1, Math.ceil(h / cell))
+  }
+  return { cell, cols, rows, total: cols * rows }
+}
+
 /** WORLD bbox of SEVERAL items, by id, in ONE walk of the scene — for the `reveal` grab zones, computed
  *  per document rather than per gesture. One pass whatever the number of ids (a per-id `itemBoundsById`
  *  would re-walk the whole tree each time). Ids that match nothing are simply absent from the result. */

@@ -96,9 +96,15 @@ function runAction(a: Action, host: ActionHost, budget: Budget): void {
     case 'setIndex':
       host.setIndex(a.name, Math.round(host.evalNumber(a.index)), host.evalNumber(a.value))
       break
-    case 'fillVar':
-      host.fillVar(a.name, Math.round(host.evalNumber(a.count)), host.evalNumber(a.value))
+    case 'fillVar': {
+      // The tick budget counts ACTIONS, on the assumption each costs about the same. This one does not: it
+      // writes up to a hundred thousand slots. Charge it what it writes, so a `repeat` full of them is
+      // bounded by the same ceiling as everything else instead of allocating for a whole second.
+      const n = Math.round(host.evalNumber(a.count))
+      budget.n += Math.max(0, Math.min(n, MAX_ACTIONS_PER_TICK))
+      host.fillVar(a.name, n, host.evalNumber(a.value))
       break
+    }
     case 'setParam':
       host.setParam(a.target, a.param, a.value) // value RAW (state name or expr) → resolved by the host
       break

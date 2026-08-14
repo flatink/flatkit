@@ -69,13 +69,15 @@ export type RenderCtx = {
 }
 
 /** A `reveal` target's scratched-away area, in WORLD coordinates: the grid it ticks (`cells`, cleared cell
- *  indices — a LIVE set, mutated by the gesture) plus the geometry to place them. */
-export type ScratchMask = { cells: ReadonlySet<number>; minX: number; minY: number; cell: number; cols: number }
+ *  indices — a LIVE set, mutated by the gesture) plus the geometry to place them. `version` is bumped by
+ *  the player whenever the set is REBUILT rather than grown (a reset, a restored session): the renderer
+ *  stamps cells incrementally and needs to know when its `cells` are no longer an append-only stream. */
+export type ScratchMask = { cells: ReadonlySet<number>; minX: number; minY: number; cell: number; cols: number; version?: number }
 
 /** Entry of the filtered composite cache: FINAL bitmap (content+tint+filter) in screen px at (ox,oy).
  *  `canvas` absent = we have only RECORDED the signature (1 observation frame before baking) -- used
  *  to NOT bake an object that moves every frame (unstable signature => we would always stay in miss). */
-export type FilterCacheEntry = { canvas?: HTMLCanvasElement; sig: string; ox: number; oy: number; ow: number; oh: number }
+export type FilterCacheEntry = { canvas?: HTMLCanvasElement; sig: string; ox: number; oy: number; ow: number; oh: number; punched?: number }
 type CacheSlot = { map: Map<string, FilterCacheEntry>; id: string; sig: string }
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
@@ -484,9 +486,17 @@ function compositeScratched(
     octx.setTransform(dev.a, dev.b, dev.c, dev.d, dev.e - ox, dev.f - oy) // off-screen origin = (ox,oy) screen
     drawContent(octx)
     const world = compose({ a: dev.a, b: dev.b, c: dev.c, d: dev.d, e: dev.e - ox, f: dev.f - oy }, invert(parent))
-    octx.setTransform(world.a, world.b, world.c, world.d, world.e, world.f) // …the grid is measured in WORLD space
     octx.globalCompositeOperation = 'destination-out' // rub out — and, unlike an even-odd clip, overlaps UNION
-    punchCells(octx, mask, Math.hypot(world.a, world.b) || 1)
+    // The holes are kept between frames and stamped incrementally (see `scratchHoles`); without a cache to
+    // keep them in, they are punched straight into the buffer, as before.
+    const holes = scratchHoles(cache, mask, world, ox, oy, ow, oh)
+    if (holes) {
+      octx.setTransform(1, 0, 0, 1, 0, 0)
+      octx.drawImage(holes, 0, 0, ow, oh, 0, 0, ow, oh)
+    } else {
+      octx.setTransform(world.a, world.b, world.c, world.d, world.e, world.f) // …the grid is measured in WORLD space
+      punchCells(octx, mask, Math.hypot(world.a, world.b) || 1)
+    }
     octx.globalCompositeOperation = 'source-over'
     octx.filter = 'none'
     const store = cache && stable && typeof document !== 'undefined' ? ensureCacheCanvas(cache, ox, oy, ow, oh) : null
@@ -512,29 +522,77 @@ function compositeScratched(
 }
 
 /**
- * The holes themselves: one disc per CLEARED CELL, all in ONE path and ONE fill — a fully scratched
- * full-frame veil is ~1000 cells, and a fill apiece is what turns a scratch into a slideshow. The radius is
- * ¾ of a cell: over half a diagonal, so neighbours merge with no lattice gap, and no more, so what
- * disappears stays what the fraction counts.
+ * The holes themselves: one disc per CLEARED CELL, in ONE path and ONE fill. The radius is ¾ of a cell:
+ * over half a diagonal, so neighbours merge with no lattice gap, and no more, so what disappears stays what
+ * the fraction counts.
  *
  * The edge is BLURRED rather than cut. Hard discs read as stamps — a lone touch left a perfect circle and
  * the border of a scratched area was a scallop at the mesh of the grid. The blur is a fraction of the CELL,
  * so `grain` sets how fine the erasing looks while `brush` keeps meaning how wide the finger is. (A canvas
  * that ignores `filter` — an old Safari — degrades to the crisp edge, like every other filter here.)
+ *
+ * `from` = how many cells are already stamped: the mask canvas is kept between frames, so a stroke only
+ * ever draws the cells that JUST fell. Restamping all of them per frame cost 4 ms once a fine-grained veil
+ * had accumulated a few thousand — paid exactly while the child was scratching, which is the one moment
+ * smoothness is felt. (Sets iterate in insertion order, and the player bumps `version` whenever it rebuilds
+ * the set instead of growing it, which is what makes "skip the first N" sound.)
  */
-function punchCells(octx: CanvasRenderingContext2D, mask: ScratchMask, scale: number): void {
+function punchCells(octx: CanvasRenderingContext2D, mask: ScratchMask, scale: number, from = 0): void {
   const r = mask.cell * 0.75
   const soft = Math.min(16, Math.max(0.5, mask.cell * 0.55 * scale)) // device px, and never a fog
   octx.filter = `blur(${round2(soft)}px)`
   octx.fillStyle = '#000' // any opaque colour: only its ALPHA is used by `destination-out`
   octx.beginPath()
+  let i = 0
   for (const idx of mask.cells) {
+    if (i++ < from) continue // already in the mask from an earlier frame
     const cx = mask.minX + ((idx % mask.cols) + 0.5) * mask.cell
     const cy = mask.minY + (Math.floor(idx / mask.cols) + 0.5) * mask.cell
     octx.moveTo(cx + r, cy) // start each subpath on its own circle (no connecting line between discs)
     octx.arc(cx, cy, r, 0, TAU)
   }
   octx.fill()
+  octx.filter = 'none'
+}
+
+/**
+ * The scratched-away area as a persistent ALPHA MASK in the buffer's own pixels, stamped INCREMENTALLY.
+ * Kept under its own cache key; rebuilt from scratch only when the screen placement changes (zoom, pan, the
+ * veil moving) or when the player rebuilds the cell set (`version`) — otherwise each frame adds the handful
+ * of cells that just fell. `null` when there is no cache or no DOM: the caller then punches directly, which
+ * is the old behavior.
+ */
+function scratchHoles(cache: CacheSlot | undefined, mask: ScratchMask, world: Transform, ox: number, oy: number, ow: number, oh: number): HTMLCanvasElement | null {
+  if (!cache || typeof document === 'undefined') return null
+  const key = 'holes:' + cache.id
+  let e = cache.map.get(key)
+  if (!e?.canvas || e.canvas.width < ow || e.canvas.height < oh) {
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, ow)
+    canvas.height = Math.max(1, oh)
+    e = { canvas, sig: '', ox, oy, ow, oh, punched: 0 }
+    cache.map.set(key, e)
+  }
+  const holes = e.canvas
+  if (!holes) return null
+  const cctx = holes.getContext('2d')
+  if (!cctx) return null
+  const sig = `${round2(world.a)},${round2(world.b)},${round2(world.c)},${round2(world.d)},${round2(world.e)},${round2(world.f)}|${mask.version ?? 0}`
+  const punched = e.punched ?? 0
+  if (e.sig !== sig || mask.cells.size < punched) { // placement moved, or the set was rebuilt → start over
+    cctx.setTransform(1, 0, 0, 1, 0, 0)
+    cctx.clearRect(0, 0, holes.width, holes.height)
+    e.sig = sig
+    e.punched = 0
+  }
+  if ((e.punched ?? 0) < mask.cells.size) {
+    cctx.setTransform(world.a, world.b, world.c, world.d, world.e, world.f)
+    cctx.globalCompositeOperation = 'source-over'
+    punchCells(cctx, mask, Math.hypot(world.a, world.b) || 1, e.punched ?? 0)
+    e.punched = mask.cells.size
+  }
+  e.ox = ox; e.oy = oy; e.ow = ow; e.oh = oh
+  return holes
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100
@@ -547,7 +605,7 @@ function scratchCacheSlot(rctx: RenderCtx, doc: Doc, it: Item, ctx: CanvasRender
   if (!rctx.filterCache || typeof document === 'undefined' || !isContentStatic(doc, it)) return undefined
   const own = 'transform' in it && it.transform ? (it.transform as Transform) : IDENTITY
   const m = compose(matOf(ctx.getTransform()), own)
-  const sig = `${round2(m.a)},${round2(m.b)},${round2(m.c)},${round2(m.d)},${round2(m.e)},${round2(m.f)}|${mask.cells.size}|${rctx.imageEpoch ?? 0}`
+  const sig = `${round2(m.a)},${round2(m.b)},${round2(m.c)},${round2(m.d)},${round2(m.e)},${round2(m.f)}|${mask.cells.size}.${mask.version ?? 0}|${rctx.imageEpoch ?? 0}`
   return { map: rctx.filterCache, id: 'scratch:' + it.id, sig }
 }
 

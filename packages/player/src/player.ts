@@ -19,7 +19,7 @@ import { sanitizeDoc } from '@flatkit/engine/validateDoc'
 import { applyInstanceBinds } from '@flatkit/engine/instanceBind'
 import { importedFunctions } from '@flatkit/engine/stdlib'
 import { namedChannels, objectChannelsById, objectParentTransform, type NamedChannels, type ObjectChannels } from '@flatkit/engine/sceneRefs'
-import { itemBoundsByName, itemBoundsById, itemBoundsByIds, dropZoneBounds, tracePathByName, groupTargets } from '@flatkit/engine/groups'
+import { itemBoundsByName, itemBoundsById, itemBoundsByIds, dropZoneBounds, tracePathByName, groupTargets, revealGrid } from '@flatkit/engine/groups'
 import { projectToPath, samplePathAt, pathArcLength, type Path } from '@flatkit/engine/path'
 import { apply, invert, spaceConversions, IDENTITY, type Transform } from '@flatkit/engine/transform'
 import type { Interactor } from '@flatkit/types'
@@ -613,16 +613,14 @@ export class FlatPlayer {
     if (cached) return cached // keep accumulating from a previous grab
     const b = this.grabZones?.get(id) ?? itemBoundsById(this.doc, id) // same bbox the hit test uses as the zone
     if (!b) return {}
-    // The grid's RESOLUTION (`grain`) is not the finger's radius (`brush`): a wide finger with a fine grain
-    // is the common case (a smooth edge under a generous touch). Absent → the brush, i.e. the old behavior.
-    const cell = it.grain && it.grain > 0 ? it.grain : it.grid && it.grid > 0 ? it.grid : 24
-    const cols = Math.max(1, Math.ceil((b.maxX - b.minX) / cell))
-    const rows = Math.max(1, Math.ceil((b.maxY - b.minY) / cell))
+    // ONE definition of the grid, shared with the `--check` pass that tells the author how many cells to
+    // declare (they drifted once, and the array silently lost every write past its end).
+    const { cell, cols, rows } = revealGrid(b, it)
     const state: RevealState = { revealCells: new Set<number>(), revealGrid: { minX: b.minX, minY: b.minY, cell, cols, rows } }
     this.revealStates.set(id, state)
     // `erase`: hand the renderer a LIVE view of this grid (same Set) — every ticked cell shows up on the
     // next paint with nothing to copy or invalidate. `brush` = the radius the gesture itself rubs with.
-    if (it.erase) this.scratched.set(id, { cells: state.revealCells, minX: b.minX, minY: b.minY, cell, cols })
+    if (it.erase) this.scratched.set(id, { cells: state.revealCells, minX: b.minX, minY: b.minY, cell, cols, version: 0 })
     return state
   }
   /** On release of a `link`: 1st target (named child of the group) containing the pointer -> index 1..n (0 = none).
@@ -952,6 +950,10 @@ export class FlatPlayer {
     const total = st.revealGrid.cols * st.revealGrid.rows
     st.revealCells.clear()
     for (let i = 0; i < cells.length && i < total; i++) if (cells[i]) st.revealCells.add(i)
+    // The renderer stamps cells INCREMENTALLY (append-only). Rebuilding the set breaks that assumption, so
+    // say it: the mask is restamped from scratch on the next paint instead of gaining a few discs.
+    const mask = this.scratched.get(it.targetId)
+    if (mask) mask.version = (mask.version ?? 0) + 1
     if (it.varX) this.setVarLive(it.varX, st.revealCells.size / total)
   }
   /** Re-seat every continuous trace whose progress variable is `name` on the value the scene just wrote. */

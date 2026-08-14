@@ -18,7 +18,7 @@ import { importedFunctions } from '@flatkit/engine/stdlib'
 import { EXPR_CHANNELS } from '@flatkit/engine/timeline'
 import { objectNames } from '@flatkit/engine/sceneRefs'
 import { behaviorRegions } from '@flatkit/engine/flatFormat'
-import { itemBBox, itemBoundsById, dropZoneBounds, transformBBox } from '@flatkit/engine/groups'
+import { itemBBox, itemBoundsById, dropZoneBounds, transformBBox, revealGrid } from '@flatkit/engine/groups'
 import { IDENTITY, apply, compose } from '@flatkit/engine/transform'
 import { makePathSampler } from '@flatkit/engine/path'
 import { bboxIntersects } from '@flatkit/engine/bbox'
@@ -353,15 +353,10 @@ export function docRevealCellWarnings(doc: Doc): { scope: string; diag: Diagnost
     const declared = Object.hasOwn(doc.variables ?? {}, it.cells) ? doc.variables?.[it.cells] : undefined // hasOwn: a name like `constructor` is not a declaration
     const b = itemBoundsById(doc, it.targetId)
     if (!b) continue // the target itself does not resolve — `object "X"` on nothing is already reported
-    // The cell is the GRAIN when there is one, the brush otherwise — the player's own rule. Sizing this on
-    // the brush while the engine used the grain handed out a count that was right-looking and too small:
-    // every write past the end was dropped in silence, the fraction climbed normally, and the array stayed
-    // at zero (so a restored session came back untouched). Measured on 880x404, brush 36 / grain 8: this
-    // said 300 cells where the engine made 5610.
-    const cell = it.grain && it.grain > 0 ? it.grain : it.grid && it.grid > 0 ? it.grid : 24
-    const cols = Math.max(1, Math.ceil((b.maxX - b.minX) / cell))
-    const rows = Math.max(1, Math.ceil((b.maxY - b.minY) / cell))
-    const n = cols * rows
+    // THE geometry, from the engine — the same call the player makes. Sizing it here on its own is how the
+    // two drifted the day `grain` arrived: this said 300 cells where the engine made 5610, and every write
+    // past the end of the advised array was dropped in silence.
+    const { cols, rows, total: n } = revealGrid(b, it)
     const from = it.grain && it.grain > 0 ? `grain ${it.grain}` : `brush ${it.grid && it.grid > 0 ? it.grid : 24}`
     const geom = `${cols} x ${rows} = ${n} cells (zone ${Math.round(b.maxX - b.minX)}x${Math.round(b.maxY - b.minY)} px, ${from})`
     if (!Array.isArray(declared)) {

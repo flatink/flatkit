@@ -264,6 +264,16 @@ describe('actions — fillVar (`arr = fill(n, v)`)', () => {
     expect(m.vars.get('grid')).toEqual([7, 7, 7, 7, 7, 7])
   })
 
+  it('charges the tick budget what it WRITES, so a loop of fills cannot allocate for a second', () => {
+    // The budget counts actions, assuming each costs about the same. A fill writes up to 100k slots, so a
+    // `repeat` full of them would have run 200k of them — billions of writes — under a green ceiling.
+    const m = mock()
+    runActions([{ do: 'repeat', count: '1000', body: [{ do: 'fillVar', name: 'g', count: '50000', value: '0' }] }], m.host)
+    const fills = m.calls.filter((c) => c.startsWith('fill:')).length
+    expect(fills).toBeLessThanOrEqual(5) // 200k budget / 50k a fill — not a thousand of them
+    expect(fills).toBeGreaterThan(0)
+  })
+
   it('a fractional count is rounded, a negative one gives an empty array', () => {
     const m = mock()
     runActions([{ do: 'fillVar', name: 'a', count: '2.6', value: '1' }, { do: 'fillVar', name: 'b', count: '0 - 5', value: '1' }], m.host)
