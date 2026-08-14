@@ -29,6 +29,16 @@
   ("one action per line — unexpected `=`"), with the column pointing at the second `=`.
   A swallowed statement is named now — `score = score + 1  send "ok", 1` reports *"two statements on one
   line — `send …` was swallowed into the expression before it"*, not `unexpected character """`.
+- **The space between a keyword and its literal is NOT significant.** `send"win"`, `send "win"` and
+  `send\t"win"` are one and the same statement, and so are `object"R"` / `object "R"`, `layer"c"`,
+  `text"Hi"`, `font"sans-serif"`. The grammar is tokenized: it never sees the whitespace. (Everything
+  round-trips to the canonical one-space spelling, which is what `flatc` prints.)
+  ⚠️ **So do not police a program with a regex.** A guard looking for `send\s+"…"` misses `send"…"` by one
+  character — and, worse, misses an event emitted through a function: a fragment that never types `send`
+  can call a `fn` the rest of the program defines, and the event fires. To decide what a program is allowed
+  to DO, read its structure: `manifestEvents(doc)` (from `@flatkit/compiler`) returns every event any
+  action emits, procedures, `if`/`repeat` bodies and timeline hooks included. See
+  [Tooling](tooling.md#what-does-this-program-do).
 - **`send` footgun (fixed)**: `send "evt", x = 1` (with a comma) used to capture `x = 1` as
   the *payload*. It is now a dedicated error. A `send` carries at most one payload:
   `send "evt"`, `send "evt", <expr>`, `send "evt", text("textId")`, or the record form

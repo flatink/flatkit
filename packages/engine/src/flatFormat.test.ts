@@ -1692,3 +1692,43 @@ describe('flatFormat — continuous `trace` slots (step / both ends / point)', (
     expect(errs('    point tipX')).toMatch(/point <x>, <y>/)
   })
 })
+
+// Whitespace between a keyword and its literal is not significant: the scene grammar is tokenized, so it
+// never saw the space in the first place. `object` was the one exception — its block splitter is a regex
+// over the source and demanded one — which made `object"R"` the only spelling in the language that failed
+// while `send"win"` sailed through. That asymmetry is invisible until something reads DSL BY PATTERN: a
+// consumer's guard against `send\s+"…"` let `send"…"` past, one character from the rule it enforced.
+describe('flatFormat — a keyword and its literal need no space (uniformly)', () => {
+  const prog = (obj: string) => [
+    'size 100 100', 'scene {', '  layer "L" {',
+    '    group "R" at 50,50 { layer "c" { circle 0 0 10 fill #333333 } }',
+    '  }', '}', '', obj, '',
+  ].join('\n')
+  const sends = (src: string) => {
+    const doc = parseProgramFull(src)
+    const acts = (doc.interactions ?? []).flatMap((i) => i.actions)
+    return acts.filter((a): a is Extract<typeof a, { do: 'send' }> => a.do === 'send').map((a) => a.event)
+  }
+
+  it('`object"R"` binds exactly like `object "R"` (it used to be the only spelling that failed)', () => {
+    expect(sends(prog('object"R" { when clicked { send "win" } }'))).toEqual(['win'])
+    expect(sends(prog('object "R" { when clicked { send "win" } }'))).toEqual(['win'])
+    expect(behaviorDiagnostics(prog('object"R" { when clicked { send "win" } }'))).toEqual([])
+  })
+
+  it('…and so does `send"win"`, tabs and multiple spaces included', () => {
+    for (const gap of ['', ' ', '  ', '\t']) expect(sends(prog(`object "R" { when clicked { send${gap}"win" } }`))).toEqual(['win'])
+  })
+
+  it('every spelling round-trips to the SAME canonical text (one space)', () => {
+    const once = printProgramFull(parseProgramFull(prog('object"R" { when clicked { send"win" } }')))
+    expect(once).toContain('object "R"')
+    expect(once).toContain('send "win"')
+    expect(printProgramFull(parseProgramFull(once))).toBe(once)
+  })
+
+  it('the scene keywords never needed one either — the tokenizer does not see it', () => {
+    const src = 'size 100 100\nscene {\n  layer"L" {\n    text"Hi" at 5,5 font"sans-serif" size 12 align left line 1.2 color #111111 box 40 20\n  }\n}\n'
+    expect(parseProgramFull(src).layers[0].items).toHaveLength(1)
+  })
+})

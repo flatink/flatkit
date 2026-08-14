@@ -250,6 +250,31 @@ In the player, `player.startRecording()` / `stopRecording(): Gesture[]` capture 
 hand into a script that `--play` replays. (Authoring/CI helpers live in `@flatkit/player/debug`.)
 Pointer only — key presses are not captured; add the `key` gestures to the recorded script yourself.
 
+## What does this program DO?
+
+Merging DSL you did not write (a generated skin, a themed layer) raises a question a compiler answers and
+a regex cannot: *what is this fragment allowed to do?* Read the structure, never the source text:
+
+```js
+import { parseProgramFull } from '@flatkit/engine/flatFormat'
+import { manifestEvents } from '@flatkit/compiler'
+
+const emitted = manifestEvents(parseProgramFull(merged))   // every `send`, wherever it hides
+const introduced = emitted.filter((e) => !ownEvents.includes(e))
+if (introduced.length) throw new Error(`the skin emits ${introduced.join(', ')}`)
+```
+
+`manifestEvents` walks every action of the document — inside `if` / `repeat` bodies, inside procedures,
+inside the timeline hooks — so it sees what a pattern over the source cannot:
+
+- `send"win"` with no space (the grammar does not require one — see the [gotchas](dsl-gotchas.md));
+- an event emitted **through a function**: a fragment that never writes `send` at all can call a `fn` the
+  rest of the program defines, and the event fires.
+
+Symmetrically, it does not fire on the word `send` sitting in a comment or inside a string a text draws —
+which a pattern would reject. `manifestVars` and `docToManifest` answer the same kind of question for the
+variables a program reads and the contract its objects carry.
+
 ## Teaching the language to a model
 
 Three pieces, all pure functions — no filesystem, no canvas — so they work in a browser as well as in CI:

@@ -880,7 +880,15 @@ function extractBehavior(expanded: string): { sceneText: string; tailAt: number;
   let sceneText = '', i = 0
   const objects: { name: string; body: string; bodyAt: number; at: number }[] = []
   while (i < src.length) {
-    const m = /object\s+"((?:[^"\\]|\\.)*)"\s*\{/.exec(src.slice(i))
+    // `\s*`, not `\s+`: whitespace between a keyword and its literal is not significant ANYWHERE else —
+    // the scene grammar is tokenized, so `layer"L"`, `text"Hi"` and `send"win"` all parse. This splitter is
+    // a regex over the source and was the one place demanding a space, which made `object"R"` the only
+    // spelling in the language that failed. The asymmetry is invisible until something reads DSL by pattern:
+    // a consumer's guard against `send\s+"…"` let `send"…"` straight through, one character from the rule
+    // it enforced. (Safe to relax: the scene block and the header are masked out before this scan, and a
+    // false match would need the shape `object"…"{` in behavior text, where a quoted string is never
+    // immediately followed by `{`.)
+    const m = /object\s*"((?:[^"\\]|\\.)*)"\s*\{/.exec(src.slice(i))
     if (!m) { sceneText += src.slice(i); break }
     const start = i + m.index
     sceneText += src.slice(i, start)
