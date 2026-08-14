@@ -1,5 +1,13 @@
 # @flatkit/player
 
+## 0.34.1
+
+### Patch Changes
+
+- Updated dependencies [[`faa4b9e`](https://github.com/flatink/flatkit/commit/faa4b9ee71c63c0a006e96465b0210d540a4d661)]:
+  - @flatkit/engine@0.34.1
+  - @flatkit/types@0.34.1
+
 ## 0.34.0
 
 ### Minor Changes
