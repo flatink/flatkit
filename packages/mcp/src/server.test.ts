@@ -3,7 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { buildServer } from './server.ts'
 import type { ForgeClient } from './forgeClient.ts'
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 
 // FAKE forge client -> we test the MCP wiring (handshake, tools, routing), not the real forge.
 const fake: ForgeClient = {
@@ -62,11 +62,26 @@ describe('MCP server — the language it serves', () => {
     expect(String((card.contents[0] as { text?: string }).text)).toContain('draw <0..1>') // the current grammar, not a snapshot
   })
 
-  it('serves the guides and the system prompts the compiler publishes', async () => {
+  it('serves the system prompts the compiler publishes', async () => {
     const client = await connect()
     const uris = (await client.listResources()).resources.map((r) => r.uri)
-    expect(uris).toContain('flatink://docs/behavior-and-interactions')
     expect(uris).toContain('flatink://prompt/flatink-core')
+    const prompt = await client.readResource({ uri: 'flatink://prompt/flatink-core' })
+    expect(String((prompt.contents[0] as { text?: string }).text).length).toBeGreaterThan(500)
+  })
+
+  it('serves the guides too — and stays a working server when they are not on disk', async () => {
+    // `packages/compiler/docs/` is a COPY made by `sync-docs` at BUILD time: present in every published
+    // tarball, absent from a fresh clone that has not built yet. The server skips what it cannot resolve
+    // rather than failing its handshake, so the assertion follows the same rule — and the point being
+    // pinned is that the tools and the cards are there EITHER WAY.
+    const client = await connect()
+    const uris = (await client.listResources()).resources.map((r) => r.uri)
+    expect(uris).toContain('flatink://card/language') // never generated: a pure function
+    expect((await client.listTools()).tools.length).toBe(7)
+    const built = existsSync(new URL('../../compiler/docs/tooling.md', import.meta.url))
+    expect(uris.includes('flatink://docs/tooling'), built ? 'built: the guides must be served' : 'not built: skipped').toBe(built)
+    if (!built) return
     const guide = await client.readResource({ uri: 'flatink://docs/behavior-and-interactions' })
     expect(String((guide.contents[0] as { text?: string }).text)).toContain('## Interactors')
   })
