@@ -771,8 +771,26 @@ export function docHasModifiers(doc: Doc): boolean {
  * Bezier path of a region (outline + holes), shiftable. Hybrid model: the
  * subpaths without handles are smoothed (Catmull-Rom, matter look), those with handles
  * render their literal cubic (see engine/path.ts).
+ *
+ * The UNSHIFTED path — every render call — is memoized on the region's `path` object, the same invariant
+ * `pathToPolygons` relies on: geometry never changes in place (a morph or a `bind` yields a NEW path).
+ * Building it costs a Catmull-Rom pass plus one native `moveTo`/`bezierCurveTo` per segment, and the
+ * renderer was paying that for every region of every frame. CALLERS MUST TREAT THE RESULT AS READ-ONLY
+ * (it is shared); pass a `dx`/`dy` to get a fresh, owned path.
  */
+const regionPathCache = new WeakMap<Path, Path2D>()
 export function regionPath(region: Region, dx = 0, dy = 0): Path2D {
+  if (dx === 0 && dy === 0) {
+    const hit = regionPathCache.get(region.path)
+    if (hit) return hit
+    const fresh = buildRegionPath(region, 0, 0)
+    regionPathCache.set(region.path, fresh)
+    return fresh
+  }
+  return buildRegionPath(region, dx, dy)
+}
+
+function buildRegionPath(region: Region, dx: number, dy: number): Path2D {
   const path = new Path2D()
   for (const sub of region.path.subpaths) {
     const bz = pathToBezier(sub)
@@ -839,10 +857,12 @@ export function maskClipPath(doc: Doc, mask: Layer, frame: number, rctx: RenderC
 }
 
 /** Canvas style of a paint (solid or gradient), anchored to `bbox`. Reused for fill AND stroke.
- *  `colorParams` resolves a stop bound to a symbol color param (`0:teinte@0.8`) per instance. */
-function paintStyle(ctx: CanvasRenderingContext2D, paint: Paint, bbox: ReturnType<typeof regionBBox>, fallback: string, colorParams?: Record<string, string>): string | CanvasGradient {
+ *  `colorParams` resolves a stop bound to a symbol color param (`0:teinte@0.8`) per instance.
+ *  `bbox` is a THUNK: a solid paint — the common case, and the one every plain region takes every frame —
+ *  returns its colour without ever measuring the geometry. */
+function paintStyle(ctx: CanvasRenderingContext2D, paint: Paint, bbox: () => ReturnType<typeof regionBBox>, fallback: string, colorParams?: Record<string, string>): string | CanvasGradient {
   if (paint.type === 'solid') return paint.color
-  const b = paint.box ?? bbox
+  const b = paint.box ?? bbox()
   if (!b) return fallback
   const w = b.maxX - b.minX
   const h = b.maxY - b.minY
@@ -869,7 +889,8 @@ function paintStyle(ctx: CanvasRenderingContext2D, paint: Paint, bbox: ReturnTyp
 
 function fillStyleFor(ctx: CanvasRenderingContext2D, region: Region, colorParams?: Record<string, string>): string | CanvasGradient {
   if (region.fillParam) { const c = colorParams?.[region.fillParam]; if (c) return c } // `fill <param>` → the instance's color (else fall back to region.color)
-  return paintStyle(ctx, regionPaint(region), regionBBox(region), region.color, colorParams)
+  if (!region.paint) return region.color // plain colour: no `solid()` wrapper to allocate, no geometry to measure
+  return paintStyle(ctx, regionPaint(region), () => regionBBox(region), region.color, colorParams)
 }
 
 /** Active tint with its color RESOLVED against the param scope (null if absent / amount ~0). Returns the
@@ -951,8 +972,12 @@ function renderOneItem(
       const ctm = it.transform
       const childParent = compose(parent, ctm) // WORLD space of the container's children
       const tint = resolveTint(it.tint, rctx.colorParams)
-      const scale = scaleOf(ctx)
-      const filterStr = cssFilterString(it.filters, scale)
+      // `scaleOf` reads the context matrix, and reading it allocates a DOMMatrix. Only an isolated
+      // container needs the scale (to size its filters in screen px), so a plain group — every container
+      // in an undecorated scene, hundreds per frame — never asks for it.
+      const isolated = !!tint || !!it.filters?.length
+      const scale = isolated ? scaleOf(ctx) : 1
+      const filterStr = isolated ? cssFilterString(it.filters, scale) : ''
       // Tint AND/OR filters -> isolate the content off-screen (area = object's box) then recompose.
       if (tint || filterStr) {
         const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
@@ -972,27 +997,36 @@ function renderOneItem(
         ctx.restore()
       }
     } else if (isText(it)) {
-      const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
       // Text-on-path glyphs live at the baked path's coords (not within `box`); size the tint/filter
       // isolation buffer to the path extent, inflated by the font size for glyph ascent/descent.
-      const pb = it.textPath ? pathBBox(it.textPath.path) : null
-      if (pb) expandRect(acc, matOf(ctx.getTransform()), pb.minX - it.size, pb.minY - it.size, pb.maxX + it.size, pb.maxY + it.size)
-      else expandRect(acc, compose(matOf(ctx.getTransform()), it.transform), 0, 0, it.box.w, it.box.h)
-      paintLeafCached(ctx, rctx, doc, it, it.filters, opacity, acc, (c) => paintText(c, it))
+      const devBBox = () => {
+        const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
+        const pb = it.textPath ? pathBBox(it.textPath.path) : null
+        if (pb) expandRect(acc, matOf(ctx.getTransform()), pb.minX - it.size, pb.minY - it.size, pb.maxX + it.size, pb.maxY + it.size)
+        else expandRect(acc, compose(matOf(ctx.getTransform()), it.transform), 0, 0, it.box.w, it.box.h)
+        return acc
+      }
+      paintLeafCached(ctx, rctx, doc, it, it.filters, opacity, devBBox, (c) => paintText(c, it))
     } else if (isImage(it)) {
       const src = rctx.image?.(it.assetId) ?? null
-      const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
-      expandRect(acc, compose(matOf(ctx.getTransform()), it.transform), 0, 0, it.w, it.h)
-      paintLeafCached(ctx, rctx, doc, it, it.filters, opacity, acc, (c) => paintImage(c, it, src))
+      const devBBox = () => {
+        const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
+        expandRect(acc, compose(matOf(ctx.getTransform()), it.transform), 0, 0, it.w, it.h)
+        return acc
+      }
+      paintLeafCached(ctx, rctx, doc, it, it.filters, opacity, devBBox, (c) => paintImage(c, it, src))
     } else {
       // Region: fill (unless noFill) + optional outline (stroke), same Bezier path.
       const reg = it as Region
       if (reg.filters?.length) {
         // RARE case: filters on a path -> we isolate off-screen then recompose (closure tolerated here).
-        const lb = regionBBox(reg)
-        const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
-        if (lb) expandRect(acc, matOf(ctx.getTransform()), lb.minX, lb.minY, lb.maxX, lb.maxY)
-        paintLeafCached(ctx, rctx, doc, reg, reg.filters, opacity, acc, (c) => paintRegion(c, reg, rctx.colorParams))
+        const devBBox = () => {
+          const lb = regionBBox(reg)
+          const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
+          if (lb) expandRect(acc, matOf(ctx.getTransform()), lb.minX, lb.minY, lb.maxX, lb.maxY)
+          return acc
+        }
+        paintLeafCached(ctx, rctx, doc, reg, reg.filters, opacity, devBBox, (c) => paintRegion(c, reg, rctx.colorParams))
       } else if (opacity < 1) {
         // Semi-transparent: scope globalAlpha with save/restore (paintRegion sets its own fill/stroke style).
         ctx.save(); ctx.globalAlpha *= opacity; paintRegion(ctx, reg, rctx.colorParams); ctx.restore()
@@ -1036,12 +1070,15 @@ function trimmedPath(reg: Region, w: { from: number; to: number }): Path2D | nul
  *  360 content draws over 60 frames where a filtered group, still, drew 0). `filterCacheSlot` decides on
  *  its own whether the item may be cached at all: a bound text or a shape with an animated `draw`, never. */
 function paintLeafCached(
-  ctx: CanvasRenderingContext2D, rctx: RenderCtx, doc: Doc, it: Item, filters: Filter[] | undefined, opacity: number, devBBox: BBox,
+  ctx: CanvasRenderingContext2D, rctx: RenderCtx, doc: Doc, it: Item, filters: Filter[] | undefined, opacity: number, devBBox: () => BBox,
   draw: (c: CanvasRenderingContext2D) => void,
 ): void {
-  const scale = scaleOf(ctx)
   const tint = resolveTint('tint' in it ? it.tint : undefined, rctx.colorParams)
-  const filterStr = cssFilterString(filters, scale)
+  // Same reasoning as the container path: an un-isolated leaf needs neither the context matrix (`scaleOf`)
+  // nor its own screen box — `devBBox` is a thunk so a plain text/image measures nothing per frame.
+  const isolated = !!tint || !!filters?.length
+  const scale = isolated ? scaleOf(ctx) : 1
+  const filterStr = isolated ? cssFilterString(filters, scale) : ''
   const slot = tint || filterStr ? filterCacheSlot(rctx, doc, it, ctx, tint, filterStr) : undefined
   paintLeaf(ctx, tint ?? undefined, filters, opacity, devBBox, scale, draw, filterStr, slot)
 }
@@ -1066,7 +1103,7 @@ function paintRegion(c: CanvasRenderingContext2D, reg: Region, colorParams?: Rec
     if (s.miterLimit != null) c.miterLimit = s.miterLimit
     c.setLineDash(s.dash ?? [])
     const paramColor = reg.strokeParam ? colorParams?.[reg.strokeParam] : undefined // `stroke <param>` → instance color
-    c.strokeStyle = paramColor || paintStyle(c, s.paint, regionBBox(reg), reg.color, colorParams) // empty/undefined → literal paint (gradient stops resolved per param)
+    c.strokeStyle = paramColor || paintStyle(c, s.paint, () => regionBBox(reg), reg.color, colorParams) // empty/undefined → literal paint (gradient stops resolved per param)
     c.stroke(line)
   }
 }
@@ -1095,7 +1132,7 @@ function paintText(ctx: CanvasRenderingContext2D, t: Text) {
     ctx.lineJoin = s.join ?? 'round'
     if (s.miterLimit != null) ctx.miterLimit = s.miterLimit
     ctx.setLineDash(s.dash ?? [])
-    ctx.strokeStyle = paintStyle(ctx, s.paint, { minX: 0, minY: 0, maxX: t.box.w, maxY: t.box.h }, t.color)
+    ctx.strokeStyle = paintStyle(ctx, s.paint, () => ({ minX: 0, minY: 0, maxX: t.box.w, maxY: t.box.h }), t.color)
   }
   for (let i = 0; i < lines.length; i++) {
     const y = i * lh
@@ -1126,7 +1163,7 @@ function paintTextOnPath(ctx: CanvasRenderingContext2D, t: Text) {
     ctx.lineJoin = stroke.join ?? 'round'
     if (stroke.miterLimit != null) ctx.miterLimit = stroke.miterLimit
     ctx.setLineDash(stroke.dash ?? [])
-    ctx.strokeStyle = paintStyle(ctx, stroke.paint, pathBBox(tp.path), t.color)
+    ctx.strokeStyle = paintStyle(ctx, stroke.paint, () => pathBBox(tp.path), t.color)
   }
   if (L <= 0) {
     // Degenerate path (zero length) → keep the content visible as straight text at the origin.
@@ -1190,7 +1227,7 @@ function paintImage(ctx: CanvasRenderingContext2D, im: import('@flatkit/types').
 
 /** Paints a leaf (text/image) with opacity + tint (Flash) + filters (P4.2), off-screen if needed.
  *  `devBBox` = screen box of the leaf (to size the off-screen area to the object, not the full screen). */
-function paintLeaf(ctx: CanvasRenderingContext2D, tint: Tint | undefined, filters: Filter[] | undefined, opacity: number, devBBox: BBox, scale: number, draw: (c: CanvasRenderingContext2D) => void, knownFilterStr?: string, cache?: CacheSlot) {
+function paintLeaf(ctx: CanvasRenderingContext2D, tint: Tint | undefined, filters: Filter[] | undefined, opacity: number, devBBoxOf: () => BBox, scale: number, draw: (c: CanvasRenderingContext2D) => void, knownFilterStr?: string, cache?: CacheSlot) {
   const t = tint && tint.amount > 0.001 ? tint : null
   const filterStr = knownFilterStr ?? cssFilterString(filters, scale)
   if (!t && !filterStr) {
@@ -1200,6 +1237,7 @@ function paintLeaf(ctx: CanvasRenderingContext2D, tint: Tint | undefined, filter
     ctx.restore()
     return
   }
+  const devBBox = devBBoxOf()
   // A LEAF gets the same composite cache a container has. It used to pass none, so `circle … filter glow`
   // — the shape a decorated scene is full of — re-isolated off-screen on EVERY frame, moving or not:
   // measured at 360 content draws over 60 frames where a filtered group, still, drew 0.
@@ -1220,9 +1258,12 @@ export function renderLayers(
 ) {
   if (depth > MAX_NEST) return // untrusted doc: pathological nesting -> we stop
   const { hidden: hid, masks, guides } = layerStructure(layers) // hidden ids + mask/guide parents in ONE pass
-  const clipCache = new Map<string, Path2D>() // one mask clips several children -> reuse
-  const maskCache = new Map<string, { items: Item[]; glyph: boolean }>() // resolved matter + clip type
-  const guideCache = new Map<string, Path | null>() // one guide drives several children -> reuse
+  // Allocated ON DEMAND: this function runs once per container per frame (hundreds of times in a busy
+  // scene) and the overwhelming majority of those stacks carry neither a mask nor a guide, so three empty
+  // Maps per call was three pieces of garbage per container per frame.
+  let clipCache: Map<string, Path2D> | null = null // one mask clips several children -> reuse
+  let maskCache: Map<string, { items: Item[]; glyph: boolean }> | null = null // resolved matter + clip type
+  let guideCache: Map<string, Path | null> | null = null // one guide drives several children -> reuse
   for (const layer of layers) {
     if (hid.has(layer.id)) continue
     if (layer.isMask) continue // the mask's shape is not painted (it only serves to clip)
@@ -1232,12 +1273,14 @@ export function renderLayers(
     const guideLayer = guides.get(layer.id)
     let guidePath: Path | null | undefined
     if (guideLayer) {
+      guideCache ??= new Map()
       guidePath = guideCache.get(guideLayer.id)
       if (guidePath === undefined) { guidePath = guidePathOf(guideLayer, frame, rctx); guideCache.set(guideLayer.id, guidePath) }
     }
     const items = resolveLayerAt(layer, frame, { fps: rctx.fps, ctx: rctx.expr, guide: guidePath ?? undefined, orient: layer.orientToGuide, parent, itemState: rctx.itemState, statePath: rctx.statePath, channelValue: rctx.channelValue })
     const mask = masks.get(layer.id)
     if (mask) {
+      maskCache ??= new Map()
       let mi = maskCache.get(mask.id)
       if (!mi) {
         const mItems = resolveLayerAt(mask, frame, { fps: rctx.fps, ctx: rctx.expr })
@@ -1257,6 +1300,7 @@ export function renderLayers(
         )
       } else {
         // Vector matter (common case) -> fast clip, unchanged.
+        clipCache ??= new Map()
         let clip = clipCache.get(mask.id)
         if (!clip) { const p = new Path2D(); collectShape(doc, mi.items, frame, IDENTITY, new Set(), p, rctx); clip = p; clipCache.set(mask.id, clip) }
         ctx.save()

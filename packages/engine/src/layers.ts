@@ -107,10 +107,26 @@ export function maskMap(layers: Layer[]): Map<string, Layer> {
   return m
 }
 
+// Shared empties for the flat case below. Handed out read-only: every caller only ever queries them
+// (`hidden.has`, `masks.get`, `guides.get`).
+const NO_IDS: ReadonlySet<string> = new Set<string>()
+const NO_LAYERS: ReadonlyMap<string, Layer> = new Map<string, Layer>()
+
 /** The three layer-structure lookups (hidden ids / mask parents / guide parents) computed in ONE pass —
  *  a single `byId` map and a single loop instead of three. The render and hit traversals need all three
- *  every frame, so this avoids rebuilding the same map (and re-walking the same layers) twice. */
-export function layerStructure(layers: Layer[]): { hidden: Set<string>; masks: Map<string, Layer>; guides: Map<string, Layer> } {
+ *  every frame, so this avoids rebuilding the same map (and re-walking the same layers) twice.
+ *
+ *  A stack where NO layer declares a `parent` — a group's own layers, i.e. most of the calls in a frame —
+ *  can have neither a mask, a guide, nor a hidden-by-ancestor layer, since all three reach a layer only
+ *  through that link. It gets answered without building the id map or climbing anything. */
+export function layerStructure(layers: Layer[]): { hidden: ReadonlySet<string>; masks: ReadonlyMap<string, Layer>; guides: ReadonlyMap<string, Layer> } {
+  let nested = false
+  for (const l of layers) if (l.parent) { nested = true; break }
+  if (!nested) {
+    let hidden: Set<string> | null = null
+    for (const l of layers) if (!l.visible) (hidden ??= new Set()).add(l.id)
+    return { hidden: hidden ?? NO_IDS, masks: NO_LAYERS, guides: NO_LAYERS }
+  }
   const byId = new Map(layers.map((l) => [l.id, l]))
   const hidden = new Set<string>()
   const masks = new Map<string, Layer>()

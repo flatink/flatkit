@@ -330,6 +330,33 @@ describe('FlatPlayer -- interactor (drag / dropped on)', () => {
     pl.destroy()
   })
 
+  // The player measures a `trace` target's WORLD path once per document (it is built from roster
+  // transforms, so playback never moves it). `load()` must forget that measurement BEFORE anything reads
+  // it again — `reseedDerivedState` immediately asks for it, to put the pen tip on the new path's start.
+  it('trace: `load` re-measures the path — the pen tip lands on the SECOND document, not the first', () => {
+    const h: Handlers = {}
+    const traceDoc = (d: string): Doc => {
+      const region: Region = { id: 'r', color: '#000', path: parsePathData(d) }
+      const pathGroup: Group = { id: 'Path', kind: 'group', name: 'Path', transform: IDENTITY, layers: [{ id: 'cl', name: 'c', visible: true, locked: false, opacity: 1, items: [region] }] }
+      const cursor = { ...piece(), id: 'Cursor', name: 'Cursor' }
+      return {
+        width: 100, height: 100, symbols: [], variables: { prog: 0, tipX: 0, tipY: 0 },
+        layers: [{ id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: [pathGroup, cursor] }],
+        interactors: [{ targetId: 'Cursor', axis: 'trace', varX: 'prog', confine: 'Path', grid: 20, step: 40, pointX: 'tipX', pointY: 'tipY' }],
+        timeline: { fps: 24, durationFrames: 1, tracks: [] },
+      }
+    }
+    const pl = new FlatPlayer(fakeCanvas(h), traceDoc('M0 20L100 20'), { ...opts, render: false })
+    expect(pl.getVar('tipY') as number).toBeCloseTo(20, 1)
+    pl.load(traceDoc('M0 80L100 80')) // the same target name, a path 60px lower
+    expect(pl.getVar('tipY') as number).toBeCloseTo(80, 1) // 20 would mean the FIRST document was measured
+    // …and the gesture itself follows the new geometry too.
+    h.pointerdown({ clientX: 0, clientY: 80, pointerId: 1 })
+    h.pointermove({ clientX: 30, clientY: 80, pointerId: 1 })
+    expect(pl.getVar('prog') as number).toBeGreaterThan(0)
+    pl.destroy()
+  })
+
   it('indexed output: a gesture writes into an ELEMENT of an array (pos[i])', () => {
     const h: Handlers = {}
     const pc = { ...piece(), expressions: { x: 'pos[1]' } as Record<string, string> }

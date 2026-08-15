@@ -33,30 +33,34 @@ const channelsOf = (t: Transform, opacity: number): ObjectChannels => {
 }
 
 /** Walk of the rendered tree (layers → resolved poses), composing parent→child. `visit` receives each
- *  poseable item and its WORLD matrix. Shared by the by-name and by-id resolvers. */
+ *  poseable item and its WORLD matrix, and returns `true` to STOP the walk — a by-id lookup answers on the
+ *  first match instead of resolving every remaining layer of the scene (each of which costs a
+ *  `resolveLayerAt`). Shared by the by-name and by-id resolvers. */
 type Poseable = Group | Instance | Text | Image
-type Visit = (it: Poseable, world: Transform, parent: Transform) => void
+type Visit = (it: Poseable, world: Transform, parent: Transform) => boolean | void
 const MAX_NEST = 256 // overflow guard (an untrusted doc with pathological nesting); beyond any real rig
-function walk(doc: Doc, items: Item[], frame: number, matrix: Transform, fps: number, ctx: ExprContext | undefined, seen: Set<string>, visit: Visit, depth = 0): void {
-  if (depth > MAX_NEST) return
+/** `true` = a visitor asked to stop; the callers unwind without resolving anything further. */
+function walk(doc: Doc, items: Item[], frame: number, matrix: Transform, fps: number, ctx: ExprContext | undefined, seen: Set<string>, visit: Visit, depth = 0): boolean {
+  if (depth > MAX_NEST) return false
   for (const it of items) {
     if (!isPoseable(it)) continue // material (Region) has no name
     const t = compose(matrix, it.transform)
-    visit(it, t, matrix) // matrix = the parent's WORLD transform (the space where the item's x/y live)
+    if (visit(it, t, matrix) === true) return true // matrix = the parent's WORLD transform (the space where the item's x/y live)
     if (isInstance(it)) {
       if (seen.has(it.symbolId)) continue // recursion guard (a self-referencing symbol)
       const sym = getSymbol(doc, it.symbolId)
       const local = sym?.timeline ? resolveInstanceFrame(it.playback, frame, sym.timeline.durationFrames) : frame
       const next = new Set([...seen, it.symbolId])
-      for (const l of containerLayers(doc, it)) if (l.visible) walk(doc, resolveLayerAt(l, local, { fps, ctx, parent: t }), local, t, fps, ctx, next, visit, depth + 1)
+      for (const l of containerLayers(doc, it)) if (l.visible && walk(doc, resolveLayerAt(l, local, { fps, ctx, parent: t }), local, t, fps, ctx, next, visit, depth + 1)) return true
     } else if (isGroup(it)) {
-      for (const l of it.layers) if (l.visible) walk(doc, resolveLayerAt(l, frame, { fps, ctx, parent: t }), frame, t, fps, ctx, seen, visit, depth + 1)
+      for (const l of it.layers) if (l.visible && walk(doc, resolveLayerAt(l, frame, { fps, ctx, parent: t }), frame, t, fps, ctx, seen, visit, depth + 1)) return true
     }
   }
+  return false
 }
 
 const roots = (doc: Doc, frame: number, ctx: ExprContext | undefined, fps: number, visit: Visit) => {
-  for (const l of doc.layers) if (l.visible) walk(doc, resolveLayerAt(l, frame, { fps, ctx, parent: IDENTITY }), frame, IDENTITY, fps, ctx, new Set(), visit)
+  for (const l of doc.layers) if (l.visible && walk(doc, resolveLayerAt(l, frame, { fps, ctx, parent: IDENTITY }), frame, IDENTITY, fps, ctx, new Set(), visit)) return
 }
 
 /**
@@ -73,25 +77,33 @@ export function namedChannels(doc: Doc, frame: number, ctx: ExprContext | undefi
   return out
 }
 
+/**
+ * An object's world CHANNELS and its PARENT's world transform, by id, in ONE walk. Every handler that
+ * fires (`press`, `drag` — which fires on every pointer move of a grab) needs both, and they used to be
+ * two independent resolutions of the whole scene.
+ * `undefined` if the object is not in the rendered tree at this frame.
+ */
+export function objectPlacementById(doc: Doc, id: string, frame: number, ctx: ExprContext | undefined, fps: number): { channels: ObjectChannels; parent: Transform } | undefined {
+  let found: { channels: ObjectChannels; parent: Transform } | undefined
+  roots(doc, frame, ctx, fps, (it, t, parent) => {
+    if (it.id !== id) return
+    found = { channels: channelsOf(t, it.opacity ?? 1), parent }
+    return true // the first match answers: stop resolving the rest of the scene
+  })
+  return found
+}
+
 /** World channels of ONE object by its `id` (for `self` in handlers, where the object is known by id,
  *  not by name). `undefined` if the object is not in the rendered tree at this frame. */
 export function objectChannelsById(doc: Doc, id: string, frame: number, ctx: ExprContext | undefined, fps: number): ObjectChannels | undefined {
-  let found: ObjectChannels | undefined
-  roots(doc, frame, ctx, fps, (it, t) => {
-    if (it.id === id && !found) found = channelsOf(t, it.opacity ?? 1)
-  })
-  return found
+  return objectPlacementById(doc, id, frame, ctx, fps)?.channels
 }
 
 /** WORLD transform of an object's PARENT — the space in which its x/y live (its `x = var` binding).
  *  For a root object = identity; nested = the composed transform of the ancestors. Used to convert a
  *  world point (the pointer) → the object's local space before writing the variable (dragging a nested object). */
 export function objectParentTransform(doc: Doc, id: string, frame: number, ctx: ExprContext | undefined, fps: number): Transform | undefined {
-  let found: Transform | undefined
-  roots(doc, frame, ctx, fps, (it, _world, parent) => {
-    if (it.id === id && !found) found = parent
-  })
-  return found
+  return objectPlacementById(doc, id, frame, ctx, fps)?.parent
 }
 
 /**

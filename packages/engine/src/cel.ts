@@ -45,12 +45,7 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
   if (!cels || cels.length === 0) {
     // STATIC layer: items as-is — but we still apply a container's channel drivers (a static object can be
     // animated/driven by an expression OR a stateful modifier, e.g. opacity:'lit' / spring rotation).
-    const hasChannels = (it: Item): boolean => {
-      if (!isPoseable(it)) return false
-      const e = it.expressions, m = it.modifiers
-      return (!!e && (EXPR_CHANNELS.some((c) => e[c] != null) || OFFSET_CHANNELS.some((c) => e[c] != null))) || (!!m && EXPR_CHANNELS.some((c) => m[c] != null))
-    }
-    if (!layer.items.some((it) => hasChannels(it) || isDynamicLeaf(it))) return layer.items
+    if (!layer.items.some(needsResolve)) return layer.items
     return layer.items.map((it) => {
       let out: Item = it
       if (hasChannels(it) && isPoseable(it)) {
@@ -103,6 +98,17 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
 }
 
 // ── Internal ────────────────────────────────────────────────────────────────
+
+/** Does this item carry a channel driver (expression or stateful modifier)? Module-level, not a closure
+ *  rebuilt inside `resolveLayerAt`: that function runs once per layer per frame, hundreds of times in a
+ *  busy scene, and the predicate is a pure function of the item. */
+function hasChannels(it: Item): boolean {
+  if (!isPoseable(it)) return false
+  const e = it.expressions, m = it.modifiers
+  return (!!e && (EXPR_CHANNELS.some((c) => e[c] != null) || OFFSET_CHANNELS.some((c) => e[c] != null))) || (!!m && EXPR_CHANNELS.some((c) => m[c] != null))
+}
+/** Does a STATIC layer's item need per-frame resolution at all? (Else the roster is handed back as-is.) */
+const needsResolve = (it: Item): boolean => hasChannels(it) || isDynamicLeaf(it)
 
 type ResolvedPose = { transform: Transform; opacity: number; tint?: Tint; filters?: Filter[] }
 /** The resting attributes of a body (roster item) a pose patches on top of. */
@@ -265,6 +271,24 @@ const fmtNum = (v: number, decimals?: number): string => {
   if (decimals != null) return v.toFixed(Math.max(0, Math.floor(decimals)))
   return Number.isInteger(v) ? String(v) : String(Math.round(v * 1000) / 1000)
 }
+/**
+ * A LEAF's evaluation overlay: `time`/`frame`/`clock` and nothing else, memoized per resolve pass (like
+ * `evalOverlayFor`). The scene-wide context — variables plus every named object, hundreds of keys — rides
+ * along as `evalExpr`'s by-reference `base` instead of being COPIED into a fresh scope: a bound text
+ * (a score, a timer) re-evaluates every frame, and it was paying a full copy of the scene each time.
+ * Name precedence is unchanged: MATH, then this overlay, then the scene context.
+ */
+const leafOverlayCache = new WeakMap<ResolveOpts, ReturnType<typeof exprScope>>()
+function leafOverlayFor(opts: ResolveOpts, time: number, frame: number): ReturnType<typeof exprScope> {
+  let o = leafOverlayCache.get(opts)
+  if (o === undefined) {
+    const clock = typeof opts.ctx?.clock === 'number' ? opts.ctx.clock : undefined
+    o = exprScope(undefined, time, frame, undefined, clock)
+    leafOverlayCache.set(opts, o)
+  }
+  return o
+}
+
 /** Resolved content of a `bind` text: the formatted numeric value, substituted into the `{}` slot (or alone). */
 function resolveBoundText(t: { content: string; bind?: string; decimals?: number }, frame: number, opts: ResolveOpts): string {
   if (!t.bind) return t.content
@@ -272,7 +296,7 @@ function resolveBoundText(t: { content: string; bind?: string; decimals?: number
   if (!compiled.ok) return t.content // invalid expression → literal content (the UI reports the error)
   const fps = opts.fps ?? 24
   const time = fps > 0 ? frame / fps : frame
-  const v = evalExpr(compiled.node, exprScope(opts.ctx, time, frame), 0)
+  const v = evalExpr(compiled.node, leafOverlayFor(opts, time, frame), 0, opts.ctx)
   const s = fmtNum(v, t.decimals)
   return t.content.includes('{}') ? t.content.replaceAll('{}', s) : s
 }
@@ -309,10 +333,11 @@ function resolveDynamicLeaf(it: Item, frame: number, opts: ResolveOpts): Item {
 function evalNumberAt(frame: number, opts: ResolveOpts): (expr: string, fallback: number) => number {
   const fps = opts.fps ?? 24
   const time = fps > 0 ? frame / fps : frame
+  const scope = leafOverlayFor(opts, time, frame) // shared overlay; the scene ctx stays by reference (`base`)
   return (expr, fallback) => {
     const c = compileCached(expr)
     if (!c.ok) return fallback
-    const v = evalExpr(c.node, exprScope(opts.ctx, time, frame), fallback)
+    const v = evalExpr(c.node, scope, fallback, opts.ctx)
     return Number.isFinite(v) ? v : fallback
   }
 }

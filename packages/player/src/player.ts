@@ -10,7 +10,7 @@ import type { Asset, Doc, Layer, Point, Text } from '@flatkit/types'
 import { resolveInstanceFrame, scheduleSounds, applyEasing, type Timeline, type Easing } from '@flatkit/engine/timeline'
 import { stateValueOf, initialStateValue, stateMachineByParam } from '@flatkit/engine/states'
 import { compileCached, evalExpr, exprScope, type ExprContext, type Compiled } from '@flatkit/engine/expr'
-import { runActions, MAX_SEND_FIELDS, MAX_SEND_TEXT, SEND_EVENT_NAME, isSendField, type Action, type ActionHost, type ItemEvent } from '@flatkit/engine/actions'
+import { runActions, MAX_SEND_FIELDS, MAX_SEND_TEXT, SEND_EVENT_NAME, isSendField, type Action, type ActionHost, type Interaction, type ItemEvent } from '@flatkit/engine/actions'
 import { containerLayers, getSymbol, isGroup, isInstance, isText } from '@flatkit/engine/layers'
 import { renderLayers, collectModifierTargets, docHasModifiers, type FilterCacheEntry, type RenderCtx } from './drawScene'
 import { restState, advanceModifier, type ModState } from '@flatkit/engine/channelModifiers'
@@ -18,7 +18,7 @@ import { withCels } from '@flatkit/engine/migrateCel'
 import { sanitizeDoc } from '@flatkit/engine/validateDoc'
 import { applyInstanceBinds } from '@flatkit/engine/instanceBind'
 import { importedFunctions } from '@flatkit/engine/stdlib'
-import { namedChannels, objectChannelsById, objectParentTransform, type NamedChannels, type ObjectChannels } from '@flatkit/engine/sceneRefs'
+import { namedChannels, objectChannelsById, objectPlacementById, type NamedChannels, type ObjectChannels } from '@flatkit/engine/sceneRefs'
 import { itemBoundsByName, itemBoundsById, itemBoundsByIds, dropZoneBounds, tracePathByName, groupTargets, revealGrid } from '@flatkit/engine/groups'
 import { projectToPath, samplePathAt, pathArcLength, type Path } from '@flatkit/engine/path'
 import { apply, invert, spaceConversions, IDENTITY, type Transform } from '@flatkit/engine/transform'
@@ -143,18 +143,30 @@ export function lerpVars(prev: Map<string, number | number[]>, cur: Map<string, 
 const SIM_HZ = 60
 const SIM_STEP = 1 / SIM_HZ // seconds per simulation step
 const RESERVED = new Set(['time', 'frame', 'clock', 'value']) // runtime-provided names; never shadowed by a variable
-/** The scene references `mouse.wheel` in some expression → the player should listen to the wheel and
- *  `preventDefault` it (consume the scroll). Else the listener stays inert and the page scrolls normally. */
-const docUsesWheel = (doc: Doc): boolean => /mouse\s*\.\s*wheel/.test(JSON.stringify(doc))
-// Does any expression read the pointer POSITION (`mouse.x`/`mouse.y`)? If not, a pointermove changes no
-// expression input, so the per-move `bustNamed()` (cache invalidation → rebuild) is pure waste — skip it.
-const docReadsMousePos = (doc: Doc): boolean => /mouse\s*\.\s*[xy]/.test(JSON.stringify(doc))
-/** Key names the scene actually READS (`keys.<Name>` in any expression) — same over-approximating scan as
- *  `docUsesWheel` (a literal "keys.X" inside a text is a false positive; harmless). The player consumes
- *  ONLY these: everything else keeps its native page behavior (scroll, shortcuts). */
+/**
+ * What the scene reads from the INPUT devices, over-approximated by ONE scan of the serialized document
+ * (a literal "keys.X" inside a text is a false positive; harmless — it only makes the player listen).
+ *  - `wheel`: the scene references `mouse.wheel` → listen to the wheel and `preventDefault` it (consume the
+ *    scroll). Else the listener stays inert and the page scrolls normally.
+ *  - `mousePos`: does any expression read the pointer POSITION (`mouse.x`/`mouse.y`)? If not, a pointermove
+ *    changes no expression input, so the per-move `bustNamed()` (cache invalidation → rebuild) is pure waste.
+ *  - `keys`: the key names the scene actually READS. The player consumes ONLY these; everything else keeps
+ *    its native page behavior (scroll, shortcuts).
+ *
+ * The three used to ask their own question, each serializing the WHOLE `.flatpack` to do it — three full
+ * stringifications of the document on every load.
+ */
+type InputUse = { wheel: boolean; mousePos: boolean; keys: Set<string> }
+function docInputUse(doc: Doc): InputUse {
+  const src = JSON.stringify(doc)
+  const keys = new Set<string>()
+  for (const m of src.matchAll(/keys\s*\.\s*([A-Za-z_]\w*)/g)) keys.add(m[1])
+  return { wheel: /mouse\s*\.\s*wheel/.test(src), mousePos: /mouse\s*\.\s*[xy]/.test(src), keys }
+}
+
 /** Grab-time state of a `trace`: its WORLD path and that path's total length (the unit `step` is in). */
-const traceGrab = (doc: Doc, it: Interactor): { tracePath: Path | null; traceMaxT: number; traceLen: number } => {
-  const tracePath = it.confine ? tracePathByName(doc, it.confine) : null
+const traceGrab = (pathOf: (name: string) => Path | null, it: Interactor): { tracePath: Path | null; traceMaxT: number; traceLen: number } => {
+  const tracePath = it.confine ? pathOf(it.confine) : null
   return { tracePath, traceMaxT: 0, traceLen: tracePath ? pathArcLength(tracePath) : 1 }
 }
 
@@ -162,11 +174,6 @@ const traceGrab = (doc: Doc, it: Interactor): { tracePath: Path | null; traceMax
 const traceOutputNames = (doc: Doc): Set<string> =>
   new Set((doc.interactors ?? []).filter((i) => i.axis === 'trace' && i.step !== undefined && i.varX).map((i) => i.varX as string))
 
-const docReadKeys = (doc: Doc): Set<string> => {
-  const out = new Set<string>()
-  for (const m of JSON.stringify(doc).matchAll(/keys\s*\.\s*([A-Za-z_]\w*)/g)) out.add(m[1])
-  return out
-}
 /** Keys we never consume, whatever the scene declares: browser/OS shortcuts (a modifier is held) and the
  *  navigation/system keys — swallowing those breaks accessibility and the surrounding page. */
 const NEVER_CONSUMED = /^(Tab|F\d{1,2})$/
@@ -323,13 +330,31 @@ export class FlatPlayer {
   private readonly velocityState = new Map<string, number[]>()
   private modAcc = 0 // fixed-step accumulator for the modifier advance (independent of the onEnterFrame sim gate)
   private hasModifiers = false // doc declares ≥1 modifier → run the advance pass (else zero overhead)
+  private hasSymbolTimelines = false // any symbol carries a timeline? (else `activeSymbolTimelines` is empty by construction)
   private instNameCache?: Map<string, { id: string; symbolId: string }>
+  private assetCache?: Map<string, Asset> // asset id -> asset (see `assetById`); rebuilt on load
+  // WORLD path of a `trace` target by name. It is built from the scene's ROSTER transforms, so playback
+  // never moves it — yet it was rebuilt (a full document walk, plus a transformed copy of every subpath) on
+  // every write of a trace's progress, i.e. on every pointer move while a child draws.
+  private readonly tracePathCache = new Map<string, Path | null>()
+  // Handlers and interactors indexed BY TARGET. Both sat on the pointer path: `pickTarget` scanned the whole
+  // interaction list for each item of each hit chain on every move, and `fireEvent` re-filtered it —
+  // allocating a fresh array — for each `drag` a grab emits.
+  private handlerIndex?: Map<string, Map<ItemEvent, Interaction[]>>
+  private interactorIndex?: Map<string, Interactor[]>
   private transRaf = 0 // lightweight rAF driving transitions while the playhead is NOT playing
   private longPressTimer: ReturnType<typeof setTimeout> | null = null
   private lastFrameInt = -1
   private readonly onResize = () => {
     this.measure()
     this.render()
+  }
+  /** Re-reads which input devices the current document uses (see `docInputUse`). Load-time only. */
+  private applyInputUse(): void {
+    const use = docInputUse(this.doc)
+    this.usesWheel = use.wheel
+    this.usesMousePos = use.mousePos
+    this.readKeys = use.keys
   }
   /** Invalidates the named-objects cache (input changed outside of a frame advance). */
   private bustNamed(): void {
@@ -387,6 +412,34 @@ export class FlatPlayer {
     const r = this.canvas.getBoundingClientRect()
     return { x: (e.clientX - r.left - this.view.tx) / this.view.scale, y: (e.clientY - r.top - this.view.ty) / this.view.scale }
   }
+  /** Handlers on an item, by event, in document order (the order they must run in). */
+  private handlersFor(id: string): Map<ItemEvent, Interaction[]> | undefined {
+    if (!this.handlerIndex) {
+      const m = new Map<string, Map<ItemEvent, Interaction[]>>()
+      for (const x of this.doc.interactions ?? []) {
+        let byEvent = m.get(x.targetId)
+        if (!byEvent) { byEvent = new Map(); m.set(x.targetId, byEvent) }
+        const list = byEvent.get(x.event)
+        if (list) list.push(x)
+        else byEvent.set(x.event, [x])
+      }
+      this.handlerIndex = m
+    }
+    return this.handlerIndex.get(id)
+  }
+  /** Every interactor declared on an item, in document order. */
+  private interactorsFor(id: string): Interactor[] | undefined {
+    if (!this.interactorIndex) {
+      const m = new Map<string, Interactor[]>()
+      for (const x of this.doc.interactors ?? []) {
+        const list = m.get(x.targetId)
+        if (list) list.push(x)
+        else m.set(x.targetId, [x])
+      }
+      this.interactorIndex = m
+    }
+    return this.interactorIndex.get(id)
+  }
   /**
    * Target of an event at a point: we walk ALL the hit chains (top to bottom) and, within each,
    * from deepest to root. The first item carrying a handler for `event` wins. This way a click
@@ -394,17 +447,17 @@ export class FlatPlayer {
    * of being swallowed by it.
    */
   private pickTarget(chains: string[][], events: readonly ItemEvent[]): string | null {
-    const inter = this.doc.interactions
-    if (!inter) return null
+    if (!this.doc.interactions?.length) return null
     for (const chain of chains) {
       for (let i = chain.length - 1; i >= 0; i--) {
-        if (inter.some((x) => x.targetId === chain[i] && events.includes(x.event))) return chain[i]
+        const byEvent = this.handlersFor(chain[i])
+        if (byEvent) for (const e of events) if (byEvent.has(e)) return chain[i]
       }
     }
     return null
   }
   private interactorFor(id: string): Interactor | undefined {
-    return this.doc.interactors?.find((x) => x.targetId === id)
+    return this.interactorsFor(id)?.[0] // first declared wins — what the `find` it replaces returned
   }
   /** Is the drag active? `enabled` absent = always; otherwise true iff the expression is != 0. */
   private interactorEnabled(it: Interactor): boolean {
@@ -412,9 +465,11 @@ export class FlatPlayer {
   }
   /** Topmost grabbable item carrying an ACTIVE (drag) interactor, at a point. */
   private pickInteractor(chains: string[][]): string | null {
-    const ins = this.doc.interactors
-    if (!ins?.length) return null
-    for (const chain of chains) for (let i = chain.length - 1; i >= 0; i--) if (ins.some((x) => x.targetId === chain[i] && this.interactorEnabled(x))) return chain[i]
+    if (!this.doc.interactors?.length) return null
+    for (const chain of chains) for (let i = chain.length - 1; i >= 0; i--) {
+      const its = this.interactorsFor(chain[i]) // ANY enabled one makes the item grabbable (as the scan did)
+      if (its?.some((x) => this.interactorEnabled(x))) return chain[i]
+    }
     return null
   }
   /** Applies the current drag: position = pointer + grab offset, then snap, then confine; writes varX/varY.
@@ -577,7 +632,7 @@ export class FlatPlayer {
           this.traceStates.set(it.targetId, { progress: seeded > 1 ? 1 : seeded, dir: 0 })
         }
         if (it.pointX && it.pointY && it.confine) { // …and the marker lands where the ink stops, not at the origin
-          const path = tracePathByName(this.doc, it.confine)
+          const path = this.tracePathFor(it.confine)
           if (path?.subpaths.length) this.writeTracePoint(it, path, this.tracePos(it.targetId, it, 0))
         }
         continue
@@ -654,7 +709,7 @@ export class FlatPlayer {
    *  Tested point = the object's CENTER by default, or the POINTER if `at pointer`. Zone = the group's
    *  explicit `hitbox` if present, otherwise the (static) bbox of its content. */
   private fireDrops(id: string, pointer: Point): void {
-    const drops = this.doc.interactions?.filter((x) => x.targetId === id && x.event === 'drop')
+    const drops = this.handlersFor(id)?.get('drop')
     if (!drops?.length) return
     const pos = objectChannelsById(this.doc, id, this.frame, this.exprCtx(), this.fps)
     const center: Point = { x: pos?.x ?? pointer.x, y: pos?.y ?? pointer.y }
@@ -666,8 +721,8 @@ export class FlatPlayer {
     }
   }
   private fireEvent(id: string, event: ItemEvent): void {
-    const matched = this.doc.interactions?.filter((x) => x.targetId === id && x.event === event)
-    if (!matched?.length) return // no handler -> we skip the self/conversion setup (2 scene walks)
+    const matched = this.handlersFor(id)?.get(event)
+    if (!matched?.length) return // no handler -> we skip the self/conversion setup (a scene walk)
     // `self` + conversions in the handler: resolved BEFORE (ctx without self to avoid recursion),
     // set for the duration of the actions, then restored.
     const prevSelf = this.selfChannels
@@ -675,8 +730,9 @@ export class FlatPlayer {
     this.selfChannels = null
     this.selfParent = null
     const ctx = this.exprCtx()
-    this.selfChannels = objectChannelsById(this.doc, id, this.frame, ctx, this.fps) ?? null
-    this.selfParent = objectParentTransform(this.doc, id, this.frame, ctx, this.fps) ?? IDENTITY
+    const placed = objectPlacementById(this.doc, id, this.frame, ctx, this.fps) // ONE scene walk for both
+    this.selfChannels = placed?.channels ?? null
+    this.selfParent = placed?.parent ?? IDENTITY
     for (const x of matched) runActions(x.actions, this.host)
     this.selfChannels = prevSelf
     this.selfParent = prevParent
@@ -746,10 +802,10 @@ export class FlatPlayer {
       this.grabbed = grabId
       const inter = this.interactorFor(grabId)
       if (inter && this.interactorEnabled(inter)) { // capture the grab offset (the clicked point stays under the cursor) + the parent transform
-        const ctx = this.exprCtx()
-        const pos = objectChannelsById(this.doc, grabId, this.frame, ctx, this.fps)
-        const parent = objectParentTransform(this.doc, grabId, this.frame, ctx, this.fps) ?? IDENTITY
-        this.dragActive = { it: inter, offX: (pos?.x ?? p.x) - p.x, offY: (pos?.y ?? p.y) - p.y, parentInv: invert(parent), ...(inter.axis === 'trace' ? traceGrab(this.doc, inter) : {}), ...(inter.axis === 'reveal' ? this.revealGrabState(grabId, inter) : {}) }
+        const placed = objectPlacementById(this.doc, grabId, this.frame, this.exprCtx(), this.fps) // ONE scene walk for both
+        const pos = placed?.channels
+        const parent = placed?.parent ?? IDENTITY
+        this.dragActive = { it: inter, offX: (pos?.x ?? p.x) - p.x, offY: (pos?.y ?? p.y) - p.y, parentInv: invert(parent), ...(inter.axis === 'trace' ? traceGrab((n) => this.tracePathFor(n), inter) : {}), ...(inter.axis === 'reveal' ? this.revealGrabState(grabId, inter) : {}) }
       }
       this.canvas.setPointerCapture?.(e.pointerId) // keep the drag even if the pointer leaves the canvas
       this.fireEvent(grabId, 'press')
@@ -830,10 +886,9 @@ export class FlatPlayer {
     if (!ctx) throw new Error('FlatPlayer: 2D context unavailable')
     this.ctx = ctx
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
-    this.usesWheel = docUsesWheel(this.doc)
-    this.readKeys = docReadKeys(this.doc)
-    this.usesMousePos = docReadsMousePos(this.doc)
+    this.applyInputUse()
     this.hasModifiers = docHasModifiers(this.doc)
+    this.hasSymbolTimelines = this.doc.symbols.some((s) => !!s.timeline)
     this.buildGrabZones()
     this.traceOutputs = traceOutputNames(this.doc)
     this.loop = opts.loop ?? true
@@ -872,6 +927,10 @@ export class FlatPlayer {
    * actions share the global state; gotoFrame/play acts on the root.
    */
   private activeSymbolTimelines(rootFrame: number): { tl: Timeline; frame: number }[] {
+    // The walk can only ever report a symbol that HAS a timeline. When the library declares none — the
+    // common case for a scene whose symbols are plain drawings — the answer is empty without walking, and
+    // this runs once per rendered frame plus once per simulation step.
+    if (!this.hasSymbolTimelines) return []
     const out: { tl: Timeline; frame: number }[] = []
     const seenSym = new Set<string>()
     const walk = (layers: Layer[], frame: number, seen: Set<string>) => {
@@ -964,7 +1023,7 @@ export class FlatPlayer {
       const st = this.traceStates.get(it.targetId)
       this.traceStates.set(it.targetId, { progress: p, dir: p === 0 ? 0 : (st?.dir ?? 0) }) // back to 0 ⇒ the entry end is open again
       if (it.pointX && it.pointY && it.confine) {
-        const path = tracePathByName(this.doc, it.confine)
+        const path = this.tracePathFor(it.confine)
         if (path?.subpaths.length) this.writeTracePoint(it, path, this.tracePos(it.targetId, it, p))
       }
     }
@@ -1209,9 +1268,7 @@ export class FlatPlayer {
   /** Replaces the played document (resets the framing + the variables, keeps the frame). */
   load(doc: Doc): void {
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
-    this.usesWheel = docUsesWheel(this.doc)
-    this.readKeys = docReadKeys(this.doc)
-    this.usesMousePos = docReadsMousePos(this.doc)
+    this.applyInputUse()
     this.vars = cloneVars(doc.variables)
     this.namedCache = null // new document -> named-objects cache stale
     this.ctxCache = null // new document -> cached expr context stale (vars Map replaced just above)
@@ -1219,15 +1276,23 @@ export class FlatPlayer {
     this.revealStates.clear() // new document -> reveal coverage resets
     this.traceStates.clear() // …and so does a continuous trace's progress
     this.scratched.clear() // …and so does what the renderer rubs out (`erase`)
+    // Every by-document lookup, dropped BEFORE anything below can consult it — `reseedDerivedState` asks
+    // for a `trace`'s path to place its pen tip, and answering that from the PREVIOUS document is exactly
+    // the kind of bug a cache introduces.
+    this.instNameCache = undefined // new document -> name→instance lookup stale
+    this.assetCache = undefined // …and so is the asset lookup
+    this.tracePathCache.clear() // …and the `trace` target geometry
+    this.handlerIndex = undefined // …and the handler/interactor indexes
+    this.interactorIndex = undefined
     this.traceOutputs = traceOutputNames(this.doc)
     this.buildGrabZones() // new document -> new geometry for the `reveal` grab zones
     this.reseedDerivedState() // …then the seeded variables put the derived state back (trace progress, scratched grid)
-    this.instNameCache = undefined // new document -> name→instance lookup stale
     this.paramRt.clear() // new document -> per-instance param transitions reset
     this.channelState.clear() // new document -> modifier integrator state resets
     this.velocityState.clear()
     this.modAcc = 0
     this.hasModifiers = docHasModifiers(this.doc)
+    this.hasSymbolTimelines = this.doc.symbols.some((s) => !!s.timeline)
     if (this.transRaf) { cancelAnimationFrame(this.transRaf); this.transRaf = 0 }
     this.bustNamed()
     this.buildFunctions()
@@ -1395,10 +1460,23 @@ export class FlatPlayer {
     this.transRaf = requestAnimationFrame(step)
   }
 
+  /** WORLD path of a `trace` target, by name (see `tracePathCache`). */
+  private tracePathFor(name: string): Path | null {
+    let p = this.tracePathCache.get(name)
+    if (p === undefined) { p = tracePathByName(this.doc, name); this.tracePathCache.set(name, p) }
+    return p
+  }
+  /** Assets by id. The renderer asks for an image's source on EVERY frame it draws it, and a scan of the
+   *  asset list per image per frame is the kind of cost that only shows up on the scenes that have many of
+   *  both. Built lazily, dropped on `load` (a new document brings new assets). */
+  private assetById(id: string): Asset | undefined {
+    if (!this.assetCache) this.assetCache = new Map((this.doc.assets ?? []).map((a) => [a.id, a]))
+    return this.assetCache.get(id)
+  }
   // Decoded image of an asset (module cache). `null` while not loaded -> re-render on decode.
   private imageFor(assetId: string): CanvasImageSource | null {
     if (this.imageProvider) return this.imageProvider(assetId) // headless backend (skia): pre-decoded images
-    const a = this.doc.assets?.find((x) => x.id === assetId)
+    const a = this.assetById(assetId)
     if (!a) return null
     const url = this.resolveAsset(a) // host-trusted url (default: data: URIs only, no remote fetch)
     if (url == null) return null
@@ -1470,7 +1548,7 @@ export class FlatPlayer {
   }
   private decodeAudio(assetId: string): void {
     if (playerAudioBuffers.has(assetId)) return
-    const a = this.doc.assets?.find((x) => x.id === assetId)
+    const a = this.assetById(assetId)
     if (!a) return
     const url = this.resolveAsset(a) // host-trusted url (default: data: URIs only, no remote fetch)
     if (url == null) return

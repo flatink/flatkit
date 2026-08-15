@@ -110,8 +110,17 @@ export function pathToPolygons(path: Path, tol = POLY_TOL): Polygon[] {
 
 const clamp01s = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
 
+// Memoized per (subpath, tolerance) on the same geometry-is-immutable invariant as `polygonCache`. The
+// arc-length callers re-flatten constantly: `samplePathAt`/`projectToPath` run several times per POINTER
+// MOVE while a `trace` is being drawn, and `makePathSampler` runs once per frame per text-on-path.
+// CALLERS MUST TREAT THE RESULT AS READ-ONLY (it is shared).
+const polylineCache = new WeakMap<Subpath, Map<number, Point[]>>()
+
 /** Flatten ONE subpath into a polyline via pathToBezier (explicit handles OR Catmull-Rom). */
 function flattenSubpath(sub: Subpath, tol: number): Point[] {
+  let byTol = polylineCache.get(sub)
+  const hit = byTol?.get(tol)
+  if (hit) return hit
   const pts: Point[] = []
   const bz = pathToBezier(sub)
   if (bz) {
@@ -121,6 +130,8 @@ function flattenSubpath(sub: Subpath, tol: number): Point[] {
   } else if (sub.segments[0]) {
     pts.push({ ...sub.segments[0].anchor })
   }
+  if (!byTol) { byTol = new Map(); polylineCache.set(sub, byTol) }
+  byTol.set(tol, pts)
   return pts
 }
 
@@ -419,6 +430,21 @@ export function normalizeClosedForText(path: Path, tol = 0.25): Path {
  * For a CLOSED subpath without handles, output === `smoothClosedRing(anchors)`.
  */
 export function pathToBezier(sub: Subpath, cornerCos = 0.5): { start: Point; segs: BezierSeg[] } | null {
+  if (cornerCos === CORNER_COS) { const hit = bezierCache.get(sub); if (hit !== undefined) return hit }
+  const out = computeBezier(sub, cornerCos)
+  if (cornerCos === CORNER_COS) bezierCache.set(sub, out)
+  return out
+}
+
+/** Default corner threshold (cos 60°) — the only one the render/measure paths use, hence the cached one. */
+const CORNER_COS = 0.5
+// Memoized at the default threshold, on the SAME invariant as `polygonCache`/`measureCache`: a subpath's
+// geometry never changes in place (morph/bind produce NEW objects). Every drawn region smooths its outline
+// through here on EVERY frame — it was the single hottest function in a frame profile (10% of a 200-instance
+// scene) — and so does every arc-length walk (`trace`, `draw`). CALLERS MUST TREAT THE RESULT AS READ-ONLY.
+const bezierCache = new WeakMap<Subpath, { start: Point; segs: BezierSeg[] } | null>()
+
+function computeBezier(sub: Subpath, cornerCos: number): { start: Point; segs: BezierSeg[] } | null {
   const seg = sub.segments
   const n = seg.length
   if (n < 2) return null
