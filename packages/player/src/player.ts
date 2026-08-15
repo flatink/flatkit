@@ -66,7 +66,7 @@ export type PlayerOptions = {
   // only — never a remote URL. To serve EXTERNAL (local/same-origin) assets, pass `sameOriginAssetResolver(baseUrl)`:
   // the HOST picks the origin, the (untrusted) document only supplies a relative key, so the security contract holds.
   resolveAsset?: (asset: Asset) => string | null
-  onEvent?: (event: SendEvent) => void // DSL `send` channel -> host (Moiki)
+  onEvent?: (event: SendEvent) => void // DSL `send` channel -> the embedding host
 }
 
 type View = { tx: number; ty: number; scale: number }

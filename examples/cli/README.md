@@ -83,7 +83,7 @@ container, `nohit` makes its whole subtree non-interactive.
 
 ## Stable text id (`text "…" as "<id>"`)
 
-To target a Text item by id (from `send "ev", text("<id>")` or from a host like Moiki), set it at
+To target a Text item by id (from `send "ev", text("<id>")` or from the embedding host), set it at
 write time: `text "Hello" as "txt_greeting" at 20,100 size 32 color #fff box 200 40`.
 Without `as`, the id is auto-generated (unstable, not referenceable). The asymmetry is deliberate: on
 `instance`, `as` sets the **name** (ref by name); on `text`, `as` sets the **id** (ref by id, `findText`).

@@ -214,7 +214,7 @@ export type Action =
   | { do: 'repeat'; count: string; body: Action[] } // count = expression; BOUNDED repeats (anti-loop)
   | { do: 'repeatRange'; var: string; from: string; to: string; body: Action[] } // repeat i from <from> to <to> (inclusive, bounded)
   | { do: 'call'; name: string; args: string[] } // procedure call: name(args) — args = expressions
-  | { do: 'send'; event: string; payload?: SendPayload } // emit a named event to the host (Moiki)
+  | { do: 'send'; event: string; payload?: SendPayload } // emit a named event to the embedding host
   | { do: 'sound'; assetId: string } // play an audio clip (asset) one-shot — triggered by a handler
 
 /** Reusable function: pure value (usable in an expression) or procedure (action block). */

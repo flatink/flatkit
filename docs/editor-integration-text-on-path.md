@@ -1,6 +1,6 @@
-# Editor integration — Text on a path (hand-off note for the flatink-edu agent)
+# Editor integration — Text on a path (hand-off note for the editor side)
 
-> **Audience:** the agent working on the **flatink editor** (`flatink-edu`), which consumes the **published**
+> **Audience:** whoever works on the **FlatInk editor**, which consumes the **published**
 > `@flatkit/*` packages over npm (not the workspace). **Prerequisite:** bump to the `@flatkit/*` version
 > that ships text-on-path (the `curved-text` release — `pnpm update --latest @flatkit/player @flatkit/compiler`),
 > then this note tells you what the editor must add to *author* the feature.

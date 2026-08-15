@@ -160,7 +160,7 @@ function printRegion(r: Region, d: string): string {
 }
 
 // Stable id of a Text item, set by the author via `as "<id>"` (referenced by text("…") on the DSL side /
-// by the Moiki host). Same grammar as `send` event names: letter/"_" then -_alnum, 64 max.
+// by the embedding host). Same grammar as `send` event names: letter/"_" then -_alnum, 64 max.
 const TEXT_ID = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/
 
 function printText(t: Text, withExpr: boolean): string {
@@ -685,7 +685,7 @@ function resolveTextPaths(prog: Program, pending: PendingTextPath[]): void {
 //  `match <Items> onto <Zones> { correct <I> -> <Z>, … [lock on wrong] [on correct/wrong as it {…}] [on done {…}] }`
 //  Generates, per item: `drag <I>_x, <I>_y { enabled <I>_placed == 0 }` + one `dropped on` per zone that sets
 //  the state (`<I>_placed`/`<I>_ok`/`<I>_zone`) then runs the hook actions (generic — no event imposed,
-//  cf. Moiki decoupling). Default is RETRYABLE (a wrong zone does not lock); `lock on wrong` = strict.
+//  cf. host decoupling). Default is RETRYABLE (a wrong zone does not lock); `lock on wrong` = strict.
 //  Completion: each correct drop tests "all _ok == 1" → runs `on done` (no counter/init).
 const subBinder = (text: string, binder: string, item: string): string =>
   text.replace(new RegExp(`text\\(\\s*${binder}\\s*\\)`, 'g'), `text("${item}")`).replace(new RegExp(`\\b${binder}\\b`, 'g'), item)

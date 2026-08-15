@@ -746,7 +746,7 @@
 
 ### Minor Changes
 
-- [`f4bb7b1`](https://github.com/flatink/flatkit/commit/f4bb7b1de799f0a6248cb600ceab255ce9028a75) Thanks [@kaelhem](https://github.com/kaelhem)! - Close the silent traps found while writing activity generators against 0.21 (moiki integration).
+- [`f4bb7b1`](https://github.com/flatink/flatkit/commit/f4bb7b1de799f0a6248cb600ceab255ce9028a75) Thanks [@kaelhem](https://github.com/kaelhem)! - Close the silent traps found while writing activity generators against 0.21 (host integration).
 
   Four of these let a program compile clean, pass `--check`, and still not do what it says.
 

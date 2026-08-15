@@ -242,7 +242,7 @@ describe('checkProgram — parity with `flatc --check`', () => {
 })
 
 // The point of carrying the repair is that a consumer can apply it WITHOUT a model round-trip: a missing
-// separator should not cost a whole regeneration. Measured on the Moiki pipeline: 1 program in 4 compiled,
+// separator should not cost a whole regeneration. Measured on an integrator's generation pipeline: 1 program in 4 compiled,
 // and the three failures were three DIFFERENT grammar slips.
 describe('applyFixes', () => {
   const scene = 'size 100 100\nscene { layer "a" { group "Box" at 50,50 pivot 0,0 { layer "c" { rect -5 -5 10 10 fill #ffffff } } } }\n'

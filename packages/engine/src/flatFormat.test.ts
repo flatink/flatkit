@@ -607,7 +607,7 @@ describe('flatFormat — .flatink program', () => {
   it.each(['txt_hello', 'tab', 'title', 't2b'])('round-trip: as "%s" survives (arbitrary id form)', (id) => {
     const out = roundtripText(`text "Hello" as "${id}" at 0, 0 box 10 10`)
     expect(out).toContain(`as "${id}"`)
-    expect((parseProgram(out).layers[0].items[0] as Text).id).toBe(id) // id preserved → text("…") resolves on the Moiki side
+    expect((parseProgram(out).layers[0].items[0] as Text).id).toBe(id) // id preserved → text("…") resolves on the host side
     expect(printProgram(parseProgram(out))).toBe(out) // stable
   })
 
