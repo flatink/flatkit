@@ -62,6 +62,11 @@ export type RenderCtx = {
   // Absent (editor/preview) = no cache. `imageEpoch` moves on every decoded image -> invalidates the cache.
   filterCache?: Map<string, FilterCacheEntry>
   imageEpoch?: number
+  // Composite-cache SCOPE: the chain of instance ids this subtree is being drawn under. A symbol's items
+  // are the SAME objects for every instance of it, so keying the cache on the item id alone made eight
+  // lanterns share one entry and thrash it — measured at 480 content draws over 60 frames where 8 was the
+  // right answer. Absent at the root (the common case: one item, one entry).
+  scope?: string
   // PLAYER: `reveal … erase` — what the child has SCRATCHED AWAY, per target item id. The renderer rubs
   // those discs out of the item (see `compositeScratched`). Absent (the ordinary case, and every editor
   // path) = nothing to erase, and the whole branch is skipped.
@@ -297,7 +302,7 @@ function filterCacheSlot(rctx: RenderCtx, doc: Doc, it: Item, ctx: CanvasRenderi
   const m = compose(matOf(ctx.getTransform()), own)
   const r = (n: number) => Math.round(n * 100) / 100
   const sig = `${r(m.a)},${r(m.b)},${r(m.c)},${r(m.d)},${r(m.e)},${r(m.f)}|${tint ? `${tint.color}:${tint.amount}` : ''}|${filterStr}|${rctx.imageEpoch ?? 0}`
-  return { map: rctx.filterCache, id: it.id, sig }
+  return { map: rctx.filterCache, id: (rctx.scope ?? '') + it.id, sig }
 }
 
 /**
@@ -395,10 +400,22 @@ export function compositeFiltered(
   }
 }
 
-/** Entry WITH a persistent canvas (>= ow x oh) to store a filtered composite; (re)allocates if needed. */
-function ensureCacheCanvas(cache: CacheSlot, ox: number, oy: number, ow: number, oh: number): FilterCacheEntry & { canvas: HTMLCanvasElement } {
+/** How many baked composites a document may hold at once. Each is a canvas the size of its object on
+ *  screen, so the total is real memory; a scene with more filtered pieces than this keeps drawing them the
+ *  slow way rather than growing without a ceiling (an untrusted `.flatpack` can declare as many as it
+ *  likes). Well past what a decorated activity uses — the ones measured here hold a few dozen. */
+const MAX_BAKED_COMPOSITES = 256
+
+/** Entry WITH a persistent canvas (>= ow x oh) to store a filtered composite; (re)allocates if needed.
+ *  `null` past the ceiling: the caller then composites directly, which is correct, just not cached. */
+function ensureCacheCanvas(cache: CacheSlot, ox: number, oy: number, ow: number, oh: number): (FilterCacheEntry & { canvas: HTMLCanvasElement }) | null {
   const e = cache.map.get(cache.id)
   if (e?.canvas && e.canvas.width >= ow && e.canvas.height >= oh) return e as FilterCacheEntry & { canvas: HTMLCanvasElement }
+  if (!e?.canvas) {
+    let baked = 0
+    for (const v of cache.map.values()) if (v.canvas) baked++
+    if (baked >= MAX_BAKED_COMPOSITES) return null
+  }
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, ow); canvas.height = Math.max(1, oh)
   const fresh = { canvas, sig: '', ox, oy, ow, oh }
@@ -567,6 +584,11 @@ function scratchHoles(cache: CacheSlot | undefined, mask: ScratchMask, world: Tr
   const key = 'holes:' + cache.id
   let e = cache.map.get(key)
   if (!e?.canvas || e.canvas.width < ow || e.canvas.height < oh) {
+    if (!e?.canvas) { // same ceiling as the baked composites: a document may declare any number of veils
+      let baked = 0
+      for (const v of cache.map.values()) if (v.canvas) baked++
+      if (baked >= MAX_BAKED_COMPOSITES) return null // → punched straight into the buffer, uncached
+    }
     const canvas = document.createElement('canvas')
     canvas.width = Math.max(1, ow)
     canvas.height = Math.max(1, oh)
@@ -606,7 +628,7 @@ function scratchCacheSlot(rctx: RenderCtx, doc: Doc, it: Item, ctx: CanvasRender
   const own = 'transform' in it && it.transform ? (it.transform as Transform) : IDENTITY
   const m = compose(matOf(ctx.getTransform()), own)
   const sig = `${round2(m.a)},${round2(m.b)},${round2(m.c)},${round2(m.d)},${round2(m.e)},${round2(m.f)}|${mask.cells.size}.${mask.version ?? 0}|${rctx.imageEpoch ?? 0}`
-  return { map: rctx.filterCache, id: 'scratch:' + it.id, sig }
+  return { map: rctx.filterCache, id: 'scratch:' + (rctx.scope ?? '') + it.id, sig }
 }
 
 /** Does a mask's matter contain text/an image? (-> alpha clipping rather than vector). */
@@ -683,12 +705,12 @@ function renderContainerChildren(
     // the subtree → nested loops play under a pinned state. `clockFrame: clock` carries that forward.
     const childFps = subFps(sym?.timeline?.fps, rctx)
     const { pose, clock } = instanceFrames(sym, it, clockOf(frame, rctx), rctx.freezeNested, subExpr, monoFrameOf(childFps, rctx))
-    renderLayers(ctx, doc, containerLayers(doc, it), pose, hidden, seen, { fps: childFps, expr: subExpr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, paramsFor: rctx.paramsFor, clockFrame: clock, monoTime: rctx.monoTime, colorParams: color, scratched: rctx.scratched, statePath: rctx.channelValue ? (rctx.statePath ?? '') + it.id + '/' : undefined, channelValue: rctx.channelValue }, parent, depth + 1)
+    renderLayers(ctx, doc, containerLayers(doc, it), pose, hidden, seen, { fps: childFps, expr: subExpr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, paramsFor: rctx.paramsFor, clockFrame: clock, monoTime: rctx.monoTime, colorParams: color, scratched: rctx.scratched, scope: (rctx.scope ?? '') + it.id + '/', statePath: rctx.channelValue ? (rctx.statePath ?? '') + it.id + '/' : undefined, channelValue: rctx.channelValue }, parent, depth + 1)
   } else if (isGroup(it) && it.timeline) {
     // Local symbol (group with its own timeline) = a nested timeline too → rides the advancing clock so it
     // keeps playing under a state-pinned ancestor (frozen only in the editor's freezeNested mode).
     const groupFrame = rctx.freezeNested ? 0 : clockOf(frame, rctx)
-    renderLayers(ctx, doc, it.layers, groupFrame, hidden, seen, { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, clockFrame: groupFrame, monoTime: rctx.monoTime, scratched: rctx.scratched, statePath: rctx.statePath, channelValue: rctx.channelValue }, parent, depth + 1)
+    renderLayers(ctx, doc, it.layers, groupFrame, hidden, seen, { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, clockFrame: groupFrame, monoTime: rctx.monoTime, scratched: rctx.scratched, scope: rctx.scope, statePath: rctx.statePath, channelValue: rctx.channelValue }, parent, depth + 1)
   } else {
     // Group without a timeline = same scope as the parent (not a sub-scope) -> follows the scope's frame.
     renderLayers(ctx, doc, containerLayers(doc, it), frame, hidden, seen, rctx, parent, depth + 1)
@@ -956,12 +978,12 @@ function renderOneItem(
       const pb = it.textPath ? pathBBox(it.textPath.path) : null
       if (pb) expandRect(acc, matOf(ctx.getTransform()), pb.minX - it.size, pb.minY - it.size, pb.maxX + it.size, pb.maxY + it.size)
       else expandRect(acc, compose(matOf(ctx.getTransform()), it.transform), 0, 0, it.box.w, it.box.h)
-      paintLeaf(ctx, resolveTint(it.tint, rctx.colorParams) ?? undefined, it.filters, opacity, acc, scaleOf(ctx), (c) => paintText(c, it))
+      paintLeafCached(ctx, rctx, doc, it, it.filters, opacity, acc, (c) => paintText(c, it))
     } else if (isImage(it)) {
       const src = rctx.image?.(it.assetId) ?? null
       const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
       expandRect(acc, compose(matOf(ctx.getTransform()), it.transform), 0, 0, it.w, it.h)
-      paintLeaf(ctx, resolveTint(it.tint, rctx.colorParams) ?? undefined, it.filters, opacity, acc, scaleOf(ctx), (c) => paintImage(c, it, src))
+      paintLeafCached(ctx, rctx, doc, it, it.filters, opacity, acc, (c) => paintImage(c, it, src))
     } else {
       // Region: fill (unless noFill) + optional outline (stroke), same Bezier path.
       const reg = it as Region
@@ -970,7 +992,7 @@ function renderOneItem(
         const lb = regionBBox(reg)
         const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
         if (lb) expandRect(acc, matOf(ctx.getTransform()), lb.minX, lb.minY, lb.maxX, lb.maxY)
-        paintLeaf(ctx, undefined, reg.filters, opacity, acc, scaleOf(ctx), (c) => paintRegion(c, reg, rctx.colorParams))
+        paintLeafCached(ctx, rctx, doc, reg, reg.filters, opacity, acc, (c) => paintRegion(c, reg, rctx.colorParams))
       } else if (opacity < 1) {
         // Semi-transparent: scope globalAlpha with save/restore (paintRegion sets its own fill/stroke style).
         ctx.save(); ctx.globalAlpha *= opacity; paintRegion(ctx, reg, rctx.colorParams); ctx.restore()
@@ -1006,6 +1028,22 @@ function trimmedPath(reg: Region, w: { from: number; to: number }): Path2D | nul
     if (closed) p.closePath() // a subpath drawn WHOLE keeps its join; a cut piece stays open (two caps)
   }
   return p
+}
+
+/** Paints a LEAF (text / image / shape) with its tint and filters — and, since it is the same isolation a
+ *  container pays, with the same composite CACHE. Leaves used to pass none, so `circle … filter glow` — the
+ *  shape a decorated scene is full of — re-isolated off-screen on EVERY frame, moving or not (measured at
+ *  360 content draws over 60 frames where a filtered group, still, drew 0). `filterCacheSlot` decides on
+ *  its own whether the item may be cached at all: a bound text or a shape with an animated `draw`, never. */
+function paintLeafCached(
+  ctx: CanvasRenderingContext2D, rctx: RenderCtx, doc: Doc, it: Item, filters: Filter[] | undefined, opacity: number, devBBox: BBox,
+  draw: (c: CanvasRenderingContext2D) => void,
+): void {
+  const scale = scaleOf(ctx)
+  const tint = resolveTint('tint' in it ? it.tint : undefined, rctx.colorParams)
+  const filterStr = cssFilterString(filters, scale)
+  const slot = tint || filterStr ? filterCacheSlot(rctx, doc, it, ctx, tint, filterStr) : undefined
+  paintLeaf(ctx, tint ?? undefined, filters, opacity, devBBox, scale, draw, filterStr, slot)
 }
 
 /** Paints a region (fill + outline) into `c`. Module function (zero allocation per call). */
@@ -1152,9 +1190,9 @@ function paintImage(ctx: CanvasRenderingContext2D, im: import('@flatkit/types').
 
 /** Paints a leaf (text/image) with opacity + tint (Flash) + filters (P4.2), off-screen if needed.
  *  `devBBox` = screen box of the leaf (to size the off-screen area to the object, not the full screen). */
-function paintLeaf(ctx: CanvasRenderingContext2D, tint: Tint | undefined, filters: Filter[] | undefined, opacity: number, devBBox: BBox, scale: number, draw: (c: CanvasRenderingContext2D) => void) {
+function paintLeaf(ctx: CanvasRenderingContext2D, tint: Tint | undefined, filters: Filter[] | undefined, opacity: number, devBBox: BBox, scale: number, draw: (c: CanvasRenderingContext2D) => void, knownFilterStr?: string, cache?: CacheSlot) {
   const t = tint && tint.amount > 0.001 ? tint : null
-  const filterStr = cssFilterString(filters, scale)
+  const filterStr = knownFilterStr ?? cssFilterString(filters, scale)
   if (!t && !filterStr) {
     ctx.save()
     if (opacity < 1) ctx.globalAlpha *= opacity
@@ -1162,7 +1200,10 @@ function paintLeaf(ctx: CanvasRenderingContext2D, tint: Tint | undefined, filter
     ctx.restore()
     return
   }
-  compositeFiltered(ctx, opacity, t, filters, scale, devBBox.minX <= devBBox.maxX ? devBBox : null, draw, undefined, filterStr)
+  // A LEAF gets the same composite cache a container has. It used to pass none, so `circle … filter glow`
+  // — the shape a decorated scene is full of — re-isolated off-screen on EVERY frame, moving or not:
+  // measured at 360 content draws over 60 frames where a filtered group, still, drew 0.
+  compositeFiltered(ctx, opacity, t, filters, scale, devBBox.minX <= devBBox.maxX ? devBBox : null, draw, cache, filterStr)
 }
 
 /** Draws a stack of layers at a frame (each layer resolves its content via the cels). */

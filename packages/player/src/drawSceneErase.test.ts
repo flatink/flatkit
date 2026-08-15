@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { parseProgramFull } from '@flatkit/engine/flatFormat'
+import { parseProgramFull, parseFlatLib } from '@flatkit/engine/flatFormat'
 import { resolveLayerAt } from '@flatkit/engine/cel'
 import { renderItems } from './drawScene'
 import { FlatPlayer } from './player'
@@ -172,5 +172,46 @@ describe('player -- a scratched `reveal … erase` reaches the renderer', () => 
       expect(s.stroke.filter((o) => o.op === 'arc')).toHaveLength(0)
       expect(s.stroke.some((o) => o.op === '=destination-out')).toBe(false)
     } finally { s.done() }
+  })
+})
+
+// The composite cache is keyed per RENDER SCOPE, not per item id: a symbol's items are the same objects
+// for every instance of it, so eight lanterns from one symbol used to share one entry and thrash it —
+// measured at 480 content draws over 60 frames where 8 was the right answer.
+describe('drawScene -- the composite cache is per instance, not per item id', () => {
+  const rec = () => {
+    let m = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }
+    const stack: (typeof m)[] = []
+    return new Proxy({} as Record<string, unknown>, {
+      get(_t, k: string) {
+        if (k === 'canvas') return { width: 400, height: 300 }
+        if (k === 'measureText') return () => ({ width: 10 })
+        if (k === 'getTransform') return () => ({ ...m })
+        if (k === 'setTransform') return (a: number, b: number, c: number, d: number, e: number, f: number) => { m = { a, b, c, d, e, f } }
+        if (k === 'translate') return (x: number, y: number) => { m = { ...m, e: m.e + x, f: m.f + y } }
+        if (k === 'transform') return (a: number, b: number, c: number, d: number, e: number, f: number) => { m = { a, b, c, d, e: m.e + e, f: m.f + f } }
+        if (k === 'save') return () => { stack.push({ ...m }) }
+        if (k === 'restore') return () => { const s = stack.pop(); if (s) m = s }
+        if (k === 'fill') return () => { drawn++ }
+        return () => {}
+      },
+      set: () => true,
+    }) as unknown as CanvasRenderingContext2D
+  }
+  let drawn = 0
+
+  it('four instances of one filtered symbol each keep their own baked bitmap', () => {
+    const lib = parseFlatLib('symbol "Lamp" { layer "c" { circle 0 0 12 fill #ffdf9a filter glow 8 #ffcf6a } }')
+    const prog = ['size 400 300', 'scene { layer "L" {',
+      ...Array.from({ length: 4 }, (_v, i) => `  instance "Lamp" as "P${i}" at ${40 + i * 90},150`), '} }'].join('\n')
+    const doc = { ...parseProgramFull(prog), symbols: lib.symbols } as unknown as Doc
+    for (const it of doc.layers[0].items) if ('symbolId' in it && String(it.symbolId).startsWith('@')) (it as { symbolId: string }).symbolId = lib.symbols[0].id
+    const filterCache = new Map()
+    const ctx = rec()
+    for (let i = 0; i < 8; i++) renderItems(ctx, doc, resolveLayerAt(doc.layers[0], i, {}), i, null, new Set(), { fps: 60, filterCache })
+    drawn = 0
+    for (let i = 8; i < 18; i++) renderItems(ctx, doc, resolveLayerAt(doc.layers[0], i, {}), i, null, new Set(), { fps: 60, filterCache })
+    expect(drawn).toBe(0) // all four blit their bitmap; sharing one entry gave 4 redraws per frame
+    expect(filterCache.size).toBe(4) // …one entry each, not one for all
   })
 })

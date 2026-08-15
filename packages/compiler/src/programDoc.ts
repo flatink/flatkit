@@ -15,7 +15,7 @@ import { joinScopeProgram, scopeRegions } from './scopeProgram'
 import { functionsToUnits, importsToUnits, objectToUnits, timelineToUnits, variablesToUnits } from '@flatkit/engine/scriptDoc'
 import { contextLayers, getScopeTimeline, isContainer, isGroup, isInstance, isText, isImage, isPoseable, isRegion } from '@flatkit/engine/layers'
 import { importedFunctions } from '@flatkit/engine/stdlib'
-import { EXPR_CHANNELS } from '@flatkit/engine/timeline'
+import { EXPR_CHANNELS, OFFSET_CHANNELS } from '@flatkit/engine/timeline'
 import { objectNames } from '@flatkit/engine/sceneRefs'
 import { behaviorRegions } from '@flatkit/engine/flatFormat'
 import { itemBBox, itemBoundsById, dropZoneBounds, transformBBox, revealGrid } from '@flatkit/engine/groups'
@@ -284,9 +284,99 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
   out.push(...docRevealCellWarnings(doc))
   out.push(...docDrawWarnings(doc))
   out.push(...docGestureOptionWarnings(doc))
+  out.push(...docFilterCacheWarnings(doc))
   return out
 }
 
+/** The channels folded into the filtered-composite cache SIGNATURE — i.e. the ones whose change busts it:
+ *  everything that moves the item on screen. DERIVED, not retyped: the signature is the item's placement,
+ *  so it is exactly the pose channels minus `opacity` (applied at BLIT time, so a pure fade reuses the baked
+ *  bitmap) plus the additive offsets. A hand-kept copy of a list the player owns is how `--check` came to
+ *  size a `reveal` grid on the brush while the engine used the grain. */
+const CACHE_BUSTING_CHANNELS = [...EXPR_CHANNELS.filter((c) => c !== 'opacity'), ...OFFSET_CHANNELS]
+
+/** A CLOCK fed to a PERIODIC function — the shape of a motion that provably never settles.
+ *
+ *  ⚠️ THE WHOLE PRECISION OF THE RULE IS HERE, and a looser test was measured to be useless. Plenty of
+ *  legitimate bindings mention `clock` on a transform and come to REST, so the cache pays them once and
+ *  then hits forever:
+ *    • `rotation = shake(bad, clock)` — `shake` is `bad ? sin(t*40)*4 : 0`, exactly 0 at rest. Every
+ *      draggable object in a generated activity carries one; flagging them made the rule fire on scenes
+ *      that were perfectly fine.
+ *    • `scaleX = 1 + 0.28 * clamp(1 - (clock - landedAt) * 1.6, 0, 1)` — a decay, constant after 0.6 s.
+ *  A periodic wrapper cannot settle: `sin`, `cos` and `mod` return to their range forever, by construction.
+ *  That is the difference between a cost paid once and a cost paid sixty times a second. */
+/*  Every ever-growing instant counts, not just `clock`: `time` restarts each loop and `frame` counts up,
+ *  so `dy = 3 * sin(time * 2)` re-bakes exactly as hard as its `clock` twin and used to slip through. */
+const PERIODIC_CLOCK = /\b(sin|cos|mod)\s*\([^()]*\b(clock|time|frame)\b/
+
+/**
+ * A `filter` whose SCREEN PLACEMENT never holds still — the one combination that defeats the render cache.
+ *
+ * Isolating a filter costs an off-screen canvas, a CSS filter and a blit. The player pays that ONCE and
+ * keeps the baked bitmap, keyed on the item's full screen placement (`filterCacheSlot`). That saving is the
+ * whole reason a scene can afford glows at all.
+ *
+ * Put a PERIODIC clock motion on a transform channel — on the filtered item OR on any ancestor — and the
+ * placement differs every frame, so the key never repeats and the bitmap is re-baked sixty times a second,
+ * forever.
+ *
+ * Measured on a generated activity: a garland swaying on `dy = 3 * sin(clock * 0.55)`, with six glowing
+ * lanterns hanging from it. The lanterns themselves were innocent — their own motion settles — but the
+ * sway above them re-baked all six glows every frame. Nothing looked wrong; the drag simply stuttered, and
+ * the cost was invisible in the source, split across a `filter` on one line and a parent's `dy` fifty
+ * lines away.
+ *
+ * Only a warning, and deliberately so: it is a COST, not a defect, and a still scene may well afford it.
+ * But it must be said, because nothing else in the chain can say it — the program compiles, the picture is
+ * correct, and only a profiler on a real device tells you where the frame budget went.
+ */
+export function docFilterCacheWarnings(doc: Doc): { scope: string; diag: Diagnostic }[] {
+  const out: { scope: string; diag: Diagnostic }[] = []
+  const culprits: string[] = []
+
+  /** Does this item move its own placement in a way that never comes to rest? */
+  const clockPosed = (it: Item): boolean => {
+    if (!isPoseable(it) || !it.expressions) return false
+    for (const ch of CACHE_BUSTING_CHANNELS) {
+      const expr = it.expressions[ch as keyof typeof it.expressions]
+      if (typeof expr === 'string' && PERIODIC_CLOCK.test(expr)) return true
+    }
+    return false
+  }
+
+  // `moving` is inherited: the cache signature folds the ACCUMULATED screen transform, so an animated
+  // grandparent busts a still child's cache just as surely as its own binding would.
+  const walk = (items: Item[], moving: boolean, path: string): void => {
+    for (const it of items) {
+      const name = ('name' in it && typeof it.name === 'string' && it.name) || it.id
+      const here = path ? `${path} › ${name}` : name
+      const animated = moving || clockPosed(it)
+      if (animated && 'filters' in it && Array.isArray(it.filters) && it.filters.length > 0) {
+        culprits.push(here)
+      }
+      if (isGroup(it)) for (const l of it.layers) walk(l.items, animated, here)
+    }
+  }
+  for (const l of doc.layers) walk(l.items, false, '')
+
+  if (culprits.length > 0) {
+    const shown = culprits.slice(0, 4).map((n) => `"${n}"`).join(', ')
+    const more = culprits.length > 4 ? `, and ${culprits.length - 4} more` : ''
+    out.push({
+      scope: 'scene',
+      diag: {
+        line: 1,
+        col: 1,
+        severity: 'warning',
+        message:
+          `filter under a transform that never stops moving (${shown}${more}) — a periodic \`clock\` motion on this item or an ancestor. The filtered-composite cache keys on the screen placement, so it can never hit: the off-screen composition is repaid EVERY FRAME, for as long as the scene is open. ` +
+          `Move the animation to \`opacity\` (applied at blit, so the cache still hits), drive the transform from a value that SETTLES, or drop the filter.`,
+      },
+    })
+  }
+  return out
+}
 /**
  * SILENT DROPS in a cel layer. `resolveLayerAt` draws exactly two things: the current cel's `matter`, and
  * the containers that cel POSES — never the layer's other roster items. Three ways to author a layer that

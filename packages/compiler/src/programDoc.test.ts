@@ -902,3 +902,76 @@ describe('programDoc — gesture options that need a partner', () => {
     expect(dead.filter((w) => /never used/.test(w.diag.message))).toEqual([])
   })
 })
+
+describe('filter cache — a glow that is re-baked every frame', () => {
+  // ⚠️ MEASURED ON A REAL ACTIVITY, and invisible in every other way. A garland swaying on
+  // `sin(clock)` carried six glowing lanterns. The lanterns' own motion settles; the SWAY above
+  // them does not, so all six filtered composites missed the cache on every frame. Nothing looked
+  // wrong — the drag simply stuttered — and the cause was split across a `filter` on one line and
+  // a parent's `dy` fifty lines away.
+  const GLOW = 'circle 0 0 6 fill #ffdf9a filter glow 7 #ffcf6a'
+
+  /** A one-item scene, plus the `object` block that animates it. */
+  const hits = (drawing: string, motion: string) => {
+    const src = [
+      'size 200 200',
+      'scene {',
+      '  layer "L" {',
+      drawing,
+      '  }',
+      '}',
+      motion,
+    ].join('\n')
+    return docStructureWarnings(compileFlatpack(src, [], {})).filter((w) =>
+      /never stops moving/.test(w.diag.message),
+    )
+  }
+
+  const nested = `    group "Garland" at 100,50 { layer "c" { group "Lantern" at 0,0 { layer "c" { ${GLOW} } } } }`
+  const plain = `    group "Lantern" at 100,100 { layer "c" { ${GLOW} } }`
+
+  it('flags a filter under an ancestor that sways forever', () => {
+    const found = hits(nested, 'object "Garland" {\n  dy = 3 * sin(clock * 0.55)\n}')
+    expect(found).toHaveLength(1)
+    expect(found[0].diag.message).toMatch(/Lantern/)
+  })
+
+  it('flags it on the filtered item itself, too', () => {
+    expect(hits(plain, 'object "Lantern" {\n  dx = 30 * sin(clock * 0.4)\n}')).toHaveLength(1)
+  })
+
+  it('says nothing when the same motion drives OPACITY', () => {
+    // `compositeFiltered` applies opacity at BLIT time, so it is deliberately absent from the cache
+    // signature: a pure fade reuses the baked bitmap and costs nothing.
+    expect(hits(plain, 'object "Lantern" {\n  opacity = 0.5 + 0.5 * sin(clock * 2)\n}')).toEqual([])
+  })
+
+  it('says nothing about a motion that COMES TO REST', () => {
+    // ⚠️ THE FALSE POSITIVE THAT WOULD HAVE MADE THE RULE UNUSABLE. `shake` is `bad ? sin(t*40)*4 : 0`
+    // — exactly 0 at rest — and EVERY draggable object of a generated activity carries one. A rule that
+    // simply looked for `clock` accused scenes that were perfectly sound.
+    expect(hits(plain, 'object "Lantern" {\n  rotation = shake(0, clock)\n}')).toEqual([])
+    // A decay is constant past its delay: paid once, and the cache holds from then on.
+    expect(hits(plain, 'object "Lantern" {\n  scaleX = 1 + 0.3 * clamp(1 - (clock - 5) * 1.6, 0, 1)\n}')).toEqual([])
+  })
+
+  it('catches every instant that never stops growing, not just `clock`', () => {
+    // `time` restarts on each loop and `frame` counts up: both re-bake exactly as hard as `clock`, and
+    // both used to slip through a test that named only one of them.
+    for (const t of ['clock', 'time', 'frame']) {
+      expect(hits(plain, `object "Lantern" {\n  dx = 30 * sin(${t} * 0.4)\n}`), t).toHaveLength(1)
+    }
+  })
+
+  it('covers the offsets as well as the absolute channels (the list is derived, not retyped)', () => {
+    for (const ch of ['x', 'y', 'dx', 'dy', 'scaleX', 'scaleY', 'rotation']) {
+      expect(hits(plain, `object "Lantern" {\n  ${ch} = 30 * sin(clock * 0.4)\n}`), ch).toHaveLength(1)
+    }
+  })
+
+  it('says nothing when the moving item carries NO filter', () => {
+    // The cost is the OFF-SCREEN composition, not the movement: a bare shape that moves is free.
+    const bare = '    group "Cloud" at 100,100 { layer "c" { circle 0 0 20 fill #ffffff } }'
+    expect(hits(bare, 'object "Cloud" {\n  dx = 30 * sin(clock * 0.2)\n}')).toEqual([])
+  })
+})
