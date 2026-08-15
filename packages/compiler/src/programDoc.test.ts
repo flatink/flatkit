@@ -975,3 +975,27 @@ describe('filter cache — a glow that is re-baked every frame', () => {
     expect(hits(bare, 'object "Cloud" {\n  dx = 30 * sin(clock * 0.2)\n}')).toEqual([])
   })
 })
+
+// The hint on an unknown variable used to name `let`, which is precisely what does not carry across
+// scopes: a reader declared with `let`, the binding still could not see it, and the message repeated
+// itself. Half an hour, reported. It names the document declaration now.
+describe('lint — the unknown-variable hint names the declaration that works', () => {
+  const src = [
+    'size 100 100', 'scene { layer "L" {',
+    '  group "C" at 50,50 { layer "c" { circle 0 0 10 fill #333333 } }',
+    '} }', '', 'object "C" {', '  opacity = clamp(n, 0, 1)', '}',
+  ].join('\n')
+
+  it('points at `var <name> = 0`, at the top level', () => {
+    const msg = lintDocReport(compileFlatpack(src, [], {}))
+    expect(msg).toMatch(/unknown variable "n"/)
+    expect(msg).toMatch(/var n = 0/)
+    expect(msg).not.toMatch(/declare it with "let"/)
+  })
+
+  it('and a program that DOES declare it lints clean, either spelling', () => {
+    for (const decl of ['var n = 0', 'let n = 0']) {
+      expect(lintDocReport(compileFlatpack(src.replace('size 100 100', `size 100 100\n${decl}`), [], {}))).toBe('')
+    }
+  })
+})

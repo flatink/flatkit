@@ -73,10 +73,13 @@ describe('lint — expressions', () => {
     expect(d.some((x) => /unknown object "pointer"/.test(x.message))).toBe(true)
   })
 
-  it('unknown variable (with "let" hint when no variable is known)', () => {
+  it('unknown variable — the hint names the declaration that carries across scopes', () => {
+    // It used to say `let`, which is exactly what does NOT: a reader declared with `let`, the binding still
+    // could not see it, and the message repeated itself. Reported as half an hour lost.
     const d = lint('rotation = speed * 2')
     expect(d.length).toBe(1)
-    expect(d[0].message).toMatch(/unknown variable "speed".*let/)
+    expect(d[0].message).toMatch(/unknown variable "speed"/)
+    expect(d[0].message).toMatch(/var speed = 0/)
   })
 
   it('known scene object (Hero.x) accepted when provided', () => {

@@ -1732,3 +1732,42 @@ describe('flatFormat — a keyword and its literal need no space (uniformly)', (
     expect(parseProgramFull(src).layers[0].items).toHaveLength(1)
   })
 })
+
+// A `let` at the top level of a PROGRAM is the header's `var` under another name. It used to parse, lint
+// clean and evaporate: the scene scope knew the name, the value never reached `doc.variables`, and a
+// binding in an `object` block — another scope — reported `unknown variable` while pointing elsewhere.
+describe('flatFormat — `let` at the top level of a program declares a document variable', () => {
+  const prog = (decl: string, body = '') => [
+    'size 100 100', decl, '', 'scene {', '  layer "L" {',
+    '    group "C" at 50,50 { layer "c" { circle 0 0 10 fill #333333 } }',
+    '  }', '}', '', body,
+  ].join('\n')
+
+  it('reaches `doc.variables`, with its value', () => {
+    expect(parseProgramFull(prog('let n = 5')).variables).toEqual({ n: 5 })
+    expect(parseProgramFull(prog('var n = 5')).variables).toEqual({ n: 5 })
+  })
+
+  it('so a binding in an `object` block can read it (the reported case)', () => {
+    const src = prog('let n = 0', 'object "C" {\n  opacity = clamp(n, 0, 1)\n}')
+    expect(behaviorDiagnostics(src)).toEqual([])
+    // …and the name is in the document's table, which is what every scope's lint context is built from.
+    expect(Object.keys(parseProgramFull(src).variables ?? {})).toEqual(['n'])
+  })
+
+  it('arrays and `fill(n, v)` come through as well', () => {
+    expect(parseProgramFull(prog('let seen = fill(3, 0)')).variables).toEqual({ seen: [0, 0, 0] })
+    expect(parseProgramFull(prog('let slots = [1, 2]')).variables).toEqual({ slots: [1, 2] })
+  })
+
+  it('the header wins a name declared twice — a host seeds `var`, and a stray `let` must not override it', () => {
+    expect(parseProgramFull(prog('var n = 1\nlet n = 2')).variables).toEqual({ n: 1 })
+  })
+
+  it('printing emits ONE canonical spelling (`var`), so a round-trip is stable', () => {
+    const once = printProgramFull(parseProgramFull(prog('let n = 5')))
+    expect(once).toContain('var n = 5')
+    expect(once).not.toContain('let n = 5')
+    expect(printProgramFull(parseProgramFull(once))).toBe(once)
+  })
+})

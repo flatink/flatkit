@@ -65,17 +65,20 @@ reveal c { brush 32  grain 8  erase  cells grid }  // scratch → c = cleared fr
 when dropped on Zone { … }     // fires on release when the object's center is inside the named zone
 
 ## Declarations
-let name = 0 · let arr = fill(n, v) · let arr = [a, b, c]
+var name = 0 · var arr = fill(n, v) · var arr = [a, b, c]   // document state: readable EVERYWHERE (bindings included)
+let name = 0                               // the same thing at the top level of a program; inside a scope it stays local
 fn name(a, b) = expr                       // value function (use in expressions)
 fn name() { … }                            // procedure (block of actions)
 each "Symbol" as i { opacity = data[i] }   // bind every instance of a symbol (i = index)
 use "package"          packages: ${PACKAGES.join(' ')}   // OPTIONAL: calling a package function imports it automatically
 
 ## Example
-let score = 0
+var score = 0
+var lit = 0
 every frame { score = score + 1 }
 object "Ball" {
-  when clicked { score = score + 1 }
+  when clicked { lit = 1 }
+  opacity  = lit == 1 ? 1 : 0.4                            // a binding READS the document's state
   rotation = atan2(Target.y - self.y, Target.x - self.x)   // aim at another object by name
 }`
 }

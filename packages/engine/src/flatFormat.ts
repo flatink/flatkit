@@ -1106,6 +1106,15 @@ export function parseProgramFull(src: string): Program {
 
   const result: Program = { ...composition }
   const sceneUnits = parseUnits(sceneText).units
+  // A `let` written at the top level of a PROGRAM declares a document variable, exactly like the header's
+  // `var`. It used to parse, lint clean, and vanish: the scene scope knew the name (so nothing complained
+  // there), the value never reached `doc.variables`, and a binding in an `object` block — another scope —
+  // reported `unknown variable`. A declaration that evaporates in silence, with the error pointing
+  // somewhere else. The two spellings mean the same thing now; `var` wins a name declared twice, and
+  // printing always emits `var` (one canonical form on the way out).
+  const declared = { ...(composition.variables ?? {}) }
+  for (const u of sceneUnits) if (u.kind === 'declare' && !(u.name in declared)) declared[u.name] = u.value
+  if (Object.keys(declared).length) result.variables = declared
   const tlScripts = unitsToTimeline(sceneUnits)
   const baseTl = composition.timeline ?? { fps: 24, durationFrames: 60, tracks: [] }
   // Preserves the root timeline if there are scene scripts, sounds, OR a `timeline` directive (custom fps/dur).

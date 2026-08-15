@@ -135,7 +135,12 @@ export function lint(src: string, ctx: LintContext = {}): Diagnostic[] {
         if (!knownObjs.has(o)) out.push({ line: s.line, col: s.col, message: `unknown object "${o}" (expected: ${[...knownObjs].join(', ')})` })
       for (const id of a.refs.ids)
         if (!knownIds.has(id))
-          out.push({ line: s.line, col: s.col, message: `unknown variable "${id}"${variables.size ? '' : ' — declare it with "let"'}` })
+          // The hint names the DOCUMENT declaration (`var`, at the top level of the program), because that
+          // is the one every scope can read. `let` declares in the scope it sits in — which is why the old
+          // hint sent a reader in a circle: they declared with `let`, the binding still could not see it,
+          // and the message repeated itself. (Both spellings mean the same thing at the top level of a
+          // program; inside an `object` block a declaration is refused outright, with its own message.)
+          out.push({ line: s.line, col: s.col, message: `unknown variable "${id}"${variables.size ? '' : ` — declare it at the top level of the program: \`var ${id} = 0\``}` })
     } else if (labels && !labels.has(s.name)) {
       out.push({ line: s.line, col: s.col, message: `unknown label "${s.name}"` })
     }
