@@ -465,15 +465,21 @@ and composes with `self.x`/`self.y` etc. (same `self`).
 
 ## `filter` performance
 
-- A `filter glow`/`shadow` = **one offscreen canvas recomposited** per group carrying the
-  filter. The engine automatically **caches** *static* filtered subtrees (decor with no
-  expression or animation): they are only re-rendered on zoom/pan or asset load. So a filter
-  on **static decor** is nearly free in steady state.
-- A filter on an **animated** element (channel expression, `bind`, timeline) is recomposited
-  every frame. Keep filters on animated elements **small**.
+- A `filter glow`/`shadow` = **one offscreen canvas recomposited**, then blitted. The engine **caches**
+  that composite, keyed on the item's screen placement, so a filter that holds still is repaid once and
+  then costs a single blit — on a group **and on a bare shape** (`circle … filter glow`), which went
+  uncached until 0.35.0: 360 recompositions over 60 frames where the same thing, cached, does 0.
+- The cache is **per instance**, not per item: eight lanterns from one filtered symbol keep eight bitmaps.
+  (They shared one entry before 0.35.0 and thrashed it — 480 recompositions over 60 frames.)
+- **What defeats it: motion that never settles.** The key is the placement, so a *periodic* `clock`/`time`
+  motion (`dy = 3 * sin(clock)`) on the filtered item **or on any ancestor** never repeats a key: 270
+  recompositions over 60 frames, for as long as the scene is open. `--check` reports it, naming the
+  culprits. A motion that comes to REST (a `shake` at 0, a `clamp` decay) pays once and hits forever, and
+  animating **`opacity`** is free — it is applied at blit time, deliberately outside the key.
 - Cheap alternative for decor shadows: a **"baked" shadow** = the same path offset by a few
   px in `#00000028` UNDER the cutout (no offscreen canvas). Ideal for large planes.
-- Drop-shadow cost ∝ area × blur: a large blurred plane is expensive when not cached.
+- Drop-shadow cost ∝ area × blur: a large blurred plane is expensive when not cached. A document keeps at
+  most 256 baked composites; past that, the extra ones simply draw the slow way.
 
 ## Audio
 

@@ -90,6 +90,15 @@ or a `tint`) that the symbol doesn't declare — a silent "dead recolor". The la
 groups** and measure in world coordinates, and they skip anything positioned at runtime (a bound or dragged
 item, and everything nested under one, has no meaningful static position).
 
+It reports what a gesture or a shape does SILENTLY when its options do not add up: a `draw` on a shape
+with no `stroke` (nothing to trim), a `reveal … cells` array whose length does not match the grid the
+engine builds (writes past the end are dropped, so a restored session comes back untouched — the message
+states the geometry and the exact `fill(N, 0)` to declare), a `step` of 0 or less on a `trace` (the
+progress can never move, so the drill cannot be completed), `both ends` without `step`, a non-positive
+`tolerance`/`brush`/`grain` (silently replaced by the default), and a `filter` under a transform that
+never stops moving (the composite is re-baked every frame, forever — see the
+[gotchas](dsl-gotchas.md#filter-performance)).
+
 It flags an instant **captured on `time` and read by `pulse`/`shake`** — both ride the monotone `clock`, so
 the two axes never meet and the ramp never fires, with nothing on screen to say so. The costliest kind of
 bug in a codebase migrated from 0.21; see the

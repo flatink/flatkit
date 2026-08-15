@@ -90,8 +90,11 @@ filter blur <radius>
 filter adjust <brightness> <contrast> <saturate> <hue>
 ```
 
-Filters on **static** decor are cached (nearly free); on **animated** elements they recomposite every
-frame — keep those small (see the [gotchas](dsl-gotchas.md) for the perf details).
+A filter is composited off-screen and the result is **cached** on the item's screen placement — on a group
+and on a bare shape alike — so decor that holds still is repaid once. What defeats the cache is placement
+that never settles: a periodic `sin(clock)` motion on the item **or an ancestor** re-composites every
+frame, and `--check` says so. Animating `opacity` instead is free. See the
+[gotchas](dsl-gotchas.md#filter-performance) for the numbers.
 
 ## Clipping & masks
 
