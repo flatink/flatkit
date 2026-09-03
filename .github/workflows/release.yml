@@ -55,10 +55,10 @@ jobs:
       - name: Version PR / Publish
         uses: changesets/action@198f833dd7d863100ea6e28967bc9a9fdefadb0a # v2.1.0
         with:
-          version: pnpm run version-packages
-          publish: pnpm release
-          title: "Version Packages"
-          commit: "Version Packages"
+          version-script: pnpm run version-packages
+          publish-script: pnpm release
+          pr-title: "Version Packages"
+          commit-message: "Version Packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
