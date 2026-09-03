@@ -29,7 +29,7 @@
   "dependencies": {
     "@flatkit/compiler": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "scripts": {
     "dev": "tsx src/server.ts",
