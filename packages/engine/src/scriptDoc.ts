@@ -92,8 +92,10 @@ export function unitsToTimeline(units: ScriptUnit[]): TimelineScripts {
   const frameActions: FrameAction[] = []
   const binds: InstanceBind[] = []
   for (const u of units) {
-    if (u.kind === 'event' && u.event === 'load') out.onLoad = u.body.length ? u.body : undefined
-    else if (u.kind === 'event' && u.event === 'enterFrame') out.onEnterFrame = u.body.length ? u.body : undefined
+    // Several blocks of the same event run in source order: a program assembled from bricks brings one
+    // `every frame` per brick, and replacing instead of appending kept only the last, in silence.
+    if (u.kind === 'event' && u.event === 'load') { if (u.body.length) out.onLoad = [...(out.onLoad ?? []), ...u.body] }
+    else if (u.kind === 'event' && u.event === 'enterFrame') { if (u.body.length) out.onEnterFrame = [...(out.onEnterFrame ?? []), ...u.body] }
     else if (u.kind === 'label') labels.push({ frame: u.frame, name: u.name })
     else if (u.kind === 'frameActions' && u.body.length) frameActions.push({ frame: u.frame, actions: u.body })
     else if (u.kind === 'each') binds.push({ symbol: u.symbol, as: u.as, expr: Object.fromEntries(u.bindings.map((b) => [b.channel, b.expr])) })

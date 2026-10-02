@@ -11,7 +11,7 @@
 //  cel/transform). It NEVER imports `polygon-clipping`, React, or the store
 //  -> embeddable as-is in a lightweight standalone player.
 // -----------------------------------------------------------------------------
-import type { Doc, Group, Instance, Item, Layer, Region, SymbolDef, Text, ChannelModifier, ExprChannel } from '@flatkit/types'
+import type { Doc, Group, Point, Instance, Item, Layer, Region, SymbolDef, Text, ChannelModifier, ExprChannel } from '@flatkit/types'
 import { regionBBox, type BBox } from '@flatkit/engine/bbox'
 import { regionPaint, resolveStopColor, resolveTintColor, type Paint, type Tint } from '@flatkit/engine/paint'
 import { cssFilterString, type Filter } from '@flatkit/engine/filters'
@@ -790,11 +790,30 @@ export function regionPath(region: Region, dx = 0, dy = 0): Path2D {
   return buildRegionPath(region, dx, dy)
 }
 
+/** A subpath whose points all coincide — the "dot" idiom (`M x y L x y` + a round cap). */
+const isDot = (bz: { start: Point; segs: { p: Point }[] }): boolean => bz.segs.length > 0 && bz.segs.every((s) => s.p.x === bz.start.x && s.p.y === bz.start.y)
+
+/** The dots of a path (see `isDot`), cached like its Path2D. Almost always empty. */
+const dotCache = new WeakMap<Path, Point[]>()
+function pathDots(p: Path): Point[] {
+  let dots = dotCache.get(p)
+  if (!dots) {
+    dots = []
+    for (const sub of p.subpaths) { const bz = pathToBezier(sub); if (bz && isDot(bz)) dots.push(bz.start) }
+    dotCache.set(p, dots)
+  }
+  return dots
+}
+
 function buildRegionPath(region: Region, dx: number, dy: number): Path2D {
   const path = new Path2D()
   for (const sub of region.path.subpaths) {
     const bz = pathToBezier(sub)
     if (!bz) continue
+    // A dot fills nothing, and whether stroking it draws its cap depends on the engine (the Canvas spec
+    // prunes zero-length segments; older Chrome did not). `paintRegion` draws the cap itself, so the dot
+    // stays out of the path — one drawing, the same everywhere.
+    if (isDot(bz)) continue
     path.moveTo(bz.start.x + dx, bz.start.y + dy)
     for (const s of bz.segs) path.bezierCurveTo(s.c1.x + dx, s.c1.y + dy, s.c2.x + dx, s.c2.y + dy, s.p.x + dx, s.p.y + dy)
     if (sub.closed) path.closePath()
@@ -1105,6 +1124,14 @@ function paintRegion(c: CanvasRenderingContext2D, reg: Region, colorParams?: Rec
     const paramColor = reg.strokeParam ? colorParams?.[reg.strokeParam] : undefined // `stroke <param>` → instance color
     c.strokeStyle = paramColor || paintStyle(c, s.paint, () => regionBBox(reg), reg.color, colorParams) // empty/undefined → literal paint (gradient stops resolved per param)
     c.stroke(line)
+    // A zero-length subpath shows its cap, as in SVG: a disc (round) or a square, of the stroke width.
+    if (!trim && c.lineCap !== 'butt') for (const d of pathDots(reg.path)) {
+      c.fillStyle = c.strokeStyle
+      c.beginPath()
+      if (c.lineCap === 'square') c.rect(d.x - s.width / 2, d.y - s.width / 2, s.width, s.width)
+      else c.arc(d.x, d.y, s.width / 2, 0, Math.PI * 2)
+      c.fill()
+    }
   }
 }
 
@@ -1199,11 +1226,12 @@ function paintTextOnPath(ctx: CanvasRenderingContext2D, t: Text) {
   ctx.restore()
 }
 
-/** Greedy word-wrap within `maxW` (local px). Respects explicit `\n`; breaks at spaces. */
+/** Greedy word-wrap within `maxW` (local px). Respects explicit `\n`; breaks at breaking spaces only. */
 export function wrapLines(ctx: Pick<CanvasRenderingContext2D, 'measureText'>, content: string, maxW: number): string[] {
   const out: string[] = []
   for (const para of content.split('\n')) {
-    const words = para.split(/\s+/).filter(Boolean)
+    // NOT `\s`: it matches the no-break spaces (U+00A0, U+202F, U+2007), which exist to forbid a break.
+    const words = para.split(/[^\S\u00A0\u202F\u2007]+/).filter(Boolean)
     if (words.length === 0) { out.push(''); continue }
     let line = words[0]
     for (let i = 1; i < words.length; i++) {

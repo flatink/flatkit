@@ -233,6 +233,9 @@ flatc <file> --play --script gestures.json [--trace]
 ```
 
 - `drag` / `tap` / `scratch` (sweeps a `reveal` zone) / `connect` (pulls a `link` wire) — by name.
+  `tap` also takes a point instead of a name — `{ "type": "tap", "x": 120, "y": 80 }` — for a rail or
+  an area that has no name.
+- Audio is off in `--play`: a `sound` action is a silent no-op, so a program is replayed as written.
 - **`turn`** rotates a `turn`/`turnDeg` target by `angle` (degrees for `turnDeg`, radians for `turn`),
   swept in sub-steps so a multi-turn rotation lands. It presses the object where the engine finds it, i.e.
   on **whatever is topmost there** — two clock hands overlapping at noon give the gesture to the one on

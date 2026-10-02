@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync, existsSync, mkdtempSync, mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { run } from './flatc'
@@ -363,6 +364,51 @@ describe('flatc — CLI', () => {
       expect(buf.length).toBeGreaterThan(1000)
     } finally {
       rmSync(out, { force: true })
+    }
+  })
+})
+
+// flatink/flatink#6 — `--check` and the compile took the `.flat` files given on the command line; `--play`
+// and `--render` dropped them and only saw the ones sitting NEXT to the program. A program whose library
+// lives in another folder checked green and then played an empty scene.
+describe('flatc — `.flat` libraries passed as arguments reach --play and --render', () => {
+  const setup = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flatc-libs-'))
+    mkdirSync(join(dir, 'lib'))
+    writeFileSync(join(dir, 'lib', 'dot.flat'), 'symbol "Dot" {\n  layer "a" {\n    circle 0 0 20 fill #cc3333\n  }\n}\n')
+    writeFileSync(join(dir, 'prog.flatink'), 'size 100 100\nvar n = 0\nscene {\n  layer "c" {\n    instance "Dot" as "D" at 50,50\n  }\n}\nobject "D" {\n  when clicked {\n    n = n + 1\n  }\n}\n')
+    writeFileSync(join(dir, 's.json'), JSON.stringify([{ type: 'down', x: 50, y: 50 }, { type: 'up', x: 50, y: 50 }]))
+    return dir
+  }
+  it('--play: the instance is there to be clicked', () => {
+    const dir = setup()
+    const outs: string[] = []
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation((s: string | Uint8Array) => { outs.push(String(s)); return true })
+    try {
+      expect(run(['node', 'flatc', join(dir, 'prog.flatink'), join(dir, 'lib', 'dot.flat'), '--play', '--script', join(dir, 's.json')])).toBe(0)
+      expect(JSON.parse(outs.join('')).vars.n).toBe(1)
+    } finally {
+      spy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+  it('--render: the instance is drawn', async () => {
+    const dir = setup()
+    const errs: string[] = []
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((s: string | Uint8Array) => { errs.push(String(s)); return true })
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try {
+      const png = join(dir, 'a.png')
+      expect(await run(['node', 'flatc', join(dir, 'prog.flatink'), join(dir, 'lib', 'dot.flat'), '--render', '-o', png, '--scale', '1'])).toBe(0)
+      const { loadImage, Canvas } = await import('skia-canvas')
+      const img = await loadImage(png)
+      const c = new Canvas(100, 100)
+      const g = c.getContext('2d')
+      g.drawImage(img, 0, 0)
+      expect([...g.getImageData(50, 50, 1, 1).data]).toEqual([204, 51, 51, 255]) // the dot is drawn
+    } finally {
+      spy.mockRestore(); out.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })

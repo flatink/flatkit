@@ -114,7 +114,9 @@
   (local, on the roster item) = the center of rotation/scale; `at x,y` (on the pose) = where the local
   origin lands. `spin cw|ccw` / `turns N` also turn around the pivot.
 - **`expr rotation` is in RADIANS**, like `sin`/`cos`. Stay in degrees with the helpers: `rad(45)`,
-  `turns(time)` (one turn per second), `deg(r)`. e.g. `expr rotation "turns(time * 0.5)"`.
+  `turns(time)` (one turn per second), `deg(r)`. e.g. `expr rotation "turns(time * 0.5)"`. Or write
+  `expr rotationDeg "<degrees>"`, the degree twin (as in a behavior block). Any other channel name is a
+  compile error.
 - **`time` WRAPS at `durationFrames`** (the timeline loops), so `sin(time * f)` with an arbitrary `f`
   **jumps** every loop — and a `.flatink` with no `timeline` defaults to **60 frames (2.5 s @24fps)**, so
   the jump is frequent. For free-running ambiance use **`clock`** (monotone, never wraps): `sin(clock * f)`.

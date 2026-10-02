@@ -149,3 +149,17 @@ describe('expr — prototype safety', () => {
     if (pp.ok) expect(evalExpr(pp.node, { p: { x: 9 } }, -1)).toBe(9) // own member → value
   })
 })
+
+// flatink/flatink#30 — `2.7e-06` was accepted in a `var` and refused in an expression.
+describe('expr — scientific notation', () => {
+  const v = (src: string) => { const c = compileExpr(src); if (!c.ok) throw new Error(c.error); return evalExpr(c.node, {}) }
+  it('reads an exponent wherever a number is read', () => {
+    expect(v('1.5e2')).toBe(150)
+    expect(v('2.7e-06 * 1e6')).toBeCloseTo(2.7)
+    expect(v('1E+3 + 1')).toBe(1001)
+  })
+  it('does not swallow a name that merely starts with `e`', () => {
+    expect(compileExpr('2e').ok).toBe(false)
+    expect(compileExpr('2 * e1').ok).toBe(true) // `e1` is an identifier, not an exponent
+  })
+})

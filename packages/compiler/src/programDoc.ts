@@ -25,6 +25,7 @@ import { bboxIntersects } from '@flatkit/engine/bbox'
 import { lint, localVariables, type LintContext } from './lint'
 import { forEachAction, forEachExpression } from './docWalk'
 import { parseUnits } from '@flatkit/engine/dsl'
+import { MATH_CTX, STD_CONSTANTS, STD_IDS } from '@flatkit/engine/expr'
 import type { Image, Item, Layer, ParamDef, Region, SymbolDef, Text, Transform } from '@flatkit/types'
 
 /** Rebuilds the "program" text of a scope (imports + variables + functions + scene cycle
@@ -203,6 +204,28 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
     for (const name of names0) {
       if (!new RegExp(`(?<![\\w-])${escapeRe(name)}(?![\\w-])`).test(allText))
         out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `global variable "${name}" never used (declared, but neither read nor written)` } })
+    }
+  }
+  // (b ter) A name the runtime resolves BEFORE the variables hides a variable (or a parameter) spelled the
+  //     same: math functions and constants come first (`resolveName`), the reserved scalars are never
+  //     overwritten, and a value function replaces a same-named variable in the context. The variable is
+  //     declared, written, and every READ returns the built-in — `var angle = 40` read 0 under
+  //     `use "gesture"`, and nothing said so.
+  const hiddenBy = (name: string): string | undefined =>
+    STD_CONSTANTS.includes(name) ? `the constant ${name}`
+      : Object.hasOwn(MATH_CTX, name) ? `the function ${name}()`
+      : STD_IDS.includes(name) ? `the reserved name ${name}`
+      : undefined
+  const valueFns = new Set([...(doc.functions ?? []), ...importedFunctions(doc.imports)].filter((f) => f.kind === 'value').map((f) => f.name))
+  for (const name of names0) {
+    const by = hiddenBy(name) ?? (valueFns.has(name) ? `the function ${name}()` : undefined)
+    if (by) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `variable "${name}" is hidden by ${by} — every read returns that, never the variable. Rename it` } })
+  }
+  for (const f of doc.functions ?? []) {
+    if (f.name.includes('.')) continue // the qualified alias of a package function repeats the plain one
+    for (const p of f.params) {
+      const by = hiddenBy(p)
+      if (by) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `parameter "${p}" of fn ${f.name} is hidden by ${by} — the body reads that, never the argument. Rename it` } })
     }
   }
   // (b bis) An `instance "X"` that resolved to NO symbol. Compilation keeps the unresolved `@X` marker all
@@ -760,6 +783,10 @@ export function docLayoutWarnings(doc: Doc): { scope: string; diag: Diagnostic }
     }
   }
   collectZones(doc.layers)
+  // A `hitbox` is a drop zone only when something is dropped ON it. Two overlapping hitboxes that no
+  // `when dropped on` names (two buttons shown on different screens) are not ambiguous about anything.
+  const dropTargets = new Set((doc.interactions ?? []).filter((it) => it.event === 'drop' && it.over).map((it) => it.over))
+  for (let k = zones.length - 1; k >= 0; k--) if (!dropTargets.has(zones[k].name)) zones.splice(k, 1)
   for (let i = 0; i < zones.length; i++) for (let j = i + 1; j < zones.length; j++) {
     if (bboxIntersects(zones[i].b, zones[j].b)) out.push(warn(`overlapping hitboxes: "${zones[i].name}" and "${zones[j].name}" -> ambiguous drop`))
   }

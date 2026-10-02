@@ -106,7 +106,7 @@ function ensureDomGlobals(): () => void {
 
 /** Describes a gesture for the trace. */
 const describeGesture = (g: Gesture): string =>
-  g.type === 'drag' ? `drag ${g.source}->${g.target}` : g.type === 'tap' ? `tap ${g.target}`
+  g.type === 'drag' ? `drag ${g.source}->${g.target}` : g.type === 'tap' ? `tap ${g.target ?? `(${g.x},${g.y})`}`
     : g.type === 'connect' ? `connect ${g.source}->${g.target}` : g.type === 'scratch' ? `scratch ${g.target}`
       : g.type === 'turn' ? `turn ${g.target} ${g.angle}${g.from ? ` from (${g.from[0]},${g.from[1]})` : ''}` : g.type === 'set' ? `set ${g.name}=${g.value}`
         : g.type === 'wait' ? `wait ${g.frames}` : g.type === 'wheel' ? `wheel ${g.dy}`
@@ -118,7 +118,7 @@ export function playHeadless(doc: Doc, gestures: Gesture[], opts: { trace?: bool
   const restore = ensureDomGlobals()
   const handlers: Handlers = {}
   const sends: PlayResult['sends'] = []
-  const pl = new FlatPlayer(fakeCanvas(handlers, doc.width, doc.height), doc, { input: true, padding: 0, render: false, onEvent: (e) => sends.push(e) })
+  const pl = new FlatPlayer(fakeCanvas(handlers, doc.width, doc.height), doc, { input: true, padding: 0, render: false, audio: false, onEvent: (e) => sends.push(e) })
   const ev = (x: number, y: number, id = 1) => ({ clientX: x, clientY: y, pointerId: id })
   const fire = (type: string, p: { x: number; y: number }, id = 1) => { const h = handlers[`pointer${type}`]; if (h) h(ev(p.x, p.y, id)) }
   // GRAB: the RESOLVED position of the object (expressions included -> we touch the object exactly where it is).
@@ -145,7 +145,14 @@ export function playHeadless(doc: Doc, gestures: Gesture[], opts: { trace?: bool
     if (g.type === 'key') { pl.setKey(g.name, true); pl.stepSim(g.frames ?? 1); pl.setKey(g.name, false); return }
     if (g.type === 'wheel') { const h = handlers['wheel']; if (h) (h as unknown as (e: { deltaY: number; deltaMode: number; preventDefault: () => void }) => void)({ deltaY: g.dy, deltaMode: 0, preventDefault: () => {} }); pl.stepSim(g.frames ?? 1); return }
     if (g.type === 'drag') { const id = g.id ?? 1, t = dropPoint(g.target); fire('down', grabPoint(g.source), id); fire('move', t, id); fire('up', t, id); return }
-    if (g.type === 'tap') { const id = g.id ?? 1, c = grabPoint(g.target); fire('down', c, id); fire('up', c, id); return }
+    if (g.type === 'tap') {
+      // By NAME (the object's resolved position) or at a POINT (`x`, `y`) — a rail, an unnamed area.
+      const id = g.id ?? 1
+      const at = g.target != null ? grabPoint(g.target) : typeof g.x === 'number' && typeof g.y === 'number' ? { x: g.x, y: g.y } : null
+      if (!at) throw new Error('gesture: tap needs a "target" (an object name), or "x" and "y" (a point of the scene)')
+      fire('down', at, id); fire('up', at, id)
+      return
+    }
     if (g.type === 'connect') { const id = g.id ?? 1, t = grabPoint(g.target); fire('down', grabPoint(g.source), id); fire('move', t, id); fire('up', t, id); return } // pull a link wire source -> target
     if (g.type === 'scratch') { // sweep the reveal target's bbox so its coverage reaches ~1
       const id = g.id ?? 1

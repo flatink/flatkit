@@ -32,7 +32,7 @@ import type { ScratchMask } from './drawScene'
 export type Gesture =
   // Semantic (by NAME) -- the engine resolves them into down/move/up.
   | { type: 'drag'; source: string; target: string; id?: number } // drags the `source` object onto the `target` zone
-  | { type: 'tap'; target: string; id?: number } // clicks at the center of the `target` object
+  | { type: 'tap'; target?: string; x?: number; y?: number; id?: number } // clicks the `target` object where it stands, or the point (`x`, `y`) when no name is given
   | { type: 'scratch'; target: string; id?: number } // sweeps a `reveal` target's bbox (covers it -> fraction ~1)
   | { type: 'connect'; source: string; target: string; id?: number } // pulls a `link` wire from `source` to `target` (resolves the target index)
   // rotates a `turn`/`turnDeg` target by `angle` around its pivot (signed; DEGREES for turnDeg, RADIANS for
@@ -212,6 +212,8 @@ export function simSteps(acc: number, dt: number, step: number, max: number): { 
 // -- Audio (WebAudio): context + decoded buffers, shared across players. --
 let playerAudioCtx: AudioContext | null = null
 const playerAudioBuffers = new Map<string, AudioBuffer | 'loading'>()
+/** No WebAudio outside a browser (Node, `flatc --play`): every audio entry point is then a silent no-op. */
+const hasAudio = (): boolean => typeof window !== 'undefined' && !!(window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)
 function getAudioCtx(): AudioContext {
   if (!playerAudioCtx) playerAudioCtx = new (window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
   return playerAudioCtx
@@ -1175,7 +1177,7 @@ export class FlatPlayer {
 
   /** Plays an audio clip (asset) as a one-shot (`sound "id"` DSL). No-op if audio is off / asset absent. */
   private playSound(assetId: string): void {
-    if (!this.audioOn) return
+    if (!this.audioOn || !hasAudio()) return
     const c = getAudioCtx()
     if (c.state === 'suspended') void c.resume()
     const buf = playerAudioBuffers.get(assetId)
@@ -1406,6 +1408,10 @@ export class FlatPlayer {
     const def = sym?.params?.find((p) => p.name === param && p.type === 'number')
     if (def?.min != null && def.max != null && def.min <= def.max) targetVal = Math.max(def.min, Math.min(def.max, targetVal))
     let params = this.paramRt.get(inst.id)
+    // Writing the value a param is ALREADY heading to changes nothing: mirroring a variable into a state
+    // from `every frame` used to restart the transition on every step (from the current value, with zero
+    // elapsed time), so an ease with a flat start never left its origin.
+    if (params?.get(param)?.target === targetVal) return
     if (!params) { params = new Map(); this.paramRt.set(inst.id, params) }
     const cur = params.get(param)?.value ?? (sm ? initialStateValue(sm) : 0)
     const dur = Math.max(0, sm?.transition ?? 0)

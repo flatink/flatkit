@@ -1320,7 +1320,18 @@ class FlatParser {
       this.eat('fill'); this.eat('('); const len = this.num(); this.eat(','); const val = this.num(); this.eat(')')
       return Array<number>(Math.max(0, Math.floor(len))).fill(val)
     }
-    return this.num()
+    // A number alone on its line is the common case. Anything else is a CONSTANT expression, evaluated
+    // once like a `def` (`10 / 3`, `PI * 2`): the tokenizer has no operators, so `var z = 10 / 3` used to
+    // keep the `10` and drop the rest of the line without a word.
+    const first = this.peek()
+    if (!first) this.fail('a value is expected after "="')
+    const rest = this.restOfLine(first.at).replace(/\/\/.*$/, '').trim()
+    if (first.k === 'num' && !/^[-+*/%]/.test(rest.slice(first.v.length).trim())) return this.num()
+    const v = evalConst(rest, {})
+    if (!Number.isFinite(v)) this.fail(`a var is initialised with a number or a constant expression — "${rest}" is neither (assign it in \`when loaded\` if it depends on other variables)`)
+    const end = first.at + this.restOfLine(first.at).length
+    while (this.peek() && this.peek()!.at < end) this.next()
+    return v
   }
 
   // Library folders reconstructed from the `in "A/B"` clauses (deduplicated by parent+name).
@@ -1351,9 +1362,12 @@ class FlatParser {
     const assets: Asset[] = []
     const sounds: SoundClip[] = []
     let stage: { fps: number; durationFrames: number } | undefined // root `timeline <fps> <dur>` directive
-    if (this.is('size')) { this.next(); width = this.num(); height = this.num(); this.cw = width; this.ch = height }
     for (;;) {
-      if (this.is('background')) { this.next(); background = this.next().v }
+      // `size` anywhere in the header (it used to be read only as the FIRST line; after an `asset` it fell
+      // into the skip branch below and the scene silently stayed 800x600). Two numbers must follow, so a
+      // `size` that is someone's variable name is left alone.
+      if (this.is('size') && this.t[this.p + 1]?.k === 'num' && this.t[this.p + 2]?.k === 'num') { this.next(); width = this.num(); height = this.num(); this.cw = width; this.ch = height }
+      else if (this.is('background')) { this.next(); background = this.next().v }
       else if (this.is('use')) { this.next(); imports.push(this.str()) }
       else if (this.is('var')) { this.next(); const name = this.next().v; this.eat('='); variables[name] = this.varValue() }
       else if (this.is('timeline')) { const tl = this.timeline(); stage = { fps: tl.fps, durationFrames: tl.durationFrames } }
@@ -1804,7 +1818,17 @@ class FlatParser {
       else if (this.is('pivot')) { this.next(); const x = this.num(); this.eat(','); const y = this.num(); a.pivot = { x, y } }
       else if (this.is('tint')) { this.next(); a.tint = this.tintValue() }
       else if (this.is('filter')) { (a.filters ??= []).push(this.filter()) }
-      else if (this.is('expr')) { this.next(); const ch = this.next().v as BindChannel; const ex = this.str(); (a.expressions ??= {})[ch] = ex }
+      else if (this.is('expr')) {
+        // Same channel spellings as a modifier (`rotate`, `rotationDeg`), and nothing else: a channel the
+        // renderer does not know was stored as written, compiled, and animated nothing.
+        this.next()
+        const raw = this.peek()?.v ?? ''
+        const { ch, deg } = modChannel(raw)
+        if (!(BIND_CHANNELS as string[]).includes(ch)) this.fail(`unknown channel "${raw}" in \`expr\` (expected ${BIND_CHANNELS.join(', ')}, or rotationDeg)`)
+        this.next()
+        const ex = this.str()
+        ;(a.expressions ??= {})[ch as BindChannel] = deg ? `rad(${ex})` : ex
+      }
       else if (this.is('spring')) { this.next(); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let stiffness = 0, damping = 0; for (;;) { if (this.is('stiffness')) { this.next(); stiffness = this.num() } else if (this.is('damping')) { this.next(); damping = this.num() } else break } (a.modifiers ??= {})[ch] = { kind: 'spring', target, stiffness, damping } }
       else if (this.is('smooth')) { this.next(); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let k = 0; if (this.is('k')) { this.next(); k = this.num() } (a.modifiers ??= {})[ch] = { kind: 'smooth', target, k } }
       else if (this.is('nohit')) { this.next(); a.noHit = true }

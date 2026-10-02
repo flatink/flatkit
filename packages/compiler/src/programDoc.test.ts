@@ -413,10 +413,24 @@ describe('programDoc — layout warnings', () => {
     expect(docLayoutWarnings(doc([mkText(long, 40, 300)])).some((w) => /overflows the canvas/.test(w.diag.message))).toBe(true)
     expect(docLayoutWarnings(doc([mkText(long, 40, 300, true)])).filter((w) => /overflows the canvas/.test(w.diag.message))).toEqual([])
   })
-  it('overlapping hitboxes -> warning', () => {
+  // flatink/flatink#13 — a `hitbox` is only a DROP zone when something is dropped on it. Two overlapping
+  // buttons that are never drop targets (a start screen and a game screen) used to trip this warning.
+  describe('overlapping hitboxes', () => {
     const z = (id: string, x: number): Group => ({ id, kind: 'group', name: id, transform: translation(x, 100), hitbox: { w: 120, h: 120 }, layers: [] })
-    const ws = docLayoutWarnings(doc([z('ZoneA', 100), z('ZoneB', 160)]))
-    expect(ws.some((w) => /overlapping hitboxes.*ZoneA.*ZoneB/.test(w.diag.message))).toBe(true)
+    const card: Group = { id: 'card', kind: 'group', name: 'Card', transform: translation(600, 500), layers: [] }
+    const dropOn = (over: string): Interaction => ({ id: `d_${over}`, targetId: 'card', event: 'drop', over, actions: [{ do: 'play' }] })
+    const overlap = (d: Doc) => docLayoutWarnings(d).filter((w) => /overlapping hitboxes/.test(w.diag.message))
+    it('two zones something is dropped on -> warning (the drop is ambiguous)', () => {
+      const ws = overlap({ ...doc([z('ZoneA', 100), z('ZoneB', 160), card]), interactions: [dropOn('ZoneA'), dropOn('ZoneB')] })
+      expect(ws).toHaveLength(1)
+      expect(ws[0].diag.message).toMatch(/ZoneA.*ZoneB/)
+    })
+    it('no drop anywhere -> nothing', () => {
+      expect(overlap(doc([z('ZoneA', 100), z('ZoneB', 160)]))).toEqual([])
+    })
+    it('only one of the two is a drop zone -> nothing (no second zone to hesitate with)', () => {
+      expect(overlap({ ...doc([z('ZoneA', 100), z('ZoneB', 160), card]), interactions: [dropOn('ZoneA')] })).toEqual([])
+    })
   })
   it('clean scene -> no layout warning', () => {
     const ok: Text = mkText('short', 40, 300, true)
@@ -997,5 +1011,42 @@ describe('lint — the unknown-variable hint names the declaration that works', 
     for (const decl of ['var n = 0', 'let n = 0']) {
       expect(lintDocReport(compileFlatpack(src.replace('size 100 100', `size 100 100\n${decl}`), [], {}))).toBe('')
     }
+  })
+})
+
+// flatink/flatink#22 — the body of a VALUE function (`fn f() = G + 1`) was never walked, so a variable
+// read only there came back "never used".
+describe('programDoc — a variable read only in a value function', () => {
+  const scene = 'scene {\n  layer "c" {\n    group "B" at 100,100 {\n      layer "a" {\n        circle 0 0 40 fill #3366cc\n      }\n    }\n  }\n}\n'
+  it('is used', () => {
+    const src = `size 200 200\nvar G = 10\nvar r = 0\nfn f() = G + 1\n${scene}object "B" {\n  when clicked {\n    r = f()\n  }\n}\n`
+    expect(lintDocReport(compileFlatpack(src), src)).toBe('')
+  })
+})
+
+// flatink/flatink#12 — a name the runtime resolves BEFORE the variables (a math function or constant, a
+// reserved scalar, a value function) hides a variable of the same name: every read returns the built-in.
+describe('programDoc — a variable hidden by a built-in name', () => {
+  const scene = 'scene {\n  layer "c" {\n    group "B" at 100,100 {\n      layer "a" {\n        circle 0 0 40 fill #3366cc\n      }\n    }\n  }\n}\n'
+  const hidden = (src: string) => docStructureWarnings(compileFlatpack(src)).map((w) => w.diag.message).filter((m) => /hidden by/.test(m))
+  it('a math function, a constant and a reserved scalar each get a warning naming what hides them', () => {
+    const ws = hidden(`size 200 200\nvar mod = 7\nvar E = 5\nvar time = 2\n${scene}`)
+    expect(ws).toHaveLength(3)
+    expect(ws[0]).toMatch(/"mod".*function/)
+    expect(ws[1]).toMatch(/"E".*constant/)
+    expect(ws[2]).toMatch(/"time"/)
+  })
+  it('a value function too — the reported case, `angle` of the gesture package', () => {
+    const ws = hidden(`size 200 200\nuse "gesture"\nvar angle = 40\n${scene}`)
+    expect(ws).toHaveLength(1)
+    expect(ws[0]).toMatch(/"angle".*function/)
+  })
+  it('a parameter of a function is hidden the same way', () => {
+    const ws = hidden(`size 200 200\nfn twice(min) = min * 2\n${scene}`)
+    expect(ws).toHaveLength(1)
+    expect(ws[0]).toMatch(/parameter "min" of fn twice/)
+  })
+  it('an ordinary name is left alone', () => {
+    expect(hidden(`size 200 200\nvar score = 0\nfn twice(n) = n * 2\n${scene}`)).toEqual([])
   })
 })

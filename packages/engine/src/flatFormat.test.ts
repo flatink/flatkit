@@ -1771,3 +1771,47 @@ describe('flatFormat — `let` at the top level of a program declares a document
     expect(printProgramFull(parseProgramFull(once))).toBe(once)
   })
 })
+
+// flatink/flatink#40 — `var z = 10 / 3` kept the first number and dropped the rest of the line in silence.
+describe('program header — a `var` initialised with a constant expression', () => {
+  it('is evaluated, like a `def`', () => {
+    const v = parseProgram(prog0('var z = 10 / 4\nvar d = 2 * 5\nvar t = PI * 2\nvar m = -3 + 1\nvar p = (1 + 2) * 3')).variables
+    expect(v).toEqual({ z: 2.5, d: 10, t: Math.PI * 2, m: -2, p: 9 })
+  })
+  it('plain numbers, arrays, `fill` and a trailing comment keep working', () => {
+    const v = parseProgram(prog0('var a = -3.5 // start\nvar k = 2.7e-06\nvar s = [1, 2]\nvar f = fill(2, 7)')).variables
+    expect(v).toEqual({ a: -3.5, k: 2.7e-06, s: [1, 2], f: [7, 7] })
+  })
+  it('an initialiser that is not a constant is refused, with the rule', () => {
+    expect(() => parseProgram(prog0('var a = 1\nvar b = a + 1'))).toThrow(/constant/)
+  })
+})
+
+// flatink/flatink#7 — `size` written after another header line was skipped as an unknown token: the scene
+// silently fell back to 800x600.
+describe('program header — `size` is accepted anywhere before the scene', () => {
+  it('after an `asset` line', () => {
+    const p = parseProgram(['asset "fond" "fond.png" image', 'size 960 540', 'scene {', '  layer "L" {', '    path "M0 0L10 0L10 10Z" fill #000000', '  }', '}', ''].join('\n'))
+    expect([p.width, p.height]).toEqual([960, 540])
+  })
+  it('a variable that happens to be called `size` is not mistaken for it', () => {
+    const p = parseProgram(prog0('var size = 3'))
+    expect([p.width, p.height, p.variables]).toEqual([100, 100, { size: 3 }])
+  })
+})
+
+// flatink/flatink#52 — `expr rotationDeg "a"` compiled, passed `--check`, and rotated nothing: the channel
+// name was stored as written, and no renderer knows a `rotationDeg` channel.
+describe('`.flat` — the channel of an inline `expr`', () => {
+  const sym = (attr: string) => `symbol "A" {\n  layer "l" {\n    group "G" at 0,0 ${attr} {\n      layer "x" {\n        path "M0 0L10 0L10 10Z" fill #000000\n      }\n    }\n  }\n}\n`
+  const group = (attr: string) => parseFlat(sym(attr))[0].layers[0].items[0] as Group
+  it('`rotationDeg` is the degree twin of `rotation`, as in a behavior block', () => {
+    expect(group('expr rotationDeg "a"').expressions).toEqual({ rotation: 'rad(a)' })
+  })
+  it('`rotate` is accepted as `rotation`', () => {
+    expect(group('expr rotate "a"').expressions).toEqual({ rotation: 'a' })
+  })
+  it('an unknown channel is an error naming the valid ones', () => {
+    expect(() => parseFlat(sym('expr rotationn "a"'))).toThrow(/unknown channel "rotationn".*rotation/)
+  })
+})

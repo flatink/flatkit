@@ -75,7 +75,7 @@ Usage:
   --play            run the file WITHOUT a canvas, replay --script and print { sends, vars } (JSON)
   --trace           (with --play) HUMAN-READABLE log per gesture: emitted sends + variable diff (debug)
   --script <f>      JSON gesture script: [{ "type": "down|move|up|cancel", "x", "y" }, { "type": "set", "name", "value" }, { "type": "wait", "frames": N }, { "type": "wheel", "dy": N }]
-                    semantic (by NAME, the engine resolves coords): { "type": "drag", "source", "target" } · { "type": "tap", "target" }
+                    semantic (by NAME, the engine resolves coords): { "type": "drag", "source", "target" } · { "type": "tap", "target" } (or "x", "y": a point)
                     · { "type": "scratch", "target" } (sweeps a reveal zone) · { "type": "connect", "source", "target" } (pulls a link wire)
                     { "type": "key", "name": "ArrowRight", "frames": N } holds a key (keys.<name> = 1) N steps, then releases it
                     "wait" lets the simulation run N fixed steps (60 Hz): "every frame" + playhead advance like in real playback
@@ -306,18 +306,20 @@ function checkFlatLibs(flatPaths: string[]): number {
 }
 
 /** Loads a Doc from a `.flatink` (compiled) or a `.flatpack`/`.flatpack.json` (already-baked JSON). */
-function loadDoc(filePath: string, noLibs = false): Doc {
-  if (filePath.endsWith('.flatink')) return buildDocFromProgram(filePath, [], 'inline', '', noLibs).doc
+function loadDoc(filePath: string, noLibs = false, explicitFlats: string[] = []): Doc {
+  // The `.flat` libraries named on the command line are part of the program, exactly as for a compile:
+  // dropping them here left every instance of theirs unresolved — an empty scene, with `--check` green.
+  if (filePath.endsWith('.flatink')) return buildDocFromProgram(filePath, explicitFlats, 'inline', '', noLibs).doc
   // .flatpack (canonical) or .flatpack.json (alias): untrusted JSON → normalize before use.
   return sanitizeDoc(JSON.parse(readFileSync(filePath, 'utf8')))
 }
 
 /** --play: runs the file headless, replays --script, prints { sends, vars }. */
-function playOnce(filePath: string, scriptPath: string, trace: boolean, noLibs = false): number {
+function playOnce(filePath: string, scriptPath: string, trace: boolean, noLibs = false, explicitFlats: string[] = []): number {
   if (!scriptPath) { process.stderr.write('flatc: --play requires --script <gestures.json>\n'); return 1 }
   if (!existsSync(scriptPath)) { process.stderr.write(`flatc: script not found: ${scriptPath}\n`); return 1 }
   let doc: Doc, gestures: Gesture[]
-  try { doc = loadDoc(filePath, noLibs) } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
+  try { doc = loadDoc(filePath, noLibs, explicitFlats) } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
   try { gestures = JSON.parse(readFileSync(scriptPath, 'utf8')) as Gesture[] } catch (e) { process.stderr.write(`flatc: invalid JSON script: ${(e as Error).message}\n`); return 1 }
   if (!Array.isArray(gestures)) { process.stderr.write('flatc: the script must be an array of gestures\n'); return 1 }
   const res = playHeadless(doc, gestures, { trace })
@@ -373,11 +375,11 @@ async function renderDocToFile(doc: Doc, outPath: string, frame: number, vars: R
 }
 
 /** --render: renders the file to PNG (headless skia). Async (SVG decode + raster). */
-async function renderOnce(filePath: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, scaleAuto: boolean, noLibs = false, params: Record<string, string> = {}): Promise<number> {
+async function renderOnce(filePath: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, scaleAuto: boolean, noLibs = false, params: Record<string, string> = {}, explicitFlats: string[] = []): Promise<number> {
   let doc: Doc
   // `--no-libs` was parsed and then not passed on, so `--render` still auto-discovered the neighbouring
   // .flat files -- and failed on one, advising the very flag that had been given. Same hole in `--play`.
-  try { doc = loadDoc(filePath, noLibs) } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
+  try { doc = loadDoc(filePath, noLibs, explicitFlats) } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
   // A frame past the end WRAPS silently, so a render can show frame 20 while the caller asked for 200
   // and reads the result as a renderer bug. It cost exactly that once.
   const dur = doc.timeline?.durationFrames ?? 0
@@ -555,8 +557,8 @@ export function run(argv: string[]): number | Promise<number> {
 
   const explicitFlats = positional.slice(1)
   if (doPreview) return previewOnce(filePath, symbolName, out, frame, vars, scale, steps, doRender, pad, bboxMode, setSpec, scaleAuto)
-  if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps, scaleAuto, noLibs, setSpec)
-  if (doPlay) return playOnce(filePath, scriptPath, doTrace, noLibs)
+  if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps, scaleAuto, noLibs, setSpec, explicitFlats)
+  if (doPlay) return playOnce(filePath, scriptPath, doTrace, noLibs, explicitFlats)
   // `--check <library>.flat`: a `.flat` first positional is an asset LIB, not a program → lint via parseFlatLib
   // (the following positionals are more `.flat` libs to merge). Every other path is unchanged.
   const action: () => number = checkOnly && filePath.endsWith('.flat')

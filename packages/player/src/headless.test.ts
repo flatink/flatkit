@@ -650,3 +650,24 @@ describe('headless -- `fill(n, v)` in an assignment', () => {
     expect(vars.covered).toBeCloseTo(0.5, 6) // still the two seeded cells
   })
 })
+
+describe('headless -- gaps a test script used to fall into', () => {
+  const button = (body: string, header = '') => parseProgramFull(`size 200 200\n${header}var n = 0\nscene {\n  layer "c" {\n    group "B" at 100,100 {\n      layer "a" {\n        circle 0 0 40 fill #3366cc\n      }\n    }\n  }\n}\nobject "B" {\n  when clicked {\n${body}\n  }\n}\n`)
+
+  // flatink/flatink#11 — there is no AudioContext outside a browser. One `sound` in a handler crashed the
+  // whole replay, so every test script had to strip the audio lines from the program first.
+  it('a `sound` action is silent, not a crash', () => {
+    const doc = button('    n = n + 1\n    sound "bip"', 'asset "bip" "bip.wav" sound\n')
+    expect(playHeadless(doc, [{ type: 'tap', target: 'B' }]).vars.n).toBe(1)
+  })
+
+  // flatink/flatink#42 — `tap` took a name only; with `x`/`y` it looked up the object "undefined".
+  it('`tap` at coordinates presses and releases at that point', () => {
+    const doc = button('    n = n + 1')
+    expect(playHeadless(doc, [{ type: 'tap', x: 100, y: 100 }]).vars.n).toBe(1)
+    expect(playHeadless(doc, [{ type: 'tap', x: 5, y: 5 }]).vars.n).toBe(0) // nothing under that point
+  })
+  it('`tap` with neither a target nor a point says what it needs', () => {
+    expect(() => playHeadless(button('    n = n + 1'), [{ type: 'tap' } as unknown as Gesture])).toThrow(/tap.*"target".*"x".*"y"/)
+  })
+})

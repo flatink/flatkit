@@ -133,6 +133,59 @@ describe('drawScene -- wrapLines (word-wrap)', () => {
   it('a word wider than maxW stays alone on its line (no intra-word break)', () => {
     expect(wrapLines(ctx, 'short enormouslylong short', 60)).toEqual(['short', 'enormouslylong', 'short'])
   })
+  // flatink/flatink#43 — French typography puts a no-break space before `? ! : ;`. `\s` matches it, so the
+  // wrap broke exactly where the author had forbidden it and left the punctuation alone on its line.
+  it('never breaks at a no-break space (U+00A0, U+202F), and keeps it in the line', () => {
+    expect(wrapLines(ctx, 'tour de la Terre\u00A0?', 160)).toEqual(['tour de la', 'Terre\u00A0?'])
+    expect(wrapLines(ctx, 'il mesure 40\u202F000 km', 120)).toEqual(['il mesure', '40\u202F000 km'])
+  })
+})
+
+// flatink/flatink#63 — a zero-length segment with a round cap is the cheap way to draw a dot. The Canvas
+// spec prunes zero-length segments before stroking and current Chrome follows it: the dots vanished.
+describe('drawScene -- a zero-length stroked subpath draws its cap', () => {
+  const realPath2D = (globalThis as { Path2D?: unknown }).Path2D
+  let moves: number
+  beforeEach(() => { moves = 0; (globalThis as { Path2D?: unknown }).Path2D = class { addPath() {} rect() {} moveTo() { moves++ } lineTo() {} bezierCurveTo() {} quadraticCurveTo() {} closePath() {} arc() {} ellipse() {} } })
+  afterEach(() => { (globalThis as { Path2D?: unknown }).Path2D = realPath2D })
+  const draw = (shape: string) => {
+    const doc = parseProgramFull(`size 100 100\nscene {\n  layer "c" {\n    ${shape}\n  }\n}\n`)
+    const calls = { arc: [] as number[][], rect: [] as number[][], fill: [] as string[], stroke: 0 }
+    const ctx = {
+      lineWidth: 0, lineCap: '', lineJoin: '', miterLimit: 0, strokeStyle: '', fillStyle: '', globalAlpha: 1,
+      save() {}, restore() {}, transform() {}, setLineDash() {}, beginPath() {},
+      getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+      arc: (x: number, y: number, r: number) => calls.arc.push([x, y, r]),
+      rect: (x: number, y: number, w: number, h: number) => calls.rect.push([x, y, w, h]),
+      fill(this: { fillStyle: string }) { calls.fill.push(this.fillStyle) },
+      stroke: () => { calls.stroke++ },
+    }
+    renderItems(ctx as unknown as CanvasRenderingContext2D, doc, resolveLayerAt(doc.layers[0], 0, {}), 0, null, new Set(), { fps: 60 })
+    return calls
+  }
+  it('round cap -> a disc whose diameter is the stroke width, in the stroke colour', () => {
+    const c = draw('path "M10 20L10 20" nofill stroke #ff0000 10 cap round')
+    expect(c.arc).toEqual([[10, 20, 5]])
+    expect(c.fill).toEqual(['#ff0000'])
+  })
+  it('round is the default cap', () => {
+    expect(draw('path "M10 20L10 20" nofill stroke #ff0000 10').arc).toEqual([[10, 20, 5]])
+  })
+  it('square cap -> a square of the stroke width', () => {
+    expect(draw('path "M10 20L10 20" nofill stroke #ff0000 10 cap square').rect).toEqual([[5, 15, 10, 10]])
+  })
+  it('butt cap -> nothing, as SVG has it', () => {
+    const c = draw('path "M10 20L10 20" nofill stroke #ff0000 10 cap butt')
+    expect([c.arc, c.rect]).toEqual([[], []])
+  })
+  it('the dot is drawn ONCE: its subpath is left out of the stroked path, so an engine that still draws the cap does not double it', () => {
+    draw('path "M10 20L10 20" nofill stroke #ff000080 10')
+    expect(moves).toBe(0)
+  })
+  it('a real segment is untouched', () => {
+    const c = draw('path "M10 20L30 20" nofill stroke #ff0000 10')
+    expect([c.arc, c.rect, c.stroke, moves]).toEqual([[], [], 1, 1])
+  })
 })
 
 describe('drawScene -- text stroke (outline) rendering', () => {

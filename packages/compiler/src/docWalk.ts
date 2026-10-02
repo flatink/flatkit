@@ -92,7 +92,8 @@ export function forEachExpression(doc: Doc, fn: (expr: string) => void): void {
   for (const l of doc.layers) { visit(l.items); visitCels(l) }
   for (const s of doc.symbols ?? []) for (const l of s.layers) { visit(l.items); visitCels(l) }
   for (const i of doc.interactions ?? []) forEachActionExpression(i.actions, fn)
-  for (const f of doc.functions ?? []) if (f.kind === 'proc') forEachActionExpression(f.body, fn)
+  // A value function IS an expression (`fn f() = G + 1`): skipping it hid every name read only there.
+  for (const f of doc.functions ?? []) if (f.kind === 'proc') forEachActionExpression(f.body, fn); else fn(f.expr)
   for (const t of [doc.timeline, ...(doc.symbols ?? []).map((s) => s.timeline)]) {
     if (!t) continue
     forEachActionExpression(t.onLoad, fn)

@@ -69,3 +69,37 @@ describe('FlatPlayer — per-instance state machine (setParam + transition)', ()
     expect(param(pl, 'doorInst', 'door')).toBeUndefined() // paramRt reset
   })
 })
+
+// flatink/flatink#19 — mirroring a variable into a state from `every frame` is the natural thing to write.
+// Each write restarted the transition from the current value with zero elapsed time: with an ease whose
+// starting slope is zero, the object never moved at all.
+describe('FlatPlayer — writing the state it is already heading to', () => {
+  const everyFrame = (ease?: 'easeInOut'): Doc => {
+    const doc = doorDoc([])
+    if (ease) doc.symbols[0].states![0].ease = ease
+    doc.timeline!.onEnterFrame = [{ do: 'setParam', target: 'Door', param: 'door', value: 'open' }]
+    return doc
+  }
+  it('does not restart the transition: the door opens in the declared time', () => {
+    const pl = new FlatPlayer(fakeCanvas(), everyFrame('easeInOut'), { input: false, audio: false, render: false })
+    pl.stepSim(15)
+    const mid = param(pl, 'doorInst', 'door')!
+    expect(mid).toBeGreaterThan(0.2)
+    expect(mid).toBeLessThan(0.8)
+    pl.stepSim(30)
+    expect(param(pl, 'doorInst', 'door')).toBe(1)
+  })
+  it('a write to a DIFFERENT state still starts from where the door is', () => {
+    const doc = everyFrame()
+    const pl = new FlatPlayer(fakeCanvas(), doc, { input: false, audio: false, render: false })
+    pl.stepSim(60)
+    expect(param(pl, 'doorInst', 'door')).toBe(1)
+    doc.timeline!.onEnterFrame![0] = { do: 'setParam', target: 'Door', param: 'door', value: 'closed' }
+    pl.stepSim(15)
+    const mid = param(pl, 'doorInst', 'door')!
+    expect(mid).toBeGreaterThan(0)
+    expect(mid).toBeLessThan(1)
+    pl.stepSim(45)
+    expect(param(pl, 'doorInst', 'door')).toBe(0)
+  })
+})

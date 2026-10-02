@@ -58,22 +58,41 @@ type PlaceModel = {
 
 function parsePlace(name: string, body: string, p: string): PlaceModel {
   const m: PlaceModel = { prompt: '', targets: [], items: [] }
+  // An object is named after its label, and `ident` keeps letters and digits only: `-1` and `+1` fold to
+  // the same name, `< 1`, `= 1` and `> 1` too. The first keeps the plain name (so nothing moves for
+  // labels that never collided — a skin addresses these objects by name); the next ones take `_2`, `_3`…
+  const taken = new Set<string>()
+  const own = (base: string): string => {
+    let id = base
+    for (let k = 2; taken.has(id); k++) id = `${base}_${k}`
+    taken.add(id)
+    return id
+  }
+  const targetOf = new Map<string, string>() // target LABEL -> its object: an item names a target by label
   for (const line of lines('place', name, body)) {
     let x: RegExpMatchArray | null
     if ((x = line.match(/^prompt\s+"(.*)"$/))) m.prompt = x[1]
     else if ((x = line.match(/^target\s+(?:"([^"]+)"|(\S+))\s+at\s+(-?[\d.]+),(-?[\d.]+)$/))) {
       const label = x[1] ?? x[2]
-      m.targets.push({ id: `${p}T${ident(label)}`, label, x: x[3], y: x[4] })
+      if (targetOf.has(label)) throw new Error(`place "${name}": two targets are labelled "${label}" — an item pointing at it could mean either`)
+      const id = own(`${p}T${ident(label)}`)
+      targetOf.set(label, id)
+      m.targets.push({ id, label, x: x[3], y: x[4] })
     } else if ((x = line.match(/^item\s+(?:"([^"]+)"|(\S+))\s*->\s*(?:"([^"]+)"|(\S+))\s+at\s+(-?[\d.]+),(-?[\d.]+)$/))) {
       const label = x[1] ?? x[2]
-      m.items.push({ id: `${p}I${ident(label)}`, label, target: `${p}T${ident(x[3] ?? x[4])}`, x: x[5], y: x[6] })
+      m.items.push({ id: own(`${p}I${ident(label)}`), label, target: x[3] ?? x[4], x: x[5], y: x[6] })
     } else throw new Error(`place "${name}": unrecognised line: ${line}`)
   }
   if (!m.targets.length) throw new Error(`place "${name}": no target — an item has nowhere to go`)
   if (!m.items.length) throw new Error(`place "${name}": no item — nothing for the learner to do`)
-  const known = new Set(m.targets.map((t) => t.id))
+  // Resolved once every line is read: a target may be declared after the item that names it.
   for (const it of m.items) {
-    if (!known.has(it.target)) throw new Error(`place "${name}": item "${it.label}" points at an unknown target`)
+    // By label; failing that by the identifier the label folds to, as long as ONE target answers to it
+    // (`Vegetaux` for a target written with its accents — what this lookup accepted before).
+    const folded = m.targets.filter((t) => ident(t.label) === ident(it.target))
+    const id = targetOf.get(it.target) ?? (folded.length === 1 ? folded[0].id : undefined)
+    if (!id) throw new Error(`place "${name}": item "${it.label}" points at an unknown target`)
+    it.target = id
   }
   return m
 }

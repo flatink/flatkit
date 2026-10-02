@@ -354,3 +354,33 @@ describe('top-level raw lands where its statements are legal', () => {
     expect(r.flatink).toMatch(/^var extra = 1$/m) // not " var extra = 1"
   })
 })
+
+// flatink/flatink#54 — `ident` keeps letters and digits, so labels that differ only by a sign share an
+// identifier: `-1` and `+1` both became `p_I_1`, and `< 1`, `= 1`, `> 1` all became `p_T__1`. Variables
+// and groups were declared twice and the activity broke, with nothing pointing at the labels.
+describe('place — labels that fold to the same identifier', () => {
+  const objects = (src: string) => desugar(src).meta[0].objects
+  it('items: each gets its own object, the first keeping the plain name', () => {
+    const src = 'place p {\n  prompt "x"\n  target A at 200,470\n  item "−1" -> A at 150,150\n  item "+1" -> A at 300,150\n}\n'
+    expect(objects(src)).toEqual(['p_TA', 'p_I_1', 'p_I_1_2'])
+    expect(checkProgram(ensureHeader(desugar(src).flatink)).errors).toBe(0)
+  })
+  it('targets: each gets its own object, and an item still reaches the one it names', () => {
+    const src = 'place p {\n  prompt "x"\n  target "< 1" at 100,470\n  target "= 1" at 300,470\n  target "> 1" at 500,470\n  item a -> "= 1" at 150,150\n  item b -> "> 1" at 300,150\n}\n'
+    const r = desugar(src)
+    expect(r.meta[0].objects).toEqual(['p_T__1', 'p_T__1_2', 'p_T__1_3', 'p_Ia', 'p_Ib'])
+    expect(r.flatink).toMatch(/object "p_Ia" \{\n {2}drag[^\n]*\n {2}when dropped on p_T__1_2 at pointer \{\n {4}if p_IaPlaced/)
+    expect(r.flatink).toMatch(/object "p_Ib" \{\n {2}drag[^\n]*\n {2}when dropped on p_T__1_3 at pointer \{\n {4}if p_IbPlaced/)
+    expect(checkProgram(ensureHeader(r.flatink)).errors).toBe(0)
+  })
+  it('an item may still name its target by a spelling that folds to the same identifier, when only one target does', () => {
+    const src = 'place p {\n  target "V\u00e9g\u00e9taux" at 200,400\n  item a -> Vegetaux at 100,100\n}\n'
+    expect(desugar(src).flatink).toContain('when dropped on p_TVegetaux at pointer')
+  })
+  it('the SAME target label twice is an error: an item naming it could mean either', () => {
+    expect(() => desugar('place p {\n  target A at 100,470\n  target A at 300,470\n  item a -> A at 150,150\n}\n')).toThrow(/two targets.*"A"/)
+  })
+  it('labels that do not collide keep the names they always had', () => {
+    expect(objects('place p {\n  target T at 200,400\n  item a -> T at 100,100\n  item b -> T at 200,100\n}\n')).toEqual(['p_TT', 'p_Ia', 'p_Ib'])
+  })
+})

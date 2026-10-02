@@ -42,6 +42,12 @@ function tokenize(src: string): Tok[] {
     if ((c >= '0' && c <= '9') || (c === '.' && src[i + 1] >= '0' && src[i + 1] <= '9')) {
       let j = i + 1
       while (j < n && ((src[j] >= '0' && src[j] <= '9') || src[j] === '.')) j++
+      // Exponent (`1.5e2`, `2.7e-06`) — only when digits follow, so `2e` stays the error it was.
+      if (src[j] === 'e' || src[j] === 'E') {
+        let k = j + 1
+        if (src[k] === '+' || src[k] === '-') k++
+        if (src[k] >= '0' && src[k] <= '9') { while (k < n && src[k] >= '0' && src[k] <= '9') k++; j = k }
+      }
       out.push({ k: 'num', v: src.slice(i, j) })
       i = j
       continue

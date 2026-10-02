@@ -153,3 +153,19 @@ describe('scriptDoc — globals', () => {
     expect(unitsToVariables([])).toEqual({})
   })
 })
+
+// flatink/flatink#41 — a program assembled from bricks brings one `every frame` per brick. Each unit used
+// to REPLACE the previous one, so only the last block ran, and nothing said the others were gone.
+describe('scriptDoc — several blocks of the same scene event', () => {
+  it('two `every frame` blocks run in source order, not only the last', () => {
+    const tl = unitsToTimeline(parseUnits('every frame {\n  a = a + 1\n}\nevery frame {\n  b = b + 1\n}').units)
+    expect(tl.onEnterFrame).toEqual([{ do: 'setVar', name: 'a', value: 'a + 1' }, { do: 'setVar', name: 'b', value: 'b + 1' }])
+  })
+  it('two `when loaded` blocks likewise', () => {
+    const tl = unitsToTimeline(parseUnits('when loaded {\n  a = 1\n}\nwhen loaded {\n  b = 1\n}').units)
+    expect(tl.onLoad).toEqual([{ do: 'setVar', name: 'a', value: '1' }, { do: 'setVar', name: 'b', value: '1' }])
+  })
+  it('an empty block still leaves the field undefined', () => {
+    expect(unitsToTimeline(parseUnits('every frame {\n}').units).onEnterFrame).toBeUndefined()
+  })
+})
