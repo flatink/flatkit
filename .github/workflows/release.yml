@@ -33,7 +33,7 @@ jobs:
     permissions:
       contents: write # push the version branch, create tags / GitHub releases
       pull-requests: write # open/update the "Version Packages" PR
-      id-token: write # npm provenance (OIDC)
+      id-token: write # npm TRUSTED PUBLISHING (OIDC): this is what authenticates the publish, and signs the provenance
     # Third-party actions pinned to a commit SHA (see gate.yml); Dependabot keeps them current.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,7 +59,11 @@ jobs:
           publish-script: pnpm release
           pr-title: "Version Packages"
           commit-message: "Version Packages"
+        # NO npm token. Each @flatkit package names this repository and THIS workflow file as its trusted
+        # publisher on npmjs.com (package Settings -> Trusted Publisher), and npm (>= 11.5.1, shipped with
+        # Node 24) exchanges the job's OIDC identity for a short-lived publish credential. A stored token
+        # expires — npm caps write tokens at 90 days — and the release of 0.36.0 found out the hard way.
+        # A NEW package must be given its trusted publisher before its first release from here, and
+        # renaming this file breaks the match for all of them.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: "true"
