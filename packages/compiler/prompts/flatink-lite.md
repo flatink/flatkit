@@ -87,7 +87,8 @@ link endX,endY,target to <Group>     // target = hit index 1..n (0=none), WORLD 
   // link draws NO thread. A bar drawn from its own origin, then:
   //   rotation = angle(srcX, srcY, endX, endY)   scaleX = dist(srcX, srcY, endX, endY) / <drawn length>
 ```
-Self-state & feedback: `self.hovered self.grabbed self.pressed` (0/1) ·
+Keyboard: `focusable [order n]` in an `object` block → Tab reaches it, Enter/Space fire its `when clicked`.
+Self-state & feedback: `self.hovered self.grabbed self.pressed self.focused` (0/1) ·
 `feedback lift tilt dim shake(<expr>)`.
 State/funcs: `var a = 0` · `var arr = fill(8,0)` (also as an ASSIGNMENT: `arr = fill(n, 0)` blanks a grid) · `fn dist(ax,ay,bx,by) = hypot(ax-bx,ay-by)` ·
 `fn reset() { score = 0 }`.

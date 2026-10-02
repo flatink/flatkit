@@ -93,6 +93,18 @@ export function objectPlacementById(doc: Doc, id: string, frame: number, ctx: Ex
   return found
 }
 
+/** The resolved WORLD transform of one object, by id (expressions and animation included) — where it is
+ *  drawn right now. `undefined` if the object is not in the rendered tree at this frame. */
+export function objectWorldById(doc: Doc, id: string, frame: number, ctx: ExprContext | undefined, fps: number): Transform | undefined {
+  let found: Transform | undefined
+  roots(doc, frame, ctx, fps, (it, t) => {
+    if (it.id !== id) return
+    found = t
+    return true
+  })
+  return found
+}
+
 /** World channels of ONE object by its `id` (for `self` in handlers, where the object is known by id,
  *  not by name). `undefined` if the object is not in the rendered tree at this frame. */
 export function objectChannelsById(doc: Doc, id: string, frame: number, ctx: ExprContext | undefined, fps: number): ObjectChannels | undefined {

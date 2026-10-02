@@ -123,6 +123,10 @@ learner makes a mistake and the activity stops responding, at the exact moment t
 | `compose <name> { prompt "…"  total <n>  chip <v> at x,y }` | tap values until they add up; overshooting resets |
 | `steps <name> { prompt "…"  step "…" at x,y }` | a gated sequence; out-of-order taps do nothing |
 
+All three are played **with the keyboard** as well as a pointer: every element is `focusable` (Tab reaches
+it, Enter or Space taps it). `place` has a second way in besides dragging — pick an item, then pick its
+target — which is also what a learner who taps twice instead of dragging gets.
+
 Any of the three takes a **`shuffle`** line: the elements the learner picks from (items, chips, step
 cards) swap places when the activity loads, so playing it again is a new attempt. Targets stay put, and so
 does the order of a `steps` sequence. The draw comes from `random()`: pass the player a `seed` to get the

@@ -369,8 +369,9 @@ describe('place — labels that fold to the same identifier', () => {
     const src = 'place p {\n  prompt "x"\n  target "< 1" at 100,470\n  target "= 1" at 300,470\n  target "> 1" at 500,470\n  item a -> "= 1" at 150,150\n  item b -> "> 1" at 300,150\n}\n'
     const r = desugar(src)
     expect(r.meta[0].objects).toEqual(['p_T__1', 'p_T__1_2', 'p_T__1_3', 'p_Ia', 'p_Ib'])
-    expect(r.flatink).toMatch(/object "p_Ia" \{\n {2}drag[^\n]*\n {2}when dropped on p_T__1_2 at pointer \{\n {4}if p_IaPlaced/)
-    expect(r.flatink).toMatch(/object "p_Ib" \{\n {2}drag[^\n]*\n {2}when dropped on p_T__1_3 at pointer \{\n {4}if p_IbPlaced/)
+    // The handler that PLACES an item (the one guarded by `Placed`) is the one for the target it names.
+    expect(r.flatink).toMatch(/when dropped on p_T__1_2 at pointer \{\n {4}if p_IaPlaced/)
+    expect(r.flatink).toMatch(/when dropped on p_T__1_3 at pointer \{\n {4}if p_IbPlaced/)
     expect(checkProgram(ensureHeader(r.flatink)).errors).toBe(0)
   })
   it('an item may still name its target by a spelling that folds to the same identifier, when only one target does', () => {

@@ -1871,3 +1871,20 @@ describe('`polyline <xs> <ys>` — a shape built from arrays at runtime', () => 
     expect(() => parseProgram(scene('polyline tx nofill stroke #cc3333 2'))).toThrow(/polyline.*two array/)
   })
 })
+
+describe('program — `focusable` in an `object` block (flatink/flatink#35)', () => {
+  const src = (body: string, top = '') => `size 100 100\nscene {\n  layer "c" {\n    group "B" at 50,50 {\n      layer "a" {\n        circle 0 0 20 fill #3366cc\n      }\n    }\n  }\n}\n${top}object "B" {\n${body}\n}\n`
+  it('lands on the item, and survives a round-trip', () => {
+    const p = parseProgramFull(src('  focusable order 2\n  when clicked {\n    play\n  }'))
+    expect((p.layers[0].items[0] as Group).focusable).toEqual({ order: 2 })
+    const again = parseProgramFull(printProgramFull(p))
+    expect((again.layers[0].items[0] as Group).focusable).toEqual({ order: 2 })
+    expect(printProgramFull(p)).toContain('focusable order 2')
+  })
+  it('without it the item has no such field', () => {
+    expect((parseProgramFull(src('  opacity = 1')).layers[0].items[0] as Group).focusable).toBeUndefined()
+  })
+  it('written at the program level, outside any object, it is an error', () => {
+    expect(itemOnlyUnitDiagnostics(src('  opacity = 1', 'focusable\n')).map((d) => d.diag.message).join(' ')).toMatch(/focusable.*object/)
+  })
+})

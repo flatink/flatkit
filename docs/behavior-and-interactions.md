@@ -394,9 +394,33 @@ object "Card" {
 }
 ```
 
+## Keyboard access (`focusable`)
+
+An object that declares `focusable` can be reached and used **without a pointer**:
+
+```
+object "Validate" {
+  focusable order 3            # order is optional: ranked objects first (lower first), then the others in document order
+  when clicked { check() }     # Enter or Space on the focused object fires this too
+}
+object "Hint" {
+  focusable noring             # no default ring: this object draws its own…
+  opacity = self.focused ? 1 : 0.7      # …from `self.focused` (1 while it holds the focus)
+}
+```
+
+- **Tab / Shift+Tab** walk the focusable objects; **Enter** and **Space** click the focused one (its
+  `when clicked`). An object that is not shown (opacity 0, or absent from the picture) is skipped.
+- The player draws a **focus ring** around the focused object — around its `hitbox` when it has one.
+  `noring` leaves the drawing to the scene.
+- The focus is a stop, not a trap: past the last object (or before the first), Tab goes back to the page.
+- Using the pointer drops the keyboard focus, like `:focus-visible` on a web page.
+- Under `flatc --play`, `{ "type": "key", "name": "Tab" }` moves the focus and `"Enter"` clicks, so a
+  keyboard path is tested like any other.
+
 ## Feedback
 
-An object can read **its own interaction state** in channel expressions: `self.hovered`, `self.grabbed`,
+An object can read **its own interaction state** in channel expressions: `self.focused`, `self.hovered`, `self.grabbed`,
 `self.pressed` (each `0`/`1`). So hover-lift and grab-squash are just expressions — no mirror variable,
 no handler:
 

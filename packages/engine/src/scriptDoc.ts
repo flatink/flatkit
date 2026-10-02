@@ -10,7 +10,7 @@
 //  Text serialization happens via printUnits/parseUnits (dsl.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Action, FrameAction, FrameLabel, Interaction, ItemEvent, FuncDef } from './actions'
-import type { Interactor, ChannelModifier } from '@flatkit/types'
+import type { Interactor, ChannelModifier, Focusable } from '@flatkit/types'
 import { EXPR_CHANNELS, BIND_CHANNELS, type ExprChannel, type BindChannel, type Timeline, type InstanceBind } from './timeline'
 import type { ScriptUnit } from './dsl'
 
@@ -31,8 +31,10 @@ export function objectToUnits(
   expressions: Partial<Record<BindChannel, string>> | undefined,
   interactors?: Interactor[],
   modifiers?: Partial<Record<ExprChannel, ChannelModifier>>,
+  focusable?: Focusable,
 ): ScriptUnit[] {
   const units: ScriptUnit[] = []
+  if (focusable) units.push({ kind: 'focusable', ...(focusable.order !== undefined ? { order: focusable.order } : {}), ...(focusable.noRing ? { noRing: true } : {}) })
   const drag = interactors?.find((i) => i.targetId === targetId)
   if (drag) units.push({ kind: 'interactor', axis: drag.axis, varX: drag.varX, varY: drag.varY, confine: drag.confine, grid: drag.grid, ...(drag.step !== undefined ? { step: drag.step } : {}), ...(drag.bothEnds ? { bothEnds: true } : {}), ...(drag.pointX && drag.pointY ? { pointX: drag.pointX, pointY: drag.pointY } : {}), ...(drag.grain !== undefined ? { grain: drag.grain } : {}), ...(drag.erase ? { erase: true } : {}), ...(drag.cells ? { cells: drag.cells } : {}), ...(drag.varT ? { varT: drag.varT } : {}), ...(drag.enabled ? { enabled: drag.enabled } : {}), ...(drag.pivot ? { pivot: drag.pivot } : {}) })
   for (const ev of ITEM_EVENTS) {
@@ -51,6 +53,7 @@ export type ObjectScript = {
   interactor?: ObjectInteractor
   expressions: Partial<Record<BindChannel, string>>
   modifiers: Partial<Record<ExprChannel, ChannelModifier>>
+  focusable?: Focusable
 }
 
 /** Units → object fragment (interactor + events + drops + channel expressions). */
@@ -60,14 +63,16 @@ export function unitsToObject(units: ScriptUnit[]): ObjectScript {
   const expressions: Partial<Record<BindChannel, string>> = {}
   const modifiers: Partial<Record<ExprChannel, ChannelModifier>> = {}
   let interactor: ObjectInteractor | undefined
+  let focusable: Focusable | undefined
   for (const u of units) {
     if (u.kind === 'event' && u.event !== 'load' && u.event !== 'enterFrame' && ITEM_EVENT_SET.has(u.event)) events.push({ event: u.event as ItemEvent, actions: u.body })
     else if (u.kind === 'drop') drops.push({ over: u.over, ...(u.atPointer ? { atPointer: true } : {}), actions: u.body })
     else if (u.kind === 'interactor') interactor = { axis: u.axis, varX: u.varX, varY: u.varY, confine: u.confine, grid: u.grid, ...(u.step !== undefined ? { step: u.step } : {}), ...(u.bothEnds ? { bothEnds: true } : {}), ...(u.pointX && u.pointY ? { pointX: u.pointX, pointY: u.pointY } : {}), ...(u.grain !== undefined ? { grain: u.grain } : {}), ...(u.erase ? { erase: true } : {}), ...(u.cells ? { cells: u.cells } : {}), ...(u.varT ? { varT: u.varT } : {}), ...(u.enabled ? { enabled: u.enabled } : {}), ...(u.pivot ? { pivot: u.pivot } : {}) }
     else if (u.kind === 'binding') expressions[u.channel] = u.expr
     else if (u.kind === 'modifier') modifiers[u.channel] = u.modifier
+    else if (u.kind === 'focusable') focusable = { ...(u.order !== undefined ? { order: u.order } : {}), ...(u.noRing ? { noRing: true } : {}) }
   }
-  return { events, drops, interactor, expressions, modifiers }
+  return { events, drops, interactor, expressions, modifiers, ...(focusable ? { focusable } : {}) }
 }
 
 // ── SCENE: scripts of a timeline (onLoad/onEnterFrame/frameActions/labels) ────

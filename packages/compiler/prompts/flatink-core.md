@@ -252,7 +252,8 @@ State & helpers:
 var x = 0    var arr = [0,0,0]    var z = fill(8, 0)     // runtime state (arrays via fill)
 fn dist(ax,ay,bx,by) = hypot(ax-bx, ay-by)              // value fn
 fn reset() { score = 0  go to frame 0 }                  // procedure fn
-self.hovered self.grabbed self.pressed                   // own interaction state (0/1)
+self.hovered self.grabbed self.pressed self.focused      // own interaction state (0/1)
+focusable [order <n>] [noring]                           // in an object block: Tab reaches it, Enter/Space fire `when clicked`, the player rings it
 feedback lift tilt dim shake(<expr>)                     // one-liner reactions (auto use "feedback")
 ```
 

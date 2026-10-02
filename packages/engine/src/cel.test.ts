@@ -681,3 +681,13 @@ describe('resolveLayerAt — a `polyline` takes its points from the variables (f
     expect(points({ xs: 'xs', ys: 'ys' }, scope)[0].pts).toHaveLength(4)
   })
 })
+
+describe('resolveLayerAt — `self.focused` (flatink/flatink#35)', () => {
+  it('is 1 for the item that holds the keyboard focus, 0 otherwise', () => {
+    const g = { ...group('X'), expressions: { opacity: '0.5 + self.focused * 0.5' } }
+    const l = layer([g])
+    expect(resolveLayerAt(l, 0, {})[0].opacity).toBe(0.5)
+    expect(resolveLayerAt(l, 0, { itemState: () => ({ hovered: 0, grabbed: 0, pressed: 0, focused: 1 }) })[0].opacity).toBe(1)
+    expect(resolveLayerAt(l, 0, { itemState: () => ({ hovered: 1, grabbed: 0, pressed: 0 }) })[0].opacity).toBe(0.5)
+  })
+})

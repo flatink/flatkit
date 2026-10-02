@@ -53,7 +53,7 @@ per second), `deg(r)` (the inverse, for readouts). Or bind the **`rotationDeg`**
 | `random()` | a number in `[0, 1[`, a new one at each call. Reproducible when the player is given a `seed` (always the case under `flatc --play`, see `--seed`) — see [host integration](host-integration.md) |
 | `keys.<Key>` | `1` while a key is held, `0` otherwise — `<Key>` is the browser `KeyboardEvent.key` value (`keys.ArrowRight`, `keys.a`, `keys.Escape`), plus the alias `keys.Space` for the space bar, **or** the physical key, `KeyboardEvent.code` (`keys.ShiftLeft`, `keys.Digit1`, `keys.Numpad1`, `keys.KeyA`) — the way to tell the two Shift keys apart and to read the digit row. Naming a key here also makes the player **consume** it (no page scroll) — see [host integration](host-integration.md#keyboard) |
 | `self.x` `self.y` `self.scaleX` … | the object's own current pose (in its channel bindings) |
-| `self.hovered` `self.grabbed` `self.pressed` | the object's own interaction state (`0`/`1`) — see [feedback](behavior-and-interactions.md#feedback) |
+| `self.hovered` `self.grabbed` `self.pressed` `self.focused` | the object's own interaction state (`0`/`1`; `focused` = it holds the keyboard focus, see `focusable`) — see [feedback](behavior-and-interactions.md#feedback) |
 | `<Name>.x` `<Name>.y` … | a named object's live channels (e.g. `Target.x`) |
 
 ## Arrays

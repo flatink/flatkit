@@ -38,6 +38,7 @@ export type ScriptUnit =
   // "move" interactor (cf. RFC interactors): moves the object to the mouse, writes the position into explicit
   // variables. `drag x, y` (2 axes) · `dragX x` · `dragY y`. Slots: confine (zone) / snap (grid).
   | { kind: 'interactor'; axis: 'xy' | 'x' | 'y' | 'turn' | 'turnDeg' | 'trace' | 'reveal' | 'link'; varX?: string; varY?: string; varT?: string; confine?: string; grid?: number; step?: number; bothEnds?: boolean; pointX?: string; pointY?: string; cells?: string; erase?: boolean; grain?: number; enabled?: string; pivot?: { x: number; y: number } }
+  | { kind: 'focusable'; order?: number; noRing?: boolean } // focusable [order <n>] [noring] — the object takes the keyboard focus
   | { kind: 'drop'; over: string; atPointer?: boolean; body: Action[] } // when dropped on Zone [at pointer] { … } — released over a named zone
 
 /** A mechanical repair carried BY the diagnostic: replace [line,col -> endLine,endCol) with `replacement`
@@ -167,6 +168,8 @@ function printUnit(u: ScriptUnit): string {
     }
     case 'use':
       return `use ${quote(u.name)}`
+    case 'focusable':
+      return `focusable${u.order !== undefined ? ` order ${u.order}` : ''}${u.noRing ? ' noring' : ''}`
     case 'interactor': {
       const enabledSlot = u.enabled ? [INDENT + `enabled ${u.enabled}`] : []
       const block = (head: string, slots: string[]) => (slots.length ? `${head} {\n${slots.join('\n')}\n}` : head)
@@ -1049,6 +1052,22 @@ class Parser {
         if (name === null) { this.skipLine(); return null }
         this.endStatement()
         return { kind: 'use', name }
+      }
+      case 'focusable': {
+        // `focusable [order <n>] [noring]` — both options on the line, in any order.
+        let order: number | undefined, noRing = false
+        for (;;) {
+          this.skipSpace()
+          const c = this.peek()
+          if (this.eof() || c === '\n' || (c === '/' && this.at(1) === '/')) break
+          const om = this.mark()
+          const opt = this.word()
+          if (opt === 'order') { const n = this.number(); if (n === null) { this.err('a number is expected after "order"', om); this.skipLine(); return null } order = n }
+          else if (opt === 'noring') noRing = true
+          else { this.err(`unknown option "${opt || c}" after "focusable" — it takes \`order <n>\` and \`noring\``, om); this.skipLine(); return null }
+        }
+        this.endStatement()
+        return { kind: 'focusable', ...(order !== undefined ? { order } : {}), ...(noRing ? { noRing } : {}) }
       }
       case 'drag':
       case 'dragX':

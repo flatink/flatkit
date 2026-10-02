@@ -432,6 +432,7 @@ function applyExprChannels(
   self.hovered = st?.hovered ?? 0
   self.grabbed = st?.grabbed ?? 0
   self.pressed = st?.pressed ?? 0
+  self.focused = st?.focused ?? 0
   // Tiny overlay (space conversions + time/frame/clock) shared across the layer's items; we swap only `self`
   // here and `value` per channel. opts.ctx (the scene-wide vars + named objects) is consulted BY REFERENCE
   // as evalExpr's `base` — never copied. Mutating the shared overlay between the SYNCHRONOUS evals is safe;

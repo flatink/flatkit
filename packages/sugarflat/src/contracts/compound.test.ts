@@ -160,3 +160,46 @@ describe('shuffle — the things the learner picks from swap places at load', ()
     expect([...(res.vars.c_sx as number[])].sort((a, b) => a - b)).toEqual([100, 300, 500])
   })
 })
+
+// flatink/flatink#60 — the sugar gestures could only be played with a pointer: the one screen of a story
+// that did not pass the keyboard test. Every element is now `focusable`, and `place` has a second way in:
+// pick an item (Enter, or a tap), then pick its target.
+describe('keyboard — the gestures are played with Tab and Enter', () => {
+  const docOf = (src: string) => { const c = checkProgram(desugar(src).flatink); expect(c.errors).toBe(0); return c.doc! }
+  const tab = { type: 'key', name: 'Tab' } as const, enter = { type: 'key', name: 'Enter' } as const
+  const names = (res: { sends: { name: string }[] }) => res.sends.map((s) => s.name)
+
+  it('compose: Tab to a chip, Enter to tap it', () => {
+    const doc = docOf('compose c {\n  total 30\n  chip 10 at 100,300\n  chip 20 at 300,300\n}\n')
+    expect(names(playHeadless(doc, [tab, enter, tab, enter, { type: 'wait', frames: 3 }]))).toEqual(['correct', 'correct', 'part', 'completed'])
+  })
+  it('steps: the cards are walked in the order of the sequence', () => {
+    const doc = docOf('steps s {\n  step "one" at 100,300\n  step "two" at 300,300\n  step "three" at 500,300\n}\n')
+    expect(names(playHeadless(doc, [tab, enter, tab, enter, tab, enter, { type: 'wait', frames: 3 }]))).toEqual(['step', 'step', 'step', 'part', 'completed'])
+  })
+  const place = 'place p {\n  target A at 150,470\n  target B at 450,470\n  item a -> A at 100,150\n  item b -> B at 300,150\n}\n'
+  it('place: Enter picks the focused item, Enter on a target puts it there', () => {
+    // tab order: the items (a, b), then the targets (A, B)
+    const res = playHeadless(docOf(place), [tab, enter, tab, tab, enter, { type: 'wait', frames: 2 }])
+    expect(names(res)).toEqual(['correct'])
+    expect([res.vars.p_IaPlaced, res.vars.p_sel]).toEqual([1, 0])
+  })
+  it('place: the wrong target answers `incorrect` and lets go of the item', () => {
+    const res = playHeadless(docOf(place), [tab, enter, tab, tab, tab, enter, { type: 'wait', frames: 2 }]) // a, then B
+    expect(names(res)).toEqual(['incorrect'])
+    expect([res.vars.p_IaPlaced, res.vars.p_sel]).toEqual([0, 0])
+  })
+  it('place: a target clicked with nothing picked does nothing', () => {
+    const res = playHeadless(docOf(place), [tab, tab, tab, enter, { type: 'wait', frames: 2 }])
+    expect(names(res)).toEqual([])
+  })
+  it('place: tap an item, then tap its target — the same path, with a finger', () => {
+    const res = playHeadless(docOf(place), [{ type: 'tap', target: 'p_Ib' }, { type: 'tap', target: 'p_TB' }, { type: 'wait', frames: 2 }])
+    expect(names(res)).toEqual(['correct'])
+    expect(res.vars.p_IbPlaced).toBe(1)
+  })
+  it('place: dragging still works, and both ways finish the block', () => {
+    const res = playHeadless(docOf(place), [{ type: 'drag', source: 'p_Ia', target: 'p_TA' }, { type: 'tap', target: 'p_Ib' }, { type: 'tap', target: 'p_TB' }, { type: 'wait', frames: 3 }])
+    expect(names(res)).toEqual(['correct', 'correct', 'part', 'completed'])
+  })
+})

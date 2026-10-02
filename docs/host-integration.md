@@ -30,6 +30,7 @@ const player = new FlatPlayer(canvas, doc, {
 | `render` | `true` | `false` = headless (logic + `send`s only, no Canvas API needed) |
 | `resolveAsset` | embedded only | maps an asset to a URL. Default: embedded `data:` URIs only — see [Security](#security) |
 | `onEvent` | — | called on every `send` |
+| `focusRing` | `true` | the ring drawn around the object that holds the keyboard focus (`focusable`). `false` = none, or `{ color, width }` |
 | `seed` | none | seed of `random()`: the scene then draws the same numbers on every run. Absent, it draws from `Math.random` |
 | `maxPixelRatio` | none | upper bound on the device pixel ratio the canvas is sized with. The backing store grows with the square of the ratio; on a 3x phone, `2` trades a little sharpness for a much cheaper frame |
 
@@ -141,6 +142,19 @@ place, and `render()` forces a repaint (useful after a late font settles).
 A physical key answers to its **`KeyboardEvent.code`** as well: `keys.ShiftLeft` and `keys.ShiftRight` are
 two keys (both are `keys.Shift`), the digit row is `keys.Digit1`…`keys.Digit0` (its `key` is `"1"`, which
 an expression cannot spell), the keypad `keys.Numpad1`, a letter wherever the layout puts it `keys.KeyA`.
+
+### Keyboard focus
+
+A scene whose objects declare `focusable` makes its canvas a **stop in the page's tab order** (the player
+sets `tabindex="0"` on it unless you set one). Reached with Tab, the first object takes the focus (the last
+one when the page came backwards); Tab then walks the objects, Enter and Space click the focused one, and
+past either end the key is left to the page. The player handles Tab only while the canvas has the page's
+focus, so it never interferes with the rest of your page.
+
+- `focusRing` option: `false` to draw no ring (the scene uses `self.focused`), or `{ color, width }`.
+- `player.focused` is the name of the focused object (or `null`); `player.focusNext(1 | -1)` moves the
+  focus from the host (it returns `false` when there is nothing left that way).
+- The canvas keeps the browser's own focus outline: style it as you would any focusable element.
 
 ### Pointers
 

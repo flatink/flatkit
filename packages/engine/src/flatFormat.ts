@@ -20,7 +20,7 @@ import type { Filter } from './filters'
 import type { Transform } from './transform'
 import type { Cel, Pose } from './cel'
 import type { Interaction } from './actions'
-import type { BlendMode, ChannelModifier, Interactor } from '@flatkit/types'
+import type { BlendMode, ChannelModifier, Focusable, Interactor } from '@flatkit/types'
 import { EXPR_CHANNELS, BIND_CHANNELS, type Easing, type ExprChannel, type BindChannel, type SoundClip, type Timeline } from './timeline'
 import { parsePathData, circlePath, ellipsePath, rectPath } from './svgPath'
 import { compileExpr, evalExpr, exprScope } from './expr'
@@ -803,9 +803,10 @@ const itemsByName = (layers: Layer[]): Map<string, Item> => {
   walk(layers)
   return m
 }
-const namedInfo = (layers: Layer[]): { id: string; name: string; expr?: Partial<Record<BindChannel, string>>; modifiers?: Partial<Record<ExprChannel, ChannelModifier>> }[] => {
-  const out: { id: string; name: string; expr?: Partial<Record<BindChannel, string>>; modifiers?: Partial<Record<ExprChannel, ChannelModifier>> }[] = []
-  const walk = (ls: Layer[]) => { for (const l of ls) for (const it of l.items) { const nm = itemName(it); if (nm) out.push({ id: it.id, name: nm, expr: isPoseable(it) ? it.expressions : undefined, modifiers: isPoseable(it) ? it.modifiers : undefined }); if (isGroup(it)) walk(it.layers) } }
+type NamedInfo = { id: string; name: string; expr?: Partial<Record<BindChannel, string>>; modifiers?: Partial<Record<ExprChannel, ChannelModifier>>; focusable?: Focusable }
+const namedInfo = (layers: Layer[]): NamedInfo[] => {
+  const out: NamedInfo[] = []
+  const walk = (ls: Layer[]) => { for (const l of ls) for (const it of l.items) { const nm = itemName(it); if (nm) out.push({ id: it.id, name: nm, focusable: isPoseable(it) ? it.focusable : undefined, expr: isPoseable(it) ? it.expressions : undefined, modifiers: isPoseable(it) ? it.modifiers : undefined }); if (isGroup(it)) walk(it.layers) } }
   walk(layers)
   return out
 }
@@ -832,7 +833,7 @@ export function printProgramFull(doc: Program): string {
   const sceneUnits = timelineToUnits(doc.timeline)
   if (sceneUnits.length) out += '\n' + printUnits(sceneUnits)
   for (const o of namedInfo(doc.layers)) {
-    const units = objectToUnits(o.id, doc.interactions, o.expr, doc.interactors, o.modifiers)
+    const units = objectToUnits(o.id, doc.interactions, o.expr, doc.interactors, o.modifiers, o.focusable)
     if (units.length) out += `\nobject ${q(o.name)} {\n${indentBlock(printUnits(units))}}\n`
   }
   return out
@@ -997,6 +998,7 @@ const ITEM_ONLY = (u: ScriptUnit): { find: RegExp; what: string } | null => {
   if (u.kind === 'binding') return { find: new RegExp(`^\\s*${u.channel}\\s*=`), what: `the binding \`${u.channel} = …\`` }
   if (u.kind === 'modifier') return { find: /^\s*(spring|smooth)\b/, what: '`spring …` / `smooth …`' }
   if (u.kind === 'interactor') return { find: /^\s*(drag|dragX|dragY|turnDeg|turn|trace|reveal|link)\b/, what: 'an interactor (`drag`, `turn`, `trace`, `reveal`, `link`)' }
+  if (u.kind === 'focusable') return { find: /^\s*focusable\b/, what: '`focusable`' }
   return null
 }
 
@@ -1135,7 +1137,8 @@ export function parseProgramFull(src: string): Program {
   for (const ob of objects) {
     const item = byName.get(ob.name)
     const targetId = item?.id ?? '@' + ob.name
-    const { events, drops, interactor, expressions, modifiers } = unitsToObject(parseUnits(ob.body).units)
+    const { events, drops, interactor, expressions, modifiers, focusable } = unitsToObject(parseUnits(ob.body).units)
+    if (item && isPoseable(item) && focusable) item.focusable = focusable
     // MERGE, never replace. Handlers from several `object "X"` blocks already accumulate, so bindings
     // that replaced each other made one construct behave two ways for its two halves — and the loss was
     // silent. A generated activity lost its `drag` bindings to a second block that only added a wobble:

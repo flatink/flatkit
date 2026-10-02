@@ -226,3 +226,15 @@ describe('FlatPlayer — a `polyline` is repainted when its points move (flatink
     expect(paints).toBe(0)
   })
 })
+
+describe('FlatPlayer — moving the keyboard focus repaints a still scene', () => {
+  it('the ring appears on the next frame while the scene plays', () => {
+    const pl = new FlatPlayer(canvasOf(), scene('var n = 0', 'object "B" {\n  focusable\n  when clicked {\n    n = n + 1\n  }\n}'), { audio: false })
+    expect(paintsOver(pl, 10)).toBe(0)
+    pl.focusNext()
+    paints = 0; frames(1)
+    expect(paints).toBe(1)
+    paints = 0; frames(10)
+    expect(paints).toBe(0)
+  })
+})

@@ -6,20 +6,20 @@
 //  (`polygon-clipping`) -- the material is already baked into the document, the
 //  player only evaluates the timeline and draws.
 // -----------------------------------------------------------------------------
-import type { Asset, Doc, Layer, Point, Text } from '@flatkit/types'
+import type { Asset, Doc, Item, Layer, Point, Text } from '@flatkit/types'
 import { resolveInstanceFrame, scheduleSounds, applyEasing, type Timeline, type Easing } from '@flatkit/engine/timeline'
 import { stateValueOf, initialStateValue, stateMachineByParam } from '@flatkit/engine/states'
 import { compileCached, evalExpr, exprScope, type ExprContext, type Compiled } from '@flatkit/engine/expr'
 import { runActions, MAX_SEND_FIELDS, MAX_SEND_TEXT, SEND_EVENT_NAME, isSendField, type Action, type ActionHost, type Interaction, type ItemEvent } from '@flatkit/engine/actions'
-import { containerLayers, getSymbol, isGroup, isInstance, isText } from '@flatkit/engine/layers'
+import { containerLayers, getSymbol, isGroup, isInstance, isPoseable, isText } from '@flatkit/engine/layers'
 import { renderLayers, collectModifierTargets, docHasModifiers, type FilterCacheEntry, type RenderCtx } from './drawScene'
 import { restState, advanceModifier, type ModState } from '@flatkit/engine/channelModifiers'
 import { withCels } from '@flatkit/engine/migrateCel'
 import { sanitizeDoc } from '@flatkit/engine/validateDoc'
 import { applyInstanceBinds } from '@flatkit/engine/instanceBind'
 import { importedFunctions } from '@flatkit/engine/stdlib'
-import { namedChannels, objectChannelsById, objectPlacementById, type NamedChannels, type ObjectChannels } from '@flatkit/engine/sceneRefs'
-import { itemBoundsByName, itemBoundsById, itemBoundsByIds, dropZoneBounds, tracePathByName, groupTargets, revealGrid } from '@flatkit/engine/groups'
+import { namedChannels, objectChannelsById, objectPlacementById, objectWorldById, type NamedChannels, type ObjectChannels } from '@flatkit/engine/sceneRefs'
+import { itemBBox, itemBoundsByName, itemBoundsById, itemBoundsByIds, dropZoneBounds, tracePathByName, groupTargets, revealGrid } from '@flatkit/engine/groups'
 import { projectToPath, samplePathAt, pathArcLength, type Path } from '@flatkit/engine/path'
 import { apply, invert, spaceConversions, IDENTITY, type Transform } from '@flatkit/engine/transform'
 import type { Interactor } from '@flatkit/types'
@@ -74,6 +74,9 @@ export type PlayerOptions = {
   // Seed of `random()`. Given, the scene draws the same numbers on every run (a replayed test, a level
   // the host wants to hand out again); absent, it draws from `Math.random`.
   seed?: number
+  // The ring the player draws around the object that holds the keyboard focus (`focusable`). `false` =
+  // none: the scene draws its own from `self.focused`. Default: a 3 px blue ring with a white edge.
+  focusRing?: boolean | { color?: string; width?: number }
 }
 
 type View = { tx: number; ty: number; scale: number }
@@ -446,6 +449,12 @@ export class FlatPlayer {
   private actionDepth = 0 // > 0 while actions run: whoever ran them paints once they are done
   private readonly maxDpr: number
   private readonly seed: number | undefined
+  // -- Keyboard focus (`focusable`) --
+  private focusList: { item: Item; name: string; noRing: boolean }[] = [] // the focusable objects, in tab order
+  private focusId: string | null = null // the object that holds the keyboard focus, if any
+  private readonly ring: { color: string; width: number } | null // the default focus ring (null = the scene draws its own)
+  private tabBack = false // the last Tab seen was a Shift+Tab
+  private pointerDown = false // a pointer is pressing: the canvas focus it brings is not a keyboard focus
   private rand: () => number = () => Math.random() // what `random()` draws from (see `PlayerOptions.seed`)
   private longPressTimer: ReturnType<typeof setTimeout> | null = null
   // -- Several pointers --
@@ -528,6 +537,14 @@ export class FlatPlayer {
   private readonly onKeyDown = (e: KeyboardEvent) => {
     if (isEditableTarget(e.target)) return // the user is typing in a field of the host page — not for us
     this.holdKey(e.key, true, e.code)
+    // Keyboard focus: only while the canvas holds the page's focus (Tab must stay the page's everywhere
+    // else), and never on a shortcut. Tab is consumed while it stays inside the scene; past either end the
+    // focus is released and the key is left to the page — the scene is a stop in the tab order, not a trap.
+    if (e.key === 'Tab') this.tabBack = e.shiftKey // which way the page's focus is travelling (see `onCanvasFocus`)
+    if (this.focusList.length && !e.ctrlKey && !e.metaKey && !e.altKey && this.canvasHasFocus()) {
+      if (e.key === 'Tab') { if (this.focusNext(e.shiftKey ? -1 : 1)) e.preventDefault(); return }
+      if ((e.key === 'Enter' || e.key === ' ') && this.clickFocused()) { e.preventDefault(); return }
+    }
     // Consume the key ONLY if the scene reads it (cf. onWheel): an activity bound to the arrows/space
     // stops scrolling the page under it, while an unused key keeps its native behavior.
     if ((this.readsKey(e.key) || (!!e.code && this.readsKey(e.code))) && !e.ctrlKey && !e.metaKey && !e.altKey && !NEVER_CONSUMED.test(e.key)) e.preventDefault()
@@ -969,6 +986,8 @@ export class FlatPlayer {
     this.render()
   }
   private readonly onPointerDown = (e: PointerEvent) => {
+    this.pointerDown = true
+    this.setFocus(null) // the pointer takes over: no keyboard ring while it is used
     if (!this.doc.interactions?.length && !this.doc.interactors?.length) return
     this.usePointer(e.pointerId)
     const p = this.worldPoint(e)
@@ -1002,6 +1021,7 @@ export class FlatPlayer {
     if (clickId || grabId) this.render() // reflects the changes (variables/frame)
   }
   private readonly onPointerUp = (e: PointerEvent) => {
+    this.pointerDown = false
     // Release the capture acquired on down even if the press never became a grab/tap (e.g. a click-only
     // target whose press turned into a drag) — guarded so it never throws on an uncaptured pointer.
     if (this.canvas.hasPointerCapture?.(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId)
@@ -1027,6 +1047,7 @@ export class FlatPlayer {
   }
   // Interrupted gesture (canceled touch, OS gesture): we release WITHOUT a drop (the pointer did not "let go" on a target).
   private readonly onPointerCancel = (e: PointerEvent) => {
+    this.pointerDown = false
     if (this.canvas.hasPointerCapture?.(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId) // release even a click-only capture
     this.usePointer(e.pointerId)
     this.pendingClick = null // an interrupted gesture is never a click
@@ -1080,6 +1101,9 @@ export class FlatPlayer {
     this.applyInputUse()
     this.analysePicture()
     this.seed = opts.seed
+    const fr = opts.focusRing ?? true
+    this.ring = fr === false ? null : { color: (fr !== true && fr.color) || '#1a73e8', width: (fr !== true && fr.width) || 3 }
+    this.buildFocusList()
     if (this.seed !== undefined) this.rand = seededRandom(this.seed)
     this.maxDpr = opts.maxPixelRatio && opts.maxPixelRatio > 0 ? opts.maxPixelRatio : Infinity
     this.hasModifiers = docHasModifiers(this.doc)
@@ -1107,6 +1131,12 @@ export class FlatPlayer {
       globalThis.addEventListener('keydown', this.onKeyDown)
       globalThis.addEventListener('keyup', this.onKeyUp)
       globalThis.addEventListener('blur', this.onBlur) // alt-tab: no keyup is delivered -> release the held keys
+      if (this.focusList.length) {
+        // The canvas takes part in the page's tab order: Tab reaches it, then walks the scene's objects.
+        if (this.canvas.tabIndex < 0) this.canvas.tabIndex = 0
+        this.canvas.addEventListener('focus', this.onCanvasFocus)
+        this.canvas.addEventListener('blur', this.onCanvasBlur)
+      }
       this.canvas.addEventListener('pointermove', this.onPointerMove)
       this.canvas.addEventListener('pointerdown', this.onPointerDown)
       this.canvas.addEventListener('pointerup', this.onPointerUp)
@@ -1475,7 +1505,102 @@ export class FlatPlayer {
    */
   setKey(name: string, down: boolean): void {
     this.holdKey(name, down)
+    // The same keys walk and click the focusable objects (a headless `key` gesture, an on-screen control).
+    if (down && this.focusList.length) {
+      if (name === 'Tab') this.focusNext(1)
+      else if (name === 'Enter' || name === ' ' || name === 'Space') this.clickFocused()
+    }
     this.render()
+  }
+
+  // -- Keyboard focus --
+  /** (Re)reads the `focusable` objects of the scene, in TAB ORDER: the ranked ones (`order <n>`, lower
+   *  first), then the others in document order. Load-time only. */
+  private buildFocusList(): void {
+    const found: { item: Item; name: string; noRing: boolean; order: number | undefined; seq: number }[] = []
+    const walk = (layers: Layer[]): void => {
+      for (const l of layers) for (const it of l.items) {
+        if (isPoseable(it) && it.focusable) found.push({ item: it, name: it.name, noRing: !!it.focusable.noRing, order: it.focusable.order, seq: found.length })
+        if (isGroup(it)) walk(it.layers)
+      }
+    }
+    walk(this.doc.layers)
+    found.sort((a, b) => (a.order === undefined ? (b.order === undefined ? a.seq - b.seq : 1) : b.order === undefined ? -1 : a.order - b.order || a.seq - b.seq))
+    this.focusList = found
+  }
+  /** Name of the object that holds the keyboard focus, or `null`. */
+  get focused(): string | null {
+    return this.focusList.find((f) => f.item.id === this.focusId)?.name ?? null
+  }
+  private canvasHasFocus(): boolean {
+    return typeof document === 'undefined' || document.activeElement === this.canvas
+  }
+  /** Can this object take the focus right now? Not while it is out of the picture or faded out: a button
+   *  of a screen that is not shown must not be a stop. */
+  private canFocus(id: string): boolean {
+    const ch = objectChannelsById(this.doc, id, this.frame, this.exprCtx(), this.fps)
+    return !!ch && (ch.opacity ?? 1) > 0.01
+  }
+  /** Moves the keyboard focus to the next (`1`) or previous (`-1`) focusable object. Returns `false` when
+   *  there is none left that way: the focus is then released, for the host to move it on. */
+  focusNext(dir: 1 | -1 = 1): boolean {
+    const list = this.focusList
+    let i = list.findIndex((f) => f.item.id === this.focusId)
+    if (i < 0) i = dir > 0 ? -1 : list.length
+    for (i += dir; i >= 0 && i < list.length; i += dir) if (this.canFocus(list[i].item.id)) { this.setFocus(list[i].item.id); return true }
+    this.setFocus(null)
+    return false
+  }
+  private setFocus(id: string | null): void {
+    if (id === this.focusId) return
+    this.focusId = id
+    this.bustNamed() // `self.focused` feeds channel expressions
+    if (!this.playing && !this.transRaf) this.render() // else: the running loop paints the next frame
+  }
+  /** Enter / Space on the focused object: its `when clicked`. `false` when nothing is focused. */
+  private clickFocused(): boolean {
+    if (!this.focusId) return false
+    this.fireEvent(this.focusId, 'click')
+    this.render()
+    return true
+  }
+  private readonly onCanvasFocus = () => {
+    // Reached with Tab: the first object takes the focus — the last one when the page came backwards.
+    if (!this.pointerDown && !this.focusId) this.focusNext(this.tabBack ? -1 : 1)
+  }
+  private readonly onCanvasBlur = () => this.setFocus(null)
+  /** World rectangle of the focus ring around an object: its `hitbox` if it has one, else its content. */
+  private focusBox(item: Item): { minX: number; minY: number; maxX: number; maxY: number } | null {
+    const t = objectWorldById(this.doc, item.id, this.frame, this.exprCtx(), this.fps)
+    if (!t || !('transform' in item)) return null
+    const hb = (isGroup(item) || isInstance(item)) ? item.hitbox : undefined
+    let corners: Point[]
+    if (hb) corners = [{ x: -hb.w / 2, y: -hb.h / 2 }, { x: hb.w / 2, y: -hb.h / 2 }, { x: hb.w / 2, y: hb.h / 2 }, { x: -hb.w / 2, y: hb.h / 2 }]
+    else {
+      const b = itemBBox(this.doc, item) // in the parent's space, through the item's STATIC transform
+      if (!b || b.minX > b.maxX) return null
+      const back = invert(item.transform) // …so bring it back to the item's own space first
+      corners = [{ x: b.minX, y: b.minY }, { x: b.maxX, y: b.minY }, { x: b.maxX, y: b.maxY }, { x: b.minX, y: b.maxY }].map((p) => apply(back, p))
+    }
+    const w = corners.map((p) => apply(t, p))
+    return { minX: Math.min(...w.map((p) => p.x)), minY: Math.min(...w.map((p) => p.y)), maxX: Math.max(...w.map((p) => p.x)), maxY: Math.max(...w.map((p) => p.y)) }
+  }
+  /** Draws the default focus ring (in scene units, the view transform being set). */
+  private drawFocusRing(ctx: CanvasRenderingContext2D): void {
+    if (!this.ring || !this.focusId) return
+    const f = this.focusList.find((x) => x.item.id === this.focusId)
+    if (!f || f.noRing) return
+    const b = this.focusBox(f.item)
+    if (!b) return
+    const pad = 4, x = b.minX - pad, y = b.minY - pad, w = b.maxX - b.minX + 2 * pad, h = b.maxY - b.minY + 2 * pad
+    ctx.save()
+    ctx.setLineDash([])
+    ctx.lineJoin = 'round'
+    ctx.beginPath()
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, w, h, 6); else ctx.rect(x, y, w, h)
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = this.ring.width + 3; ctx.stroke() // a light edge: the ring reads on any background
+    ctx.strokeStyle = this.ring.color; ctx.lineWidth = this.ring.width; ctx.stroke()
+    ctx.restore()
   }
 
   /** Replaces the played document (resets the framing + the variables, keeps the frame). */
@@ -1501,6 +1626,8 @@ export class FlatPlayer {
     this.interactorIndex = undefined
     this.traceOutputs = traceOutputNames(this.doc)
     this.buildGrabZones() // new document -> new geometry for the `reveal` grab zones
+    this.focusId = null
+    this.buildFocusList()
     this.dropGestures() // …and whatever was being held belonged to the old one
     this.reseedDerivedState() // …then the seeded variables put the derived state back (trace progress, scratched grid)
     this.paramRt.clear() // new document -> per-instance param transitions reset
@@ -1553,15 +1680,17 @@ export class FlatPlayer {
       ? this.exprCtx(lerpVars(this.prevSimVars, this.vars, this.simAlpha))
       : this.exprCtx()
     renderLayers(ctx, doc, doc.layers, this.frame, null, new Set(), { fps: this.fps, expr, image: (id) => this.imageFor(id), filterCache: this.filterCache, imageEpoch: this.imageEpoch, itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), stringsFor: this.stringsOf, monoTime: this.mono / this.fps, ...(this.scratched.size ? { scratched: this.scratched } : {}), ...(this.hasModifiers ? { statePath: '', channelValue: (key: string, ch: string) => this.channelValueFor(key, ch) } : {}) })
+    this.drawFocusRing(ctx)
     ctx.restore()
   }
 
   /** Interaction state of an item for `self.hovered`/`self.grabbed`/`self.pressed` in its channel exprs.
    *  Returns undefined when the item is neither hovered nor grabbed (the cheap, common path → flags 0). */
-  private itemStateFor(id: string): { hovered: number; grabbed: number; pressed: number } | undefined {
+  private itemStateFor(id: string): { hovered: number; grabbed: number; pressed: number; focused?: number } | undefined {
     const hovered = this.hoverIds.has(id) ? 1 : 0
     const grabbed = this.isGrabbed(id) ? 1 : 0
-    return hovered || grabbed ? { hovered, grabbed, pressed: grabbed } : undefined
+    const focused = this.focusId === id ? 1 : 0
+    return hovered || grabbed || focused ? { hovered, grabbed, pressed: grabbed, ...(focused ? { focused } : {}) } : undefined
   }
 
   /** Integrated value of a stateful channel modifier for `statePath+itemId` (key) + channel — read by the
@@ -1991,6 +2120,8 @@ export class FlatPlayer {
     globalThis.removeEventListener('keydown', this.onKeyDown)
     globalThis.removeEventListener('keyup', this.onKeyUp)
     globalThis.removeEventListener('blur', this.onBlur)
+    this.canvas.removeEventListener('focus', this.onCanvasFocus)
+    this.canvas.removeEventListener('blur', this.onCanvasBlur)
     this.canvas.removeEventListener('pointermove', this.onPointerMove)
     this.canvas.removeEventListener('pointerdown', this.onPointerDown)
     this.canvas.removeEventListener('pointerup', this.onPointerUp)

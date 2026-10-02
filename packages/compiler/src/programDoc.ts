@@ -35,10 +35,10 @@ export function scopeProgram(doc: Doc, editPath: EditFrame[] = []): string {
   const items = contextLayers(doc, editPath).flatMap((l) => l.items)
   const nameCount = new Map<string, number>()
   for (const it of items) if (isContainer(it) && it.name) nameCount.set(it.name, (nameCount.get(it.name) ?? 0) + 1)
-  const scripted = (it: Group | Instance) => !!doc.interactions?.some((i) => i.targetId === it.id) || !!doc.interactors?.some((i) => i.targetId === it.id) || !!(it.expressions && Object.keys(it.expressions).length)
+  const scripted = (it: Group | Instance) => !!doc.interactions?.some((i) => i.targetId === it.id) || !!doc.interactors?.some((i) => i.targetId === it.id) || !!(it.expressions && Object.keys(it.expressions).length) || !!it.focusable
   const objects = items
     .filter((it): it is Group | Instance => isContainer(it) && !!it.name && nameCount.get(it.name) === 1 && scripted(it))
-    .map((it) => ({ name: it.name, body: printUnits(objectToUnits(it.id, doc.interactions, it.expressions, doc.interactors)) }))
+    .map((it) => ({ name: it.name, body: printUnits(objectToUnits(it.id, doc.interactions, it.expressions, doc.interactors, undefined, it.focusable)) }))
   const imports = atRoot ? printUnits(importsToUnits(doc.imports)) : ''
   // A local package (`use "physics"` -> physics.flatink) is inlined TWICE into doc.functions: `tick` and the
   // qualified alias `physics.tick` (so both call forms resolve). The alias is not authored source and has NO

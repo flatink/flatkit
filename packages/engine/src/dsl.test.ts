@@ -765,3 +765,21 @@ describe('dsl — `fill(n, v)` in an assignment', () => {
     expect(body[0]).toEqual({ do: 'setVar', name: 'score', value: '1 + 2' })
   })
 })
+
+// flatink/flatink#35 — keyboard access was hand-made in every activity: a focus variable, a ring, rising
+// edges of `keys.Tab`. `focusable` declares that an object takes the keyboard focus; the player does the rest.
+describe('dsl — `focusable`', () => {
+  const unit = (src: string) => { const r = parseUnits(src); expect(r.diagnostics).toEqual([]); return r.units[0] }
+  it('alone, with an order, without the default ring', () => {
+    expect(unit('focusable')).toEqual({ kind: 'focusable' })
+    expect(unit('focusable order 3')).toEqual({ kind: 'focusable', order: 3 })
+    expect(unit('focusable noring')).toEqual({ kind: 'focusable', noRing: true })
+    expect(unit('focusable order 2 noring')).toEqual({ kind: 'focusable', order: 2, noRing: true })
+  })
+  it('prints back as written', () => {
+    for (const src of ['focusable', 'focusable order 3', 'focusable order 2 noring']) expect(printUnits(parseUnits(src).units).trim()).toBe(src)
+  })
+  it('an unknown word after it is an error naming what it takes', () => {
+    expect(parseUnits('focusable first').diagnostics[0].message).toMatch(/focusable.*order <n>.*noring/)
+  })
+})

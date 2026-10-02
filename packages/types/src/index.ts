@@ -291,8 +291,13 @@ export type Cel = {
   ease?: Easing // span curve (default linear)
 }
 
-/** Per-object interaction state exposed to channel expressions as `self.hovered`/`self.grabbed`/`self.pressed` (0/1). */
-export type ItemInteractionState = { hovered: number; grabbed: number; pressed: number }
+/** Per-object interaction state exposed to channel expressions as `self.hovered`/`self.grabbed`/`self.pressed`/`self.focused` (0/1). */
+export type ItemInteractionState = { hovered: number; grabbed: number; pressed: number; focused?: number }
+
+/** `focusable [order <n>] [noring]`: the object takes the KEYBOARD focus (Tab reaches it, Enter/Space click it).
+ *  `order` = its rank (lower first; unranked ones follow, in document order). `noRing` = the player does not
+ *  draw its default focus ring on it (the scene draws its own from `self.focused`). */
+export type Focusable = { order?: number; noRing?: boolean }
 
 /** Resolution context (container expressions + guide layer). `itemState` lets channel expressions read the
  *  object's own interaction state (`self.hovered`…); the PLAYER provides it, absent elsewhere (flags → 0).
@@ -358,6 +363,7 @@ export type Group = {
   expressions?: Partial<Record<BindChannel, string>> // expression animation (cel model) — takes priority over the tween (incl. additive dx/dy offsets)
   modifiers?: Partial<Record<ExprChannel, ChannelModifier>> // STATEFUL channel modifier (smooth/spring); integrates over time, wins over expression/tween
   clip?: ClipRect // rectangular clip in LOCAL coords (`clip x y w h`); content outside is cut
+  focusable?: Focusable // takes the keyboard focus (see `Focusable`)
 }
 
 /** Instance of a reusable symbol: a transform + a reference to the symbol. */
@@ -380,6 +386,7 @@ export type Instance = {
   modifiers?: Partial<Record<ExprChannel, ChannelModifier>> // STATEFUL channel modifier (smooth/spring); integrates over time, wins over expression/tween
   params?: Record<string, string> // call-site values for the symbol's exposed `params` (literal: #color / number / true|false / state name); resolved per the symbol's ParamDef
   clip?: ClipRect // rectangular clip in LOCAL coords (`clip x y w h`); content outside is cut
+  focusable?: Focusable // takes the keyboard focus (see `Focusable`)
 }
 
 /** A rectangular clip region in a container's LOCAL coordinates (`clip <x> <y> <w> <h>`). */
@@ -493,6 +500,7 @@ export type Text = {
   blend?: BlendMode // blend mode (add/screen = additive light, multiply = shadow); absent = normal
   expressions?: Partial<Record<BindChannel, string>> // expression (channel) animation — takes priority over the pose (incl. additive dx/dy offsets)
   modifiers?: Partial<Record<ExprChannel, ChannelModifier>> // STATEFUL channel modifier (smooth/spring); integrates over time, wins over expression/pose
+  focusable?: Focusable // takes the keyboard focus (see `Focusable`)
 }
 
 /** Bitmap image: a leaf item animatable like text. References an asset; `w`/`h` = intrinsic size in px
@@ -514,6 +522,7 @@ export type Image = {
   blend?: BlendMode // blend mode (add/screen = additive light, multiply = shadow); absent = normal
   expressions?: Partial<Record<BindChannel, string>> // expression (channel) animation — takes priority over the pose (incl. additive dx/dy offsets)
   modifiers?: Partial<Record<ExprChannel, ChannelModifier>> // STATEFUL channel modifier (smooth/spring); integrates over time, wins over expression/pose
+  focusable?: Focusable // takes the keyboard focus (see `Focusable`)
 }
 
 /** Layer content: material, one-off group, symbol instance, text, or image. */
