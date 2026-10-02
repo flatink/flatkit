@@ -3,6 +3,7 @@ import { readFileSync, rmSync, writeFileSync, existsSync, mkdtempSync, mkdirSync
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { run } from './flatc'
 import { resolveLayerAt } from '@flatkit/engine/cel'
 
@@ -431,4 +432,25 @@ describe('flatc --play — random() and --seed', () => {
     expect(play(['--seed', '5'])).toBe(play(['--seed', '5']))
     expect(play(['--seed', '5'])).not.toBe(play([]))
   })
+})
+
+// Found while counting warnings on a consumer's corpus: `flatc … --check | grep -c warning` gave a
+// different total from one run to the next. The binary called `process.exit` right after writing, and a
+// write to a PIPE is asynchronous on macOS and Windows — anything past the pipe's buffer (64 KB) was
+// lost, mid-line. A report that long is exactly the one somebody pipes into a tool.
+describe('flatc binary — a long report survives a pipe', () => {
+  it('prints every line, and the summary last', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flatc-pipe-'))
+    try {
+      // 1500 shapes far outside the canvas: one warning each, about 200 KB of report.
+      const shapes = Array.from({ length: 1500 }, (_, i) => `    group "Hors${i}" at ${5000 + i},5000 {\n      layer "a" {\n        rect 0 0 10 10 fill #333333\n      }\n    }`).join('\n')
+      writeFileSync(join(dir, 'p.flatink'), `size 100 100\nscene {\n  layer "c" {\n${shapes}\n  }\n}\n`)
+      const bin = join(dirname(fileURLToPath(import.meta.url)), '../../bin/flatc.mjs')
+      const r = spawnSync(process.execPath, [bin, join(dir, 'p.flatink'), '--check', '--no-libs'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+      expect(r.status).toBe(0)
+      expect(r.stdout).toMatch(/check passed .* 1500 warning\(s\)/)
+      // the report itself goes to stderr — also a pipe here
+      expect(r.stderr.split('\n').filter((l) => l.includes('warning:'))).toHaveLength(1500)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  }, 60_000)
 })

@@ -20,4 +20,11 @@ try {
 
 const code = await run(process.argv) // `--render` is async (SVG decode + raster)
 // In --watch mode, `fs.watch` keeps the process alive: do not exit (otherwise we kill the watcher).
-if (!process.argv.includes('--watch')) process.exit(code)
+if (!process.argv.includes('--watch')) {
+  // Let both streams DRAIN first. A write to a pipe is asynchronous on macOS and Windows, and
+  // `process.exit` does not wait for it: a report longer than the pipe's buffer (64 KB) was cut off
+  // mid-line whenever the output was piped into another tool — and whole when sent to a file or a terminal.
+  const drained = (stream) => new Promise((done) => stream.write('', () => done()))
+  await Promise.all([drained(process.stdout), drained(process.stderr)])
+  process.exit(code)
+}
