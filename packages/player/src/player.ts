@@ -269,6 +269,19 @@ export function simSteps(acc: number, dt: number, step: number, max: number): { 
 // -- Audio (WebAudio): context + decoded buffers, shared across players. --
 let playerAudioCtx: AudioContext | null = null
 const playerAudioBuffers = new Map<string, AudioBuffer | 'loading'>()
+const playerAudioDecoding = new Map<string, Promise<void>>() // the decode in flight for an asset, to wait on
+/** Decoding needs no audible context: an OfflineAudioContext decodes without the autoplay policy having a
+ *  say, so sounds can be made ready at LOAD — before any gesture, and without opening the AudioContext a
+ *  browser would warn about. The buffers it returns play in any context. */
+let playerDecodeCtx: BaseAudioContext | null = null
+const offlineAudio = (): (new (channels: number, length: number, sampleRate: number) => BaseAudioContext) | undefined => {
+  if (typeof window === 'undefined') return undefined
+  const w = window as unknown as { OfflineAudioContext?: typeof OfflineAudioContext; webkitOfflineAudioContext?: typeof OfflineAudioContext }
+  return w.OfflineAudioContext ?? w.webkitOfflineAudioContext
+}
+/** A `sound` asked for while its asset is decoding plays when the decode lands — within this delay. Past
+ *  it, the moment it was meant for is gone, and a late click is worse than none. */
+const LATE_SOUND_MS = 400
 /** No WebAudio outside a browser (Node, `flatc --play`): every audio entry point is then a silent no-op. */
 const hasAudio = (): boolean => typeof window !== 'undefined' && !!(window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)
 function getAudioCtx(): AudioContext {
@@ -311,6 +324,9 @@ export class FlatPlayer {
   private readonly filterCache = new Map<string, FilterCacheEntry>()
   private imageEpoch = 0
   private activeSources: AudioBufferSourceNode[] = []
+  private readonly awaitedSounds = new Set<string>() // one-shots waiting for their asset to finish decoding
+  private audioGen = 0 // bumped by every `startAudio`: a restart queued by an older one is then stale
+  private destroyed = false
   // -- Interaction (Layer B) --
   private vars = new Map<string, number | number[]>()
   private procs = new Map<string, { params: string[]; body: Action[] }>() // fn name(p) { ... }
@@ -321,7 +337,9 @@ export class FlatPlayer {
   private usesMousePos = false // does the scene read `mouse.x`/`mouse.y`? → only then must a pointermove bust the expr cache
   private readKeys = new Set<string>() // key names the scene reads (`keys.<Name>`) → the only ones consumed (preventDefault)
   private hitWarmId = 0 // requestIdleCallback handle for the deferred hit-cache warm-up (0 = none pending)
-  private readonly heldKeys = new Set<string>()
+  private readonly heldKeys = new Set<string>() // every name `keys.<Name>` answers to right now (derived, see `holdKey`)
+  private readonly plainKeys = new Set<string>() // held by NAME only: `setKey`, the headless `key` gesture, an event without a `code`
+  private readonly keyOfCode = new Map<string, string>() // physical keys down (`event.code`) -> the `key` each reported when it went down
   private readonly keyProxy = new Proxy(
     {},
     {
@@ -413,6 +431,46 @@ export class FlatPlayer {
   private actionDepth = 0 // > 0 while actions run: whoever ran them paints once they are done
   private readonly maxDpr: number
   private longPressTimer: ReturnType<typeof setTimeout> | null = null
+  // -- Several pointers --
+  // The fields above (`grabbed`, `grabStart`, `pendingClick`, `dragActive`, `longPressTimer`) describe ONE
+  // gesture: that of the pointer whose event is being handled. The gestures of the other pointers that are
+  // down wait in `parked`, and `usePointer` swaps one in at the top of every pointer handler. With a single
+  // gesture for everyone, lifting one finger released what ANOTHER finger was holding.
+  private pointerId = 0
+  private readonly parked = new Map<number, { grabbed: string | null; grabStart: Point; pendingClick: string | null; dragActive: FlatPlayer['dragActive']; longPressTimer: ReturnType<typeof setTimeout> | null }>()
+  /** Keeps a pointer's events coming once it leaves the canvas. Never fatal: the browser refuses an id it
+   *  does not know as an active pointer (a synthetic event), and the press must go through all the same. */
+  private capture(id: number): void {
+    try { this.canvas.setPointerCapture?.(id) } catch { /* not an active pointer: no capture, the gesture still runs */ }
+  }
+  private usePointer(id: number | undefined): void {
+    const next = id ?? this.pointerId // an event without an id (a synthetic one) continues the current gesture
+    if (next === this.pointerId) return
+    if (this.grabbed || this.pendingClick !== null || this.longPressTimer !== null) {
+      this.parked.set(this.pointerId, { grabbed: this.grabbed, grabStart: this.grabStart, pendingClick: this.pendingClick, dragActive: this.dragActive, longPressTimer: this.longPressTimer })
+    }
+    const g = this.parked.get(next)
+    this.parked.delete(next)
+    this.grabbed = g?.grabbed ?? null
+    this.grabStart = g?.grabStart ?? { x: 0, y: 0 }
+    this.pendingClick = g?.pendingClick ?? null
+    this.dragActive = g?.dragActive ?? null
+    this.longPressTimer = g?.longPressTimer ?? null
+    this.pointerId = next
+  }
+  /** Is `id` held by ANY pointer (the one being handled, or a parked one)? */
+  private isGrabbed(id: string): boolean {
+    if (this.grabbed === id) return true
+    for (const g of this.parked.values()) if (g.grabbed === id) return true
+    return false
+  }
+  /** Drops every gesture in progress, without firing anything (new document, teardown). */
+  private dropGestures(): void {
+    for (const g of this.parked.values()) if (g.longPressTimer !== null) clearTimeout(g.longPressTimer)
+    this.parked.clear()
+    this.pendingClick = null
+    this.clearGrab()
+  }
   private lastFrameInt = -1
   private readonly onResize = () => {
     this.measure()
@@ -452,29 +510,42 @@ export class FlatPlayer {
   }
   private readonly onKeyDown = (e: KeyboardEvent) => {
     if (isEditableTarget(e.target)) return // the user is typing in a field of the host page — not for us
-    this.holdKey(e.key, true)
+    this.holdKey(e.key, true, e.code)
     // Consume the key ONLY if the scene reads it (cf. onWheel): an activity bound to the arrows/space
     // stops scrolling the page under it, while an unused key keeps its native behavior.
-    if (this.readsKey(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !NEVER_CONSUMED.test(e.key)) e.preventDefault()
+    if ((this.readsKey(e.key) || (!!e.code && this.readsKey(e.code))) && !e.ctrlKey && !e.metaKey && !e.altKey && !NEVER_CONSUMED.test(e.key)) e.preventDefault()
   }
   // NB: no editable-target guard on keyup — a key pressed over the canvas then released while a host
   // input has the focus must still be cleared, or it stays "held" forever.
   private readonly onKeyUp = (e: KeyboardEvent) => {
-    this.holdKey(e.key, false)
+    this.holdKey(e.key, false, e.code)
   }
   /** Single write path for the held-keys set (physical key, `setKey`, headless replay). The space bar
    *  arrives as `" "` but is authored as `keys.Space` → both are held/released together. */
-  private holdKey(key: string, down: boolean): void {
-    const alias = key === ' ' ? 'Space' : null
-    if (down) { this.heldKeys.add(key); if (alias) this.heldKeys.add(alias) }
-    else { this.heldKeys.delete(key); if (alias) this.heldKeys.delete(alias) }
+  private holdKey(key: string, down: boolean, code?: string): void {
+    // A physical key is held under BOTH its names: what it types (`event.key`: "Shift", "1", "a") and where
+    // it sits (`event.code`: "ShiftLeft", "Digit1", "KeyA"). The second tells the two Shift keys apart and
+    // gives the digit row a name an expression can spell. Tracking by code also releases the right `key`
+    // name: with Shift let go first, the keyup of "A" reports "a", and "A" used to stay held forever.
+    if (code) {
+      if (down) this.keyOfCode.set(code, key)
+      else this.keyOfCode.delete(code)
+    } else if (down) this.plainKeys.add(key)
+    else {
+      this.plainKeys.delete(key)
+      for (const [c, k] of this.keyOfCode) if (k === key) this.keyOfCode.delete(c) // a codeless release of a key that went down with one
+    }
+    this.heldKeys.clear()
+    const hold = (name: string) => { this.heldKeys.add(name); if (name === ' ') this.heldKeys.add('Space') }
+    for (const k of this.plainKeys) hold(k)
+    for (const [c, k] of this.keyOfCode) { hold(c); hold(k) } // a `key` name stays held while ANY physical key reporting it is down
     this.bustNamed()
   }
   /** Losing the window (alt-tab, focus on another frame) never delivers the keyup → release everything,
    *  else the scene keeps running with a key stuck down. */
   private readonly onBlur = () => {
     if (!this.heldKeys.size) return
-    this.heldKeys.clear()
+    this.heldKeys.clear(); this.plainKeys.clear(); this.keyOfCode.clear()
     this.bustNamed()
     this.render()
   }
@@ -482,7 +553,8 @@ export class FlatPlayer {
   private readsKey(key: string): boolean {
     return this.readKeys.has(key === ' ' ? 'Space' : key)
   }
-  private readonly onPointerLeave = () => {
+  private readonly onPointerLeave = (e?: PointerEvent) => {
+    this.usePointer(e?.pointerId)
     // Safety net: if pointer capture is not supported, a pointer that leaves releases the grab.
     if (this.grabbed) {
       const id = this.grabbed
@@ -827,6 +899,7 @@ export class FlatPlayer {
     this.selfParent = prevParent
   }
   private readonly onPointerMove = (e: PointerEvent) => {
+    this.usePointer(e.pointerId)
     const p = this.worldPoint(e)
     this.mouse.dx += p.x - this.mouse.x // accumulate the movement until the next tick
     this.mouse.dy += p.y - this.mouse.y
@@ -845,7 +918,7 @@ export class FlatPlayer {
       return
     }
     if (this.doc.interactions?.length || this.doc.interactors?.length) {
-      const chains = hitChains(this.doc, this.frame, this.exprCtx(), p, this.grabZones)
+      const chains = hitChains(this.doc, this.frame, this.exprCtx(), p, this.grabZones, this.paramsOf)
       const top = chains[0] ?? []
       if (top.length !== this.hoverIds.size || top.some((id) => !this.hoverIds.has(id))) this.dirty = true // `self.hovered` changed for something
       this.hoverIds = new Set(top) // topmost stack under the pointer → drives self.hovered feedback
@@ -880,15 +953,16 @@ export class FlatPlayer {
   }
   private readonly onPointerDown = (e: PointerEvent) => {
     if (!this.doc.interactions?.length && !this.doc.interactors?.length) return
+    this.usePointer(e.pointerId)
     const p = this.worldPoint(e)
     this.trackPointerPos(p) // mouse.* must reflect the press point for `when pressed`/`when clicked` (touch: no prior hover)
     this.record('down', p, e.pointerId)
-    const chains = hitChains(this.doc, this.frame, this.exprCtx(), p, this.grabZones)
+    const chains = hitChains(this.doc, this.frame, this.exprCtx(), p, this.grabZones, this.paramsOf)
     const clickId = this.pickTarget(chains, CLICK_EVENTS)
     const grabId = this.pickTarget(chains, GRAB_EVENTS) ?? this.pickInteractor(chains) // grabbable = handler OR interactor
     this.grabStart = p // press point (tap/long-press movement tolerance) — set for the click case too, not only grabs
     this.pendingClick = clickId // DEFERRED: fired on release iff the pointer stayed a tap (cleared by a drag move)
-    if (clickId && !grabId) this.canvas.setPointerCapture?.(e.pointerId) // a click-only target still needs the release
+    if (clickId && !grabId) this.capture(e.pointerId) // a click-only target still needs the release
     if (grabId) {
       this.grabbed = grabId
       const inter = this.interactorFor(grabId)
@@ -898,10 +972,12 @@ export class FlatPlayer {
         const parent = placed?.parent ?? IDENTITY
         this.dragActive = { it: inter, offX: (pos?.x ?? p.x) - p.x, offY: (pos?.y ?? p.y) - p.y, parentInv: invert(parent), ...(inter.axis === 'trace' ? traceGrab((n) => this.tracePathFor(n), inter) : {}), ...(inter.axis === 'reveal' ? this.revealGrabState(grabId, inter) : {}) }
       }
-      this.canvas.setPointerCapture?.(e.pointerId) // keep the drag even if the pointer leaves the canvas
+      this.capture(e.pointerId) // keep the drag even if the pointer leaves the canvas
       this.fireEvent(grabId, 'press')
       this.cancelLongPress()
+      const pid = this.pointerId
       this.longPressTimer = setTimeout(() => {
+        this.usePointer(pid) // the timer belongs to the gesture that armed it, whichever pointer moved last
         this.longPressTimer = null
         if (this.grabbed === grabId) { this.fireEvent(grabId, 'longpress'); this.render() }
       }, LONGPRESS_MS)
@@ -912,6 +988,7 @@ export class FlatPlayer {
     // Release the capture acquired on down even if the press never became a grab/tap (e.g. a click-only
     // target whose press turned into a drag) — guarded so it never throws on an uncaptured pointer.
     if (this.canvas.hasPointerCapture?.(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId)
+    this.usePointer(e.pointerId)
     if (!this.grabbed && this.pendingClick === null) return
     const grabbedId = this.grabbed
     const click = this.pendingClick
@@ -934,6 +1011,7 @@ export class FlatPlayer {
   // Interrupted gesture (canceled touch, OS gesture): we release WITHOUT a drop (the pointer did not "let go" on a target).
   private readonly onPointerCancel = (e: PointerEvent) => {
     if (this.canvas.hasPointerCapture?.(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId) // release even a click-only capture
+    this.usePointer(e.pointerId)
     this.pendingClick = null // an interrupted gesture is never a click
     if (!this.grabbed) return
     const id = this.grabbed
@@ -1000,6 +1078,7 @@ export class FlatPlayer {
     this.vars = cloneVars(doc.variables)
     this.buildFunctions()
     this.reseedDerivedState() // …once `vars` exists: a seeded trace/scratch comes back where it was
+    this.preloadAudio()
     this.measure()
     this.render()
     this.fireLoad()
@@ -1276,10 +1355,22 @@ export class FlatPlayer {
   /** Plays an audio clip (asset) as a one-shot (`sound "id"` DSL). No-op if audio is off / asset absent. */
   private playSound(assetId: string): void {
     if (!this.audioOn || !hasAudio()) return
+    const buf = playerAudioBuffers.get(assetId)
+    if (!buf || buf === 'loading') {
+      // Still decoding (asked for right at load, or no decode-ahead on this browser): play it when it
+      // lands. It used to be dropped — "audible on the next trigger" — so the first sound was never heard.
+      const pending = this.decodeAudio(assetId)
+      if (!pending || this.awaitedSounds.has(assetId)) return // asked again meanwhile: one play, not a pile-up
+      this.awaitedSounds.add(assetId)
+      const asked = performance.now()
+      void pending.then(() => {
+        this.awaitedSounds.delete(assetId)
+        if (!this.destroyed && performance.now() - asked <= LATE_SOUND_MS && typeof playerAudioBuffers.get(assetId) === 'object') this.playSound(assetId)
+      })
+      return
+    }
     const c = getAudioCtx()
     if (c.state === 'suspended') void c.resume()
-    const buf = playerAudioBuffers.get(assetId)
-    if (!buf || buf === 'loading') { this.decodeAudio(assetId); return } // decoded in the background -> audible on the next trigger
     const src = c.createBufferSource()
     src.buffer = buf
     src.connect(c.destination)
@@ -1387,6 +1478,7 @@ export class FlatPlayer {
     this.interactorIndex = undefined
     this.traceOutputs = traceOutputNames(this.doc)
     this.buildGrabZones() // new document -> new geometry for the `reveal` grab zones
+    this.dropGestures() // …and whatever was being held belonged to the old one
     this.reseedDerivedState() // …then the seeded variables put the derived state back (trace progress, scratched grid)
     this.paramRt.clear() // new document -> per-instance param transitions reset
     this.channelState.clear() // new document -> modifier integrator state resets
@@ -1398,6 +1490,7 @@ export class FlatPlayer {
     if (this.transRaf) { cancelAnimationFrame(this.transRaf); this.transRaf = 0 }
     this.bustNamed()
     this.buildFunctions()
+    this.preloadAudio()
     this.measure()
     this.render()
     this.fireLoad()
@@ -1443,7 +1536,7 @@ export class FlatPlayer {
    *  Returns undefined when the item is neither hovered nor grabbed (the cheap, common path → flags 0). */
   private itemStateFor(id: string): { hovered: number; grabbed: number; pressed: number } | undefined {
     const hovered = this.hoverIds.has(id) ? 1 : 0
-    const grabbed = this.grabbed === id ? 1 : 0
+    const grabbed = this.isGrabbed(id) ? 1 : 0
     return hovered || grabbed ? { hovered, grabbed, pressed: grabbed } : undefined
   }
 
@@ -1532,6 +1625,7 @@ export class FlatPlayer {
   }
 
   /** Current values of an instance's params (for drawScene → drives the local frame + the subtree scope). */
+  private readonly paramsOf = (id: string): Record<string, number> | undefined => this.paramsForInstance(id)
   private paramsForInstance(id: string): Record<string, number> | undefined {
     const params = this.paramRt.get(id)
     if (!params || params.size === 0) return undefined
@@ -1664,26 +1758,45 @@ export class FlatPlayer {
     for (const s of this.activeSources) { try { s.stop() } catch { /* already stopped */ } }
     this.activeSources = []
   }
-  private decodeAudio(assetId: string): void {
-    if (playerAudioBuffers.has(assetId)) return
+  /** Starts (or joins) the decode of a sound asset. Returns the decode in flight, `undefined` when there
+   *  is nothing to wait for (already decoded, unknown asset, or a source the host does not trust). */
+  private decodeAudio(assetId: string): Promise<void> | undefined {
+    const inFlight = playerAudioDecoding.get(assetId)
+    if (inFlight) return inFlight
+    if (playerAudioBuffers.has(assetId)) return undefined
     const a = this.assetById(assetId)
-    if (!a) return
+    if (!a) return undefined
     const url = this.resolveAsset(a) // host-trusted url (default: data: URIs only, no remote fetch)
-    if (url == null) return
+    if (url == null) return undefined
     playerAudioBuffers.set(assetId, 'loading')
-    fetch(url).then((r) => r.arrayBuffer()).then((b) => getAudioCtx().decodeAudioData(b)).then((buf) => playerAudioBuffers.set(assetId, buf)).catch(() => playerAudioBuffers.delete(assetId))
+    const Offline = offlineAudio()
+    const p = fetch(url).then((r) => r.arrayBuffer())
+      .then((b) => (Offline ? (playerDecodeCtx ??= new Offline(1, 1, 44100)) : getAudioCtx()).decodeAudioData(b))
+      .then((buf) => { playerAudioBuffers.set(assetId, buf) }, () => { playerAudioBuffers.delete(assetId) })
+      .then(() => { playerAudioDecoding.delete(assetId) })
+    playerAudioDecoding.set(assetId, p)
+    return p
+  }
+  /** Decodes every sound of the document ahead of time, so the first `sound "x"` neither stalls the frame
+   *  that plays it nor goes unheard. Only where decoding does not need the audible context (see
+   *  `offlineAudio`); elsewhere a sound is decoded the first time it is asked for, as before. */
+  private preloadAudio(): void {
+    if (!this.audioOn || !hasAudio() || !offlineAudio()) return
+    for (const a of this.doc.assets ?? []) if ((a.kind as string) === 'audio' || (a.kind as string) === 'sound') void this.decodeAudio(a.id)
   }
   /** (Re)schedules the audio clips for a playback starting from `fromFrame`. */
   private startAudio(fromFrame: number): void {
     this.stopAudio()
+    const gen = ++this.audioGen
     const sounds = this.doc.timeline?.sounds
-    if (!this.audioOn || !sounds?.length) return
+    if (!this.audioOn || !sounds?.length || !hasAudio()) return
     const c = getAudioCtx()
     if (c.state === 'suspended') void c.resume()
     const now = c.currentTime + 0.03
+    const waiting: string[] = []
     for (const sch of scheduleSounds(sounds, this.fps, fromFrame, now)) {
       const buf = playerAudioBuffers.get(sch.clip.assetId)
-      if (!buf || buf === 'loading') { this.decodeAudio(sch.clip.assetId); continue } // heard on the next start
+      if (!buf || buf === 'loading') { waiting.push(sch.clip.assetId); continue }
       if (!sch.clip.loop && sch.offset >= buf.duration) continue
       const src = c.createBufferSource()
       src.buffer = buf
@@ -1694,6 +1807,13 @@ export class FlatPlayer {
       src.start(sch.when, Math.max(0, sch.offset))
       this.activeSources.push(src)
     }
+    // Clips whose asset is still decoding: reschedule from the playhead once they are in, rather than
+    // leave them silent until the timeline loops. Only if a decode actually SUCCEEDED — a broken asset
+    // must not restart the audio forever.
+    const decodes = waiting.map((id) => this.decodeAudio(id)).filter((p) => p !== undefined)
+    if (decodes.length) void Promise.all(decodes).then(() => {
+      if (!this.destroyed && this.playing && gen === this.audioGen && waiting.some((id) => typeof playerAudioBuffers.get(id) === 'object')) this.startAudio(this.frame)
+    })
   }
 
   /** Triggers the frame-actions when the playhead enters a new whole frame. */
@@ -1818,6 +1938,7 @@ export class FlatPlayer {
 
   /** Releases the listeners. To be called when the player is no longer used. */
   destroy(): void {
+    this.destroyed = true
     this.pause()
     this.cancelHitWarm()
     if (this.transRaf) { cancelAnimationFrame(this.transRaf); this.transRaf = 0 } // stop the transition driver on a torn-down player
@@ -1832,6 +1953,6 @@ export class FlatPlayer {
     this.canvas.removeEventListener('pointercancel', this.onPointerCancel)
     this.canvas.removeEventListener('pointerleave', this.onPointerLeave)
     this.canvas.removeEventListener('wheel', this.onWheel)
-    this.cancelLongPress()
+    this.dropGestures()
   }
 }

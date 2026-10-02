@@ -14,7 +14,7 @@ import { type Timeline } from '@flatkit/engine/timeline'
 import { instanceFrames } from '@flatkit/engine/params'
 import { resolveLayerAt } from '@flatkit/engine/cel'
 import { pathToPolygons } from '@flatkit/engine/path'
-import { guidePathOf } from './drawScene'
+import { guidePathOf, instanceScope } from './drawScene'
 import type { ExprContext } from '@flatkit/engine/expr'
 
 /** Does the point fall inside the shape of a mask layer? (resolved fill; containers = non-blocking) */
@@ -128,6 +128,23 @@ function subScopeFrames(it: Group | Instance, sym: SymbolDef | undefined, frame:
   return { pose: frame, clock } // plain group = same scope (frame passes through)
 }
 
+/** Runtime params of an instance (`Inst.p = …`, states), by instance id — what the player hands the renderer. */
+export type ParamsFor = (instanceId: string) => Record<string, number> | undefined
+/** The scope an instance's content is evaluated in: its params (declared, given at the instance, written
+ *  at runtime) over the parent's. Entering with the PARENT's scope hit an inner `expr x "pos"` where it
+ *  stands with `pos` unset, and a state-driven symbol where its initial state puts it. */
+const scopeOf = (doc: Doc, it: Instance, ctx: ExprContext, paramsFor: ParamsFor | undefined): ExprContext =>
+  instanceScope(doc, it, { expr: ctx, paramsFor }).expr ?? ctx
+
+/** Is `local` (a point in the container's OWN space) inside its declared `hitbox`? The rectangle is the
+ *  touch area of a container whose drawing is not one: a stroke-only ring, a small handle, an empty group
+ *  laid over a picture. Like a grab zone it is tested at the container's place in the z-order and only when
+ *  nothing deeper was hit, and — being local — it follows the object wherever its pose puts it. */
+const inHitbox = (it: Item, local: Point): boolean => {
+  const hb = (it as Group | Instance).hitbox
+  return !!hb && Math.abs(local.x) <= hb.w / 2 && Math.abs(local.y) <= hb.h / 2
+}
+
 // Same cap as the renderer (drawScene.ts): an untrusted doc with pathological container nesting must not
 // blow the stack on a click/hover. `seen` only breaks instance-symbol cycles; plain groups need a depth cap.
 const MAX_NEST = 256
@@ -145,6 +162,7 @@ function hitInScope(
   freeze: boolean,
   parent: Transform = IDENTITY,
   depth = 0,
+  paramsFor?: ParamsFor,
 ): string[] | null {
   if (depth > MAX_NEST) return null // pathological nesting -> stop
   const fps = timeline?.fps ?? 24
@@ -166,10 +184,12 @@ function hitInScope(
         const inst = isInstance(it)
         const sym = inst ? getSymbol(doc, it.symbolId) : undefined
         const subTl = inst ? sym?.timeline : isGroup(it) && it.timeline ? it.timeline : timeline // local symbol = its timeline; legacy group = parent scope
-        const { pose: subFrame, clock: subClock } = subScopeFrames(it, sym, frame, clock, ctx, freeze, fps)
+        const sub = inst ? scopeOf(doc, it, ctx, paramsFor) : ctx // an instance is entered WITH its params, as the renderer does
+        const { pose: subFrame, clock: subClock } = subScopeFrames(it, sym, frame, clock, sub, freeze, fps)
         const next = inst ? new Set([...seen, it.symbolId]) : seen
-        const deeper = hitInScope(doc, containerLayers(doc, it), subTl, subFrame, subClock, ctx, local, next, freeze, compose(parent, it.transform), depth + 1)
+        const deeper = hitInScope(doc, containerLayers(doc, it), subTl, subFrame, subClock, sub, local, next, freeze, compose(parent, it.transform), depth + 1, paramsFor)
         if (deeper) return [it.id, ...deeper]
+        if (inHitbox(it, local)) return [it.id]
       } else if (isText(it)) {
         if (pointInBox(it.transform, it.box.w, it.box.h, pt)) return [it.id]
       } else if (isImage(it)) {
@@ -183,8 +203,8 @@ function hitInScope(
 }
 
 /** Chain of items under `worldPt` at the given frame (animated poses at all levels, PLAYER: composed). */
-export function hitChain(doc: Doc, frame: number, ctx: ExprContext, worldPt: Point): string[] {
-  return hitInScope(doc, doc.layers, doc.timeline, frame, frame, ctx, worldPt, new Set(), false) ?? []
+export function hitChain(doc: Doc, frame: number, ctx: ExprContext, worldPt: Point, paramsFor?: ParamsFor): string[] {
+  return hitInScope(doc, doc.layers, doc.timeline, frame, frame, ctx, worldPt, new Set(), false, IDENTITY, 0, paramsFor) ?? []
 }
 
 /**
@@ -221,6 +241,7 @@ function collectInScope(
   parent: Transform = IDENTITY,
   depth = 0,
   zones?: GrabZones,
+  paramsFor?: ParamsFor,
 ): void {
   if (depth > MAX_NEST) return // pathological nesting -> stop
   // World point of this scope, computed ONCE and only when a zone can match: `pt` is scope-local and
@@ -245,13 +266,14 @@ function collectInScope(
         const inst = isInstance(it)
         const sym = inst ? getSymbol(doc, it.symbolId) : undefined
         const subTl = inst ? sym?.timeline : isGroup(it) && it.timeline ? it.timeline : timeline
-        const { pose: subFrame, clock: subClock } = subScopeFrames(it, sym, frame, clock, ctx, freeze, fps)
+        const sub = inst ? scopeOf(doc, it, ctx, paramsFor) : ctx // an instance is entered WITH its params, as the renderer does
+        const { pose: subFrame, clock: subClock } = subScopeFrames(it, sym, frame, clock, sub, freeze, fps)
         const next = inst ? new Set([...seen, it.symbolId]) : seen
         const deeper: string[][] = []
-        collectInScope(doc, containerLayers(doc, it), subTl, subFrame, subClock, ctx, local, next, freeze, deeper, compose(parent, it.transform), depth + 1, zones)
+        collectInScope(doc, containerLayers(doc, it), subTl, subFrame, subClock, sub, local, next, freeze, deeper, compose(parent, it.transform), depth + 1, zones, paramsFor)
         for (const d of deeper) out.push([it.id, ...d]) // container hit only via a descendant…
         // …or by its declared grab zone (`reveal`), which survives its content being erased.
-        if (!deeper.length && zones && world && inZone(zones, it.id, world)) out.push([it.id])
+        if (!deeper.length && (inHitbox(it, local) || (zones && world && inZone(zones, it.id, world)))) out.push([it.id])
       } else if (isText(it)) {
         if (pointInBox(it.transform, it.box.w, it.box.h, pt)) out.push([it.id])
       } else if (isImage(it)) {
@@ -265,9 +287,9 @@ function collectInScope(
 
 /** All hit chains under `worldPt`, from topmost to bottom (see `collectInScope`). `zones` = grab zones
  *  hit whatever their content looks like (see `GrabZones`); absent = content only, as before. */
-export function hitChains(doc: Doc, frame: number, ctx: ExprContext, worldPt: Point, zones?: GrabZones): string[][] {
+export function hitChains(doc: Doc, frame: number, ctx: ExprContext, worldPt: Point, zones?: GrabZones, paramsFor?: ParamsFor): string[][] {
   const out: string[][] = []
-  collectInScope(doc, doc.layers, doc.timeline, frame, frame, ctx, worldPt, new Set(), false, out, IDENTITY, 0, zones)
+  collectInScope(doc, doc.layers, doc.timeline, frame, frame, ctx, worldPt, new Set(), false, out, IDENTITY, 0, zones, paramsFor)
   return out
 }
 

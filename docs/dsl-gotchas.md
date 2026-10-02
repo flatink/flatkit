@@ -172,8 +172,16 @@
 - **Drop semantics**: by default the **object's center** (its x/y channels) is tested against
   the zone. Two levers to match human expectations:
   - `when dropped on Zone at pointer { … }`: tests the **POINTER position** (not the center).
-  - `group "Zone" … hitbox <W> <H> { … }`: an **explicit drop rectangle** (centered on the
-    origin, ±W/2 × ±H/2) instead of the content bbox. Replaces invisible `#ffffff01` paths.
+  - `group "Zone" … hitbox <W> <H> { … }`: an **explicit rectangle** (centered on the
+    origin, ±W/2 × ±H/2) instead of the content bbox. Replaces invisible `#ffffff01` paths. Works on an
+    `instance` too.
+- **`hitbox` is also where the object is TOUCHED** — clicked, pressed, dragged, hovered — whenever
+  nothing drawn inside it is hit first. Use it for a stroke-only ring (only the stroke is touched
+  otherwise, not the middle), a small handle that deserves a finger-sized target, or an empty group laid
+  over a picture. The rectangle follows the object. What is drawn ABOVE it keeps the pointer.
+- **What lets the pointer through**: `nohit`, a hidden item, and anything whose `opacity` is `0.01` or
+  less — with or without a `hitbox`. An invisible touch area is an empty group with a `hitbox`, at full
+  opacity: there is nothing to draw.
 - **Locking a placed object**: `drag x, y { enabled <expr> }`. The drag is active only while
   the expression is ≠ 0. No more `x = (p==1) ? Zone.x : xv` + `if p==0` guard patterns.
 - **Event order on release**: `when released` fires **BEFORE** the drop test (useful to lower a
@@ -227,9 +235,9 @@ Inside an `object "Name" { … }`, besides `drag x, y` / `dragX` / `dragY`:
     See [Behavior](behavior-and-interactions.md#seeing-where-it-was-scratched-reveal--cells).
   - A `reveal` target is grabbable **over its whole zone**, whatever its content looks like — so a veil
     stays scratchable where its cells have already gone to `opacity 0`. (Everywhere else, an item at
-    `opacity 0` lets the pointer through; a group whose children are ALL invisible is not hit, and
-    `hitbox` does not change that — it is the drop-zone rectangle, not a hit surface. Only a replayed
-    `down/move/up` script shows this class of bug: a static render looks perfect.)
+    `opacity 0` lets the pointer through; a group whose children are ALL invisible is not hit unless
+    it declares a `hitbox`. Only a replayed `down/move/up` script shows this class of bug: a static
+    render looks perfect.)
 - **`link <endX>, <endY>, <target> to <TargetsGroup> [{ enabled <expr> }]`**: pull an elastic
   thread toward a target. During the drag, `<endX>`/`<endY>` = pointer position (DRAW the
   thread yourself with expressions, e.g. a region connecting the object to `endX,endY`). On

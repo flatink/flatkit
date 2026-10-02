@@ -50,7 +50,7 @@ per second), `deg(r)` (the inverse, for readouts). Or bind the **`rotationDeg`**
 | `frame` | current frame (0-based; also wraps at `durationFrames`) |
 | `value` | the channel's current value (in a channel binding) |
 | `mouse.x` `mouse.y` | pointer position (scene units) |
-| `keys.<Key>` | `1` while a key is held, `0` otherwise — `<Key>` is the browser `KeyboardEvent.key` value (`keys.ArrowRight`, `keys.a`, `keys.Escape`), plus the alias `keys.Space` for the space bar. Naming a key here also makes the player **consume** it (no page scroll) — see [host integration](host-integration.md#keyboard) |
+| `keys.<Key>` | `1` while a key is held, `0` otherwise — `<Key>` is the browser `KeyboardEvent.key` value (`keys.ArrowRight`, `keys.a`, `keys.Escape`), plus the alias `keys.Space` for the space bar, **or** the physical key, `KeyboardEvent.code` (`keys.ShiftLeft`, `keys.Digit1`, `keys.Numpad1`, `keys.KeyA`) — the way to tell the two Shift keys apart and to read the digit row. Naming a key here also makes the player **consume** it (no page scroll) — see [host integration](host-integration.md#keyboard) |
 | `self.x` `self.y` `self.scaleX` … | the object's own current pose (in its channel bindings) |
 | `self.hovered` `self.grabbed` `self.pressed` | the object's own interaction state (`0`/`1`) — see [feedback](behavior-and-interactions.md#feedback) |
 | `<Name>.x` `<Name>.y` … | a named object's live channels (e.g. `Target.x`) |

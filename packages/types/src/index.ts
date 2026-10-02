@@ -351,7 +351,7 @@ export type Group = {
   pivot?: Point // transform point in LOCAL coords (center of rotation/scale AND interpolation); absent = origin {0,0}
   filters?: Filter[] // filter stack (blur/shadow/glow/adjust) — animatable
   blend?: BlendMode // blend mode (add/screen = additive light, multiply = shadow); absent = normal
-  hitbox?: { w: number; h: number } // EXPLICIT drop zone (local rect centered on the origin, ±w/2 × ±h/2): used as the `when dropped on` target instead of the content bbox; avoids invisible paths
+  hitbox?: { w: number; h: number } // EXPLICIT touch + drop rectangle (local, centered on the origin, ±w/2 × ±h/2): where the object is clicked/pressed/dragged/hovered when nothing deeper is hit, and the `when dropped on` target instead of the content bbox
   expressions?: Partial<Record<BindChannel, string>> // expression animation (cel model) — takes priority over the tween (incl. additive dx/dy offsets)
   modifiers?: Partial<Record<ExprChannel, ChannelModifier>> // STATEFUL channel modifier (smooth/spring); integrates over time, wins over expression/tween
   clip?: ClipRect // rectangular clip in LOCAL coords (`clip x y w h`); content outside is cut
@@ -370,6 +370,7 @@ export type Instance = {
   noHit?: boolean // non-interactive: ignored by the player's hit-test (clicks/hover pass through), still VISIBLE
   pivot?: Point // transform point in LOCAL coords (center of rotation/scale AND interpolation); absent = origin {0,0}
   playback?: InstancePlayback // playback mode of the symbol's timeline (absent = synced)
+  hitbox?: { w: number; h: number } // EXPLICIT touch + drop rectangle, as on a group (local, centered on the origin)
   filters?: Filter[] // filter stack (blur/shadow/glow/adjust) — animatable
   blend?: BlendMode // blend mode (add/screen = additive light, multiply = shadow); absent = normal
   expressions?: Partial<Record<BindChannel, string>> // expression animation (cel model) — takes priority over the tween (incl. additive dx/dy offsets)

@@ -323,7 +323,7 @@ ramp over `dur` s for a readable timed feedback — capture the instant with **`
 13. **`$()` is for compile-time interpolation in scene coords**; runtime expressions use bare
     identifiers and `[]` indexing. Arrays must exist before indexed write (`var hx = fill(n,0)`).
 14. **Drop test = object center** by default; use `when dropped on Zone at pointer` for the pointer, or
-    `group "Zone" … hitbox W H { … }` for an explicit rectangle. `when released` fires BEFORE the drop test.
+    `group "Zone" … hitbox W H { … }` for an explicit rectangle (also the object's TOUCH area: a stroke-only ring is clicked in its middle only with a `hitbox`). `when released` fires BEFORE the drop test.
 15. **`reveal`/`trace` progress is monotone** (never decreases). `link` works in WORLD coords.
 16. **Stroke width scales with the group** (drawn in scaled space) — don't compensate by hand.
 17. **All rotation is radians; author degrees with the `*Deg` twins.** The `rotation` channel,

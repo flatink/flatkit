@@ -154,7 +154,8 @@ object "Piece" {
   target index is the exception: it resolves to `0` — "no target reached" — on a gated-off release, so it
   can never hand you the previous gesture's answer.)
 - **Drop zones**: by default the object's **center** is tested against the zone; `at pointer` tests the
-  pointer instead. Define an explicit rectangle with `group "Zone" … hitbox <w> <h> { … }`.
+  pointer instead. Define an explicit rectangle with `group "Zone" … hitbox <w> <h> { … }` — it is also
+  where the object is touched (click, press, drag, hover) when nothing drawn inside it is hit first.
 - Several `when dropped on` per object are evaluated in declaration order (the right-zone / wrong-zones pattern).
 - **`match` sugar** factors the whole drag+drop boilerplate — see [factoring](#reuse--factoring).
 

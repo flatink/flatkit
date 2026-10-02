@@ -89,7 +89,7 @@ export function manifestObjects(doc: Doc): ManifestObject[] {
           kind: kindLabel(doc, it),
           events: [...new Set(mine.map((i) => i.event))],
           dragged: !!doc.interactors?.some((i) => i.targetId === it.id),
-          zone: dropZones.has(it.name) || (isGroup(it) && !!it.hitbox),
+          zone: dropZones.has(it.name) || ((isGroup(it) || isInstance(it)) && !!it.hitbox),
           channels,
           reads: [...reads],
         })

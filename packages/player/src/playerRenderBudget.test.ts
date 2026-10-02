@@ -201,3 +201,14 @@ describe('FlatPlayer — `maxPixelRatio` caps the backing store (flatink/flatink
     expect(sized(1.5, { maxPixelRatio: 2 })).toEqual([300, 150])
   })
 })
+
+describe('FlatPlayer — a pointer that cannot be captured still presses', () => {
+  it('`setPointerCapture` throwing (a synthetic event: no such active pointer) does not swallow the press', () => {
+    const h: Handlers = {}
+    const c = canvasOf(h)
+    ;(c as unknown as { setPointerCapture: () => void }).setPointerCapture = () => { throw new Error('NotFoundError') }
+    const pl = new FlatPlayer(c, scene('var n = 0', 'object "B" {\n  when pressed {\n    n = n + 1\n  }\n}'), { audio: false })
+    expect(() => h.pointerdown({ clientX: 50, clientY: 50, pointerId: 7 })).not.toThrow()
+    expect(pl.getVar('n')).toBe(1)
+  })
+})

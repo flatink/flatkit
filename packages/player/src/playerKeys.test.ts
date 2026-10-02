@@ -42,7 +42,7 @@ function makeDoc(onEnterFrame: Action[], variables: Record<string, number> = {})
   }
 }
 
-type FakeKeyEvent = { key: string; target?: unknown; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; preventDefault: () => void }
+type FakeKeyEvent = { key: string; code?: string; target?: unknown; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; preventDefault: () => void }
 type KeyHandlers = Record<string, (e: FakeKeyEvent) => void>
 
 let keyHandlers: KeyHandlers
@@ -191,6 +191,53 @@ describe('FlatPlayer -- keyboard and the host page', () => {
     expect(p.getVar('k')).toBe(1)
     keyHandlers.blur?.({ key: '', preventDefault: () => {} })
     p.stepSim(1)
+    expect(p.getVar('k')).toBe(0)
+  })
+})
+
+// flatink/flatink#44, #31 — `keys.<Name>` only knew `KeyboardEvent.key`: both Shift keys read "Shift", and
+// the digit row reads "1", which is not a name an expression can spell. The PHYSICAL key (`event.code`:
+// ShiftLeft, Digit1, KeyA, Numpad1…) is now held under its own name, next to the `key` one.
+describe('FlatPlayer -- keys.<Code>: the physical key', () => {
+  const reads = (expr: string) => new FlatPlayer(fakeCanvas(), makeDoc([{ do: 'setVar', name: 'k', value: expr }], { k: -1 }), {})
+  const down = (key: string, code: string) => press(key, { code })
+  const up = (key: string, code: string) => keyHandlers.keyup?.({ key, code, preventDefault: () => {} })
+
+  it('left and right Shift are two keys', () => {
+    const p = reads('keys.ShiftLeft + 2 * keys.ShiftRight + 4 * keys.Shift')
+    down('Shift', 'ShiftLeft'); p.stepSim(1)
+    expect(p.getVar('k')).toBe(5) // ShiftLeft, and `Shift` as before
+    down('Shift', 'ShiftRight'); p.stepSim(1)
+    expect(p.getVar('k')).toBe(7)
+    up('Shift', 'ShiftLeft'); p.stepSim(1)
+    expect(p.getVar('k')).toBe(6) // the right one is still down: `Shift` stays held
+    up('Shift', 'ShiftRight'); p.stepSim(1)
+    expect(p.getVar('k')).toBe(0)
+  })
+  it('the digit row answers to `keys.Digit1`, the keypad to `keys.Numpad1`', () => {
+    const p = reads('keys.Digit1 + 2 * keys.Numpad1')
+    down('1', 'Digit1'); p.stepSim(1)
+    expect(p.getVar('k')).toBe(1)
+    up('1', 'Digit1'); down('1', 'Numpad1'); p.stepSim(1)
+    expect(p.getVar('k')).toBe(2)
+  })
+  it('a key read by its code is consumed like one read by its name', () => {
+    reads('keys.Digit1')
+    expect(down('1', 'Digit1')).toBe(true)
+    expect(down('2', 'Digit2')).toBe(false)
+  })
+  it('releases what was pressed, even when the character changed meanwhile (Shift let go first)', () => {
+    const p = reads('keys.A + keys.a')
+    down('Shift', 'ShiftLeft'); down('A', 'KeyA'); p.stepSim(1)
+    expect(p.getVar('k')).toBe(1)
+    up('Shift', 'ShiftLeft'); up('a', 'KeyA'); p.stepSim(1) // keyup reports "a": the "A" held at keydown must go too
+    expect(p.getVar('k')).toBe(0)
+  })
+  it('an event without a code (a synthetic one) behaves as before', () => {
+    const p = reads('keys.ArrowRight')
+    press('ArrowRight'); p.stepSim(1)
+    expect(p.getVar('k')).toBe(1)
+    release('ArrowRight'); p.stepSim(1)
     expect(p.getVar('k')).toBe(0)
   })
 })

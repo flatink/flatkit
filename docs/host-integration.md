@@ -25,7 +25,7 @@ const player = new FlatPlayer(canvas, doc, {
 | `autoplay` | `false` | starts the timeline on mount |
 | `loop` | `true` | loops the timeline |
 | `padding` | `0` | margin around the page, in CSS px |
-| `audio` | `true` | `false` mutes `sound "…"` and audio tracks |
+| `audio` | `true` | `false` mutes `sound "…"` and audio tracks. Sounds are decoded when the document loads, so the first one plays on time |
 | `input` | `true` | `false` = non-interactive preview: it animates but ignores pointer **and keyboard** |
 | `render` | `true` | `false` = headless (logic + `send`s only, no Canvas API needed) |
 | `resolveAsset` | embedded only | maps an asset to a URL. Default: embedded `data:` URIs only — see [Security](#security) |
@@ -136,6 +136,15 @@ place, and `render()` forces a repaint (useful after a late font settles).
 `keys.<Key>` in an expression is `1` while the key is held. The name is the browser's
 `KeyboardEvent.key` value — `keys.ArrowRight`, `keys.a`, `keys.Escape` — plus one alias: the space bar
 (`key === ' '`) is also exposed as **`keys.Space`**.
+
+A physical key answers to its **`KeyboardEvent.code`** as well: `keys.ShiftLeft` and `keys.ShiftRight` are
+two keys (both are `keys.Shift`), the digit row is `keys.Digit1`…`keys.Digit0` (its `key` is `"1"`, which
+an expression cannot spell), the keypad `keys.Numpad1`, a letter wherever the layout puts it `keys.KeyA`.
+
+### Pointers
+
+Each pointer has its own gesture: two fingers can press, hold and drag two objects at once, and lifting
+one releases only what it was holding. `mouse.x` / `mouse.y` follow the pointer that moved last.
 
 The listeners are attached to the **window** (a scene reacts immediately, with no click-to-focus step),
 but the player is a good citizen about it — you should not have to do anything:

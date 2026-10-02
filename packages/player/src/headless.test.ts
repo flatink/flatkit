@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { playHeadless, type Gesture } from './headless'
-import { parseProgramFull } from '@flatkit/engine/flatFormat'
-import type { Doc, Layer, Text } from '@flatkit/types'
+import { parseProgramFull, parseFlat } from '@flatkit/engine/flatFormat'
+import type { Doc, Instance, Layer, Text } from '@flatkit/types'
 import type { Action } from '@flatkit/engine/actions'
 import { IDENTITY, translation } from '@flatkit/engine/transform'
 
@@ -669,5 +669,134 @@ describe('headless -- gaps a test script used to fall into', () => {
   })
   it('`tap` with neither a target nor a point says what it needs', () => {
     expect(() => playHeadless(button('    n = n + 1'), [{ type: 'tap' } as unknown as Gesture])).toThrow(/tap.*"target".*"x".*"y"/)
+  })
+})
+
+// flatink/flatink#45 — the player followed ONE gesture: with a finger on A and another on B, lifting the
+// first released B, and B's own release was lost (B stayed "pressed"). Each pointer has its gesture now.
+describe('headless -- two pointers at once', () => {
+  const two = () => parseProgramFull([
+    'size 300 100', 'var a = 0', 'var b = 0', 'var ax = 50', 'var ay = 50', 'var bx = 250', 'var by = 50',
+    'scene {', '  layer "c" {',
+    '    group "A" at 0,0 {', '      layer "a" {', '        circle 0 0 30 fill #3366cc', '      }', '    }',
+    '    group "B" at 0,0 {', '      layer "a" {', '        circle 0 0 30 fill #cc3333', '      }', '    }',
+    '  }', '}',
+    'object "A" {', '  x = ax', '  y = ay', '  drag ax, ay', '  when pressed {', '    a = 1', '  }', '  when released {', '    a = 0', '  }', '}',
+    'object "B" {', '  x = bx', '  y = by', '  drag bx, by', '  when pressed {', '    b = 1', '  }', '  when released {', '    b = 0', '  }', '}', '',
+  ].join('\n'))
+  const vars = (g: Gesture[]) => playHeadless(two(), g).vars
+
+  it('lifting the first finger releases ITS object; the other stays pressed until its own finger lifts', () => {
+    const press: Gesture[] = [{ type: 'down', x: 50, y: 50, id: 1 }, { type: 'down', x: 250, y: 50, id: 2 }]
+    expect(vars(press)).toMatchObject({ a: 1, b: 1 })
+    expect(vars([...press, { type: 'up', x: 50, y: 50, id: 1 }])).toMatchObject({ a: 0, b: 1 })
+    expect(vars([...press, { type: 'up', x: 50, y: 50, id: 1 }, { type: 'up', x: 250, y: 50, id: 2 }])).toMatchObject({ a: 0, b: 0 })
+  })
+  it('each finger drags its own object', () => {
+    const v = vars([
+      { type: 'down', x: 50, y: 50, id: 1 }, { type: 'down', x: 250, y: 50, id: 2 },
+      { type: 'move', x: 60, y: 70, id: 1 }, { type: 'move', x: 230, y: 30, id: 2 }, { type: 'move', x: 70, y: 80, id: 1 },
+      { type: 'up', x: 230, y: 30, id: 2 }, { type: 'up', x: 70, y: 80, id: 1 },
+    ])
+    expect(v).toMatchObject({ ax: 70, ay: 80, bx: 230, by: 30, a: 0, b: 0 })
+  })
+  it('a second finger moving over the scene does not drag what the first one holds', () => {
+    const v = vars([{ type: 'down', x: 50, y: 50, id: 1 }, { type: 'move', x: 200, y: 20, id: 2 }, { type: 'up', x: 50, y: 50, id: 1 }])
+    expect(v).toMatchObject({ ax: 50, ay: 50 })
+  })
+  it('a canceled touch releases only its own object', () => {
+    const v = vars([{ type: 'down', x: 50, y: 50, id: 1 }, { type: 'down', x: 250, y: 50, id: 2 }, { type: 'cancel', x: 50, y: 50, id: 1 }])
+    expect(v).toMatchObject({ a: 0, b: 1 })
+  })
+})
+
+// flatink/flatink#18 — the hit test entered an instance with the PARENT's scope: the instance's params
+// were not there, so an inner group moved by `expr x "pos"` was touched where it stands with pos = 0, and a
+// state-driven symbol where its initial state puts it. Drawn in one place, touched in another.
+describe('headless -- an instance is touched where it is drawn', () => {
+  const [slider, toggle] = parseFlat([
+    'symbol "Curseur" {', '  params { number pos = 0 range 0 200 "position" }',
+    '  layer "a" {', '    group "Poignee" expr x "pos" {', '      layer "p" {', '        circle 0 0 15 fill #cc3333', '      }', '    }', '  }', '}',
+    'symbol "Inter" {', '  timeline 24 24', '  states s { off at 0   on at 24   initial off   transition 0 }',
+    '  layer "b" {', '    group "Bille" at -40,0 pivot 0,0 {', '      layer "a" {', '        circle 0 0 15 fill #cc3333', '      }', '    }',
+    '    cel 0 tween { pose "Bille" at -40,0 }', '    cel 24 { pose "Bille" at 40,0 }', '  }', '}', '',
+  ].join('\n'))
+  const sceneWith = (inst: Instance, extra = ''): Doc => {
+    const doc = parseProgramFull(`size 300 100\nvar n = 0\nscene {\n  layer "c" {\n  }\n}\n${extra}\n`) as unknown as Doc
+    doc.layers[0].items.push(inst)
+    doc.symbols = [slider, toggle]
+    doc.interactions = [...(doc.interactions ?? []), { id: 'k', targetId: inst.id, event: 'click', actions: [{ do: 'setVar', name: 'n', value: 'n + 1' }] }]
+    return doc
+  }
+  const at = (tx: number, ty: number) => ({ a: 1, b: 0, c: 0, d: 1, e: tx, f: ty })
+  const tapAt = (doc: Doc, x: number, y: number, before: Gesture[] = []) => playHeadless(doc, [...before, { type: 'tap', x, y }]).vars.n
+
+  it('a param given at the instance (`{ pos = 150 }`)', () => {
+    const doc = () => sceneWith({ id: 'c', kind: 'instance', name: 'C', transform: at(50, 50), symbolId: slider.id, params: { pos: '150' } })
+    expect(tapAt(doc(), 200, 50)).toBe(1) // where the handle is drawn
+    expect(tapAt(doc(), 50, 50)).toBe(0) // where it would be with pos = 0: nothing there
+  })
+  it('a param written at runtime (`C.pos = 100`)', () => {
+    const doc = () => sceneWith({ id: 'c', kind: 'instance', name: 'C', transform: at(50, 50), symbolId: slider.id }, 'when loaded {\n  C.pos = 100\n}')
+    expect(tapAt(doc(), 150, 50)).toBe(1)
+    expect(tapAt(doc(), 50, 50)).toBe(0)
+  })
+  it('a state reached at runtime (`I.s = on`)', () => {
+    const doc = () => sceneWith({ id: 'i', kind: 'instance', name: 'I', transform: at(150, 50), symbolId: toggle.id }, 'when loaded {\n  I.s = on\n}')
+    expect(tapAt(doc(), 190, 50, [{ type: 'wait', frames: 2 }])).toBe(1) // the ball is on the right
+    expect(tapAt(doc(), 110, 50, [{ type: 'wait', frames: 2 }])).toBe(0) // …no longer on the left
+  })
+})
+
+// flatink/flatink#37 — `hitbox` was the DROP rectangle and nothing else: a ring drawn with a stroke only
+// could not be clicked in its middle, and on an instance the word was parsed and thrown away. It is now
+// also where the object is touched (click, press, drag, hover), wherever the object currently stands.
+describe('headless -- `hitbox` is where an object is touched', () => {
+  const prog = (scene: string, behavior: string) => parseProgramFull(`size 300 200\nvar n = 0\nvar m = 0\nvar px = 100\nvar py = 100\nscene {\n  layer "c" {\n${scene}\n  }\n}\n${behavior}\n`)
+  const ring = (attrs: string) => `    group "Anneau" at 100,100 ${attrs} {\n      layer "a" {\n        circle 0 0 40 nofill stroke #333333 4\n      }\n    }`
+  const counts = 'object "Anneau" {\n  when clicked {\n    n = n + 1\n  }\n}'
+  const n = (doc: Doc, g: Gesture[]) => playHeadless(doc, g).vars.n
+
+  it('a stroke-only ring is clicked in its middle once it declares a hitbox', () => {
+    expect(n(prog(ring('hitbox 100 100'), counts), [{ type: 'tap', x: 100, y: 100 }])).toBe(1)
+    expect(n(prog(ring('hitbox 100 100'), counts), [{ type: 'tap', target: 'Anneau' }])).toBe(1)
+    expect(n(prog(ring('hitbox 100 100'), counts), [{ type: 'tap', x: 160, y: 100 }])).toBe(0) // outside the rectangle
+  })
+  it('without a hitbox nothing changes: only the stroke is touched', () => {
+    expect(n(prog(ring(''), counts), [{ type: 'tap', x: 100, y: 100 }])).toBe(0)
+    expect(n(prog(ring(''), counts), [{ type: 'tap', x: 140, y: 100 }])).toBe(1)
+  })
+  it('an EMPTY group with a hitbox is a touch area of its own', () => {
+    const doc = prog('    group "Anneau" at 100,100 hitbox 80 40 {\n    }', counts)
+    expect(n(doc, [{ type: 'tap', x: 130, y: 110 }])).toBe(1)
+  })
+  it('`nohit` and a near-zero opacity still let the pointer through', () => {
+    expect(n(prog(ring('hitbox 100 100 nohit'), counts), [{ type: 'tap', x: 100, y: 100 }])).toBe(0)
+    expect(n(prog(ring('hitbox 100 100 opacity 0'), counts), [{ type: 'tap', x: 100, y: 100 }])).toBe(0)
+  })
+  it('the rectangle follows the object: a dragged piece is grabbed by its hitbox where it now stands', () => {
+    const doc = prog('    group "Pion" at 0,0 hitbox 60 60 {\n      layer "a" {\n        circle 0 0 10 fill #33aa55\n      }\n    }', 'object "Pion" {\n  x = px\n  y = py\n  drag px, py\n}')
+    const v = playHeadless(doc, [
+      { type: 'down', x: 125, y: 100 }, { type: 'move', x: 225, y: 150 }, { type: 'up', x: 225, y: 150 }, // 25 px off the dot, inside the hitbox
+      { type: 'down', x: 125, y: 100 }, { type: 'move', x: 20, y: 20 }, { type: 'up', x: 20, y: 20 }, // the old place: nothing there any more
+    ]).vars
+    expect([v.px, v.py]).toEqual([200, 150])
+  })
+  it('what is drawn above the rectangle keeps the click; what is below gets it through anything non-interactive', () => {
+    const above = '    group "Dessus" at 100,100 {\n      layer "a" {\n        circle 0 0 15 fill #cc3333\n      }\n    }'
+    const doc = (extra: string) => prog(`${ring('hitbox 100 100')}\n${above}`, `${counts}\n${extra}`)
+    const both = 'object "Dessus" {\n  when clicked {\n    m = m + 1\n  }\n}'
+    expect(playHeadless(doc(both), [{ type: 'tap', x: 100, y: 100 }]).vars).toMatchObject({ n: 0, m: 1 })
+    expect(playHeadless(doc(''), [{ type: 'tap', x: 100, y: 100 }]).vars).toMatchObject({ n: 1 }) // "Dessus" has no handler: the click falls through
+  })
+  it('an instance keeps its hitbox, and is touched and dropped on by it', () => {
+    const [dot] = parseFlat('symbol "Dot" {\n  layer "a" {\n    circle 0 0 5 fill #cc3333\n  }\n}\n')
+    const doc = prog('    instance "Dot" as "Anneau" at 100,100 hitbox 80 80\n    group "Pion" at 0,0 {\n      layer "a" {\n        circle 0 0 10 fill #33aa55\n      }\n    }',
+      `${counts}\nobject "Pion" {\n  x = px + 150\n  y = py\n  drag px, py\n  when dropped on Anneau at pointer {\n    m = 1\n  }\n}`) as unknown as Doc
+    const inst = doc.layers[0].items[0] as Instance
+    expect(inst.hitbox).toEqual({ w: 80, h: 80 })
+    inst.symbolId = dot.id; doc.symbols = [dot]
+    expect(n(doc, [{ type: 'tap', x: 130, y: 130 }])).toBe(1) // far from the 5 px dot, inside the hitbox
+    expect(playHeadless(doc, [{ type: 'down', x: 250, y: 100 }, { type: 'move', x: 135, y: 125 }, { type: 'up', x: 135, y: 125 }]).vars.m).toBe(1)
   })
 })

@@ -778,7 +778,7 @@ export function docLayoutWarnings(doc: Doc): { scope: string; diag: Diagnostic }
   const zones: { name: string; b: NonNullable<ReturnType<typeof dropZoneBounds>> }[] = []
   const collectZones = (layers: Layer[]) => {
     for (const l of layers) for (const it of l.items) {
-      if (isGroup(it) && it.hitbox && it.name) { const b = dropZoneBounds(doc, it.name); if (b) zones.push({ name: it.name, b }) }
+      if ((isGroup(it) || isInstance(it)) && it.hitbox && it.name) { const b = dropZoneBounds(doc, it.name); if (b) zones.push({ name: it.name, b }) }
       if (isGroup(it)) collectZones(it.layers)
     }
   }

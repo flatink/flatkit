@@ -1681,7 +1681,7 @@ class FlatParser {
     const params = this.is('{') ? this.callSiteParams() : undefined // `instance "X" { hull = #fff, wave = 1.5 }`
     // `synced` is the default → store a `playback` only for the non-default modes (keeps round-trips minimal).
     const playback = a.playback && a.playback.mode !== 'synced' ? a.playback : undefined
-    return { id: uid('i'), kind: 'instance', name, transform, symbolId: '@' + symName, ...leafAttrs(a), ...(a.clip ? { clip: a.clip } : {}), ...exprAttr(a), ...modAttr(a), ...(playback ? { playback } : {}), ...(params ? { params } : {}) }
+    return { id: uid('i'), kind: 'instance', name, transform, symbolId: '@' + symName, ...leafAttrs(a), ...(a.hitbox ? { hitbox: a.hitbox } : {}), ...(a.clip ? { clip: a.clip } : {}), ...exprAttr(a), ...modAttr(a), ...(playback ? { playback } : {}), ...(params ? { params } : {}) }
   }
   /** Call-site values for a symbol's exposed params: `{ name = <literal> [, name2 = …] }` (single-token literals). */
   private callSiteParams(): Record<string, string> {

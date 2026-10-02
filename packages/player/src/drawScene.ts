@@ -661,9 +661,10 @@ const monoFrameOf = (childFps: number, rctx: RenderCtx): number | undefined =>
   rctx.monoTime != null ? rctx.monoTime * childFps : undefined
 
 /** Enter an instance's sub-scope: merge its exposed params (declared/call-site/state-initial + runtime
- *  override) into the expr scope, and surface its color params. Shared by render/bbox/shape paths so the
- *  driven local frame and the subtree expressions read the SAME param values. */
-function instanceScope(doc: Doc, it: Instance, rctx: RenderCtx): { sym: SymbolDef | undefined; expr: ExprContext | undefined; color: Record<string, string> } {
+ *  override) into the expr scope, and surface its color params. Shared by render/bbox/shape paths AND by
+ *  the hit test, so the driven local frame and the subtree expressions read the SAME param values —
+ *  what is touched is what is drawn. */
+export function instanceScope(doc: Doc, it: Instance, rctx: Pick<RenderCtx, 'expr' | 'paramsFor'>): { sym: SymbolDef | undefined; expr: ExprContext | undefined; color: Record<string, string> } {
   const sym = getSymbol(doc, it.symbolId)
   const resolved = resolveInstanceParams(sym, it)
   const runtime = rctx.paramsFor?.(it.id)

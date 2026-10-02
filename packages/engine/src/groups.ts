@@ -132,7 +132,7 @@ export function itemBoundsByName(doc: Doc, name: string): BBox | null {
   return result
 }
 
-/** World bbox of a named DROP ZONE: if the group has a `hitbox W H`, use that local rectangle (centered
+/** World bbox of a named DROP ZONE: if the group or instance has a `hitbox W H`, use that local rectangle (centered
  *  on the origin, ±w/2 × ±h/2) instead of the content bbox — otherwise `itemBoundsByName`. */
 export function dropZoneBounds(doc: Doc, name: string): BBox | null {
   let result: BBox | null = null
@@ -141,7 +141,7 @@ export function dropZoneBounds(doc: Doc, name: string): BBox | null {
     for (const l of layers) for (const it of l.items) {
       if (done) return
       if ('name' in it && it.name === name) {
-        if (isGroup(it) && it.hitbox) {
+        if ((isGroup(it) || isInstance(it)) && it.hitbox) {
           const { w, h } = it.hitbox
           result = transformBBox({ minX: -w / 2, minY: -h / 2, maxX: w / 2, maxY: h / 2 }, compose(matrix, it.transform))
         } else {
@@ -242,7 +242,7 @@ export function groupTargets(doc: Doc, name: string): { name: string; bbox: BBox
   for (const l of layers) for (const it of l.items) {
     if (!('name' in it) || !it.name) continue
     let bbox: BBox | null
-    if (isGroup(it) && it.hitbox) {
+    if ((isGroup(it) || isInstance(it)) && it.hitbox) {
       const { w, h } = it.hitbox
       bbox = transformBBox({ minX: -w / 2, minY: -h / 2, maxX: w / 2, maxY: h / 2 }, compose(matrix, it.transform))
     } else {
