@@ -102,7 +102,8 @@ describe('params at render time', () => {
 // moved by its group so that it covers only part of the frame, wiped the background behind it — more than
 // half of the picture came out transparent. skia-canvas 3.x discards "the vector shapes below" a fill that
 // covers the canvas, and decides it from the path's LOCAL bounds, before the context transform. Browsers
-// are not concerned; skia-canvas 4 (release candidate at the time of writing) is fixed.
+// are not concerned; skia-canvas 4 is fixed. This repository now tests on version 4, where these pass with
+// or without the player's guard: they exercise it only when run against skia-canvas 3 (still accepted).
 describe('rendering — a large opaque shape, offset by its group, does not wipe what is behind it', () => {
   const frame = async (shape: string) => {
     const src = `size 960 540\nbackground #0b0f1a\ntimeline 30 30\n\nscene {\n  layer "a" {\n    group "G" at 0,0 pivot 0,0 {\n      layer "c" {\n        ${shape}\n      }\n    }\n  }\n}\nobject "G" {\n  dx = 600\n  dy = 300\n}\n`
