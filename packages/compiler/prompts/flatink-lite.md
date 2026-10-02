@@ -104,7 +104,7 @@ State/funcs: `var a = 0` · `var arr = fill(8,0)` (also as an ASSIGNMENT: `arr =
 ## Expressions
 Pure numeric, no booleans (compare/logic → 1/0). Ops: `?: || && == != < > <= >= + - * / % - ! . [] fn()` · inline table `[10, 20, 30][i]`.
 Funcs: `sin cos tan atan2 abs sqrt pow floor ceil round sign min max hypot clamp(x,lo,hi) lerp(a,b,t)
-mod(a,b) between(x,lo,hi) rad(deg) deg(rad) turns(n)`. Const `PI TAU E`.
+mod(a,b) between(x,lo,hi) rad(deg) deg(rad) turns(n)`. Const `PI TAU E` · `DT` = 1/60 s (the `every frame` step, fixed 60 Hz: `v = v + a * DT`).
 Reserved: `time`(s, **wraps**) `clock`(s, **monotone**) `frame` `value` `mouse.x/y` `keys.<Key>` `self.*` `<Name>.*`.
 Channels: `x y scaleX scaleY rotation opacity` (absolute) + `dx dy` (additive: `pos = at + (dx, dy)`).
 Stateful easing: `spring <ch> "<target>" stiffness <0..1> damping <0..1>` · `smooth <ch> "<target>" k <0..1>`

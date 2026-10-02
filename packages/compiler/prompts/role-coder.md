@@ -68,7 +68,7 @@ object "Dial" { spring rotation = aim { stiffness 0.08 damping 0.86 } }   // smo
 Pure numeric expressions (no booleans — logic/compares yield `1`/`0`). Operators `?: || && == != < >
 <= >= + - * / % - ! . [] fn()`. Built-ins: `sin cos tan atan2 abs sqrt pow exp log floor ceil round
 sign min max hypot clamp(x,lo,hi) lerp(a,b,t) mod(a,b) between(x,lo,hi) rad deg turns`. Constants
-`PI TAU E`. Reserved: `time` (s), `frame`, `value`, `mouse.x/y`, `keys.<Key>`, `self.*`, `<Name>.*`.
+`PI TAU E`, `DT` (= 1/60 s: `every frame` is a fixed 60 Hz step, integrate with `v = v + a * DT`). Reserved: `time` (s), `frame`, `value`, `mouse.x/y`, `keys.<Key>`, `self.*`, `<Name>.*`.
 
 Functions: `fn dist(ax,ay,bx,by) = hypot(ax-bx, ay-by)` (value) · `fn reset() { score = 0 }` (procedure).
 

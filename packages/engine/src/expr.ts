@@ -430,10 +430,15 @@ export function analyzeExpr(src: string): { ok: true; refs: ExprRefs } | { ok: f
 }
 
 /** Table of math functions/constants exposed to expressions. */
+/** The simulation runs at a FIXED rate: `every frame` is one step of 1 / SIM_HZ seconds, whatever the
+ *  timeline's fps and whatever the display's. The player steps by it; the language names it `DT`. */
+export const SIM_HZ = 60
+
 export const MATH_CTX: ExprContext = {
   PI: Math.PI,
   TAU: Math.PI * 2,
   E: Math.E,
+  DT: 1 / SIM_HZ, // seconds per `every frame` step — the `dt` of an integration, exact and never to be measured
   sin: Math.sin,
   cos: Math.cos,
   tan: Math.tan,

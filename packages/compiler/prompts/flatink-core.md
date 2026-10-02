@@ -288,7 +288,9 @@ align top of "Bin" [offset dx,dy]                         // pin origin onto ano
 Pure & numeric (no booleans: comparisons/logic yield `1`/`0`). Operators: `?: || && == != < > <= >=
 + - * / % - ! . [] fn()`. A lookup table can be written in place and indexed at once: `[10, 20, 30][i]`.
 Built-ins: `sin cos tan asin acos atan atan2 abs sqrt pow exp log floor ceil round sign min max hypot
-clamp(x,lo,hi) lerp(a,b,t) mod(a,b) between(x,lo,hi) rad(deg) deg(rad) turns(n)`. Constants `PI TAU E`.
+clamp(x,lo,hi) lerp(a,b,t) mod(a,b) between(x,lo,hi) rad(deg) deg(rad) turns(n)`. Constants `PI TAU E`, and `DT` = 1/60 s: `every frame` is a
+fixed 60 Hz step whatever the timeline's fps, so integrate with `v = v + a * DT`. Handlers run when their event
+arrives, before the next step.
 Reserved: `time` (seconds, **wraps** every `durationFrames`), `clock` (seconds, **monotone**), `frame`,
 `value`, `mouse.x/y`, `keys.<Key>`, `self.*`, `<Name>.*`.
 Packages: `use "collision" | "easing" | "gesture" | "feedback"`; functions are available bare and

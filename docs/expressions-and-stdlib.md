@@ -30,7 +30,8 @@ min max  hypot  clamp(x, lo, hi)  lerp(a, b, t)  mod(a, b)  between(x, lo, hi)
 rad(deg)  deg(rad)  turns(n)
 ```
 
-Constants: `PI`, `TAU` (2π), `E`.
+Constants: `PI`, `TAU` (2π), `E`, and **`DT`** — the duration of one `every frame` step, in seconds: 1/60,
+whatever the timeline's fps (`v = v + a * DT`). See [how a frame runs](behavior-and-interactions.md#how-a-frame-runs).
 
 > **`lerp` is the exponential smoother.** `lerp(v, target, k)` = `v + (target - v) * k` — so
 > `niv = lerp(niv, target, 0.1)` in `every frame` eases `niv` toward `target` (no new helper needed; the
@@ -69,6 +70,38 @@ A table written in place — `[a, b, c][i]` — saves a global array for a looku
 its index are expressions, only the element picked is evaluated, and it indexes as an array does (the
 index is rounded; outside the table it is `NaN`, so the binding keeps its fallback). It is not a value on
 its own: `[1, 2, 3]` without an index is an error — to keep a table, declare `var t = [1, 2, 3]`.
+
+## Determinism
+
+For someone replaying a simulation elsewhere (a Python replica, a test that compares to the bit), what can
+be counted on. Numbers are IEEE 754 doubles, and an expression is evaluated in the order it is written,
+one rounded operation at a time (no fused multiply-add).
+
+- **Exact** — the same bits on every engine: the operators `+ - * / %` and the comparisons, and `abs`
+  `floor` `ceil` `round` `sign` `min` `max` `sqrt` `clamp` `lerp` `mod` `between` `rad` `deg` `turns`.
+  (`sqrt` is the IEEE square root, correctly rounded on every engine in use, although ECMAScript does not
+  formally demand it. `rad`, `deg` and `turns` multiply by the double `PI`: exact, provided the replica
+  does the same operations in the same order — `rad(d)` is `d * PI / 180`.)
+- **Engine-dependent** — ECMAScript leaves the last bits to the implementation: `sin` `cos` `tan` `asin`
+  `acos` `atan` `atan2` `pow` `exp` `log` `hypot`. Two browsers usually agree, and nothing guarantees
+  it; a Python or C library need not agree with either. Integrated over thousands of steps, one bit
+  becomes a visible gap. A replica that must match to the bit uses its own polynomial for these, on both
+  sides.
+
+Three spellings that differ from other languages:
+
+- **`%`** is the remainder of the truncated division: it takes the sign of the LEFT operand (`-1 % 3` is
+  `-1`), and works on decimals (`3.25 % 12` is `3.25`). It is C's `fmod`, Python's `math.fmod` — not
+  Python's `%`. **`mod(a, b)`** is the positive one (`mod(-1, 3)` is `2`), Python's `%` for `b > 0`.
+- **`round`** sends a half UP, toward +∞: `round(2.5)` is `3`, `round(-2.5)` is `-2`. Python's `round`
+  sends it to the even neighbour. An array index is rounded the same way.
+- **`random()`** draws from a seeded generator made of integer operations only: the same seed gives the
+  same sequence on every engine. A replay is always seeded (`flatc --play`, seed `1`, or `--seed N`); a
+  player in a page draws from the browser unless its host passes `seed`.
+
+Time: one step of `every frame` is exactly **`DT`** = 1/60 s — integrate with it. `clock`, `time` and
+`frame` follow real time in a browser and are exact only in a replay (see
+[how a frame runs](behavior-and-interactions.md#how-a-frame-runs)).
 
 ## Functions (`fn`)
 

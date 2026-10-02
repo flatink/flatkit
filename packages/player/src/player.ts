@@ -9,7 +9,7 @@
 import type { Asset, Doc, Item, Layer, Point, Text } from '@flatkit/types'
 import { resolveInstanceFrame, scheduleSounds, applyEasing, type Timeline, type Easing } from '@flatkit/engine/timeline'
 import { stateValueOf, initialStateValue, stateMachineByParam } from '@flatkit/engine/states'
-import { compileCached, evalExpr, exprScope, type ExprContext, type Compiled } from '@flatkit/engine/expr'
+import { compileCached, evalExpr, exprScope, SIM_HZ, type ExprContext, type Compiled } from '@flatkit/engine/expr'
 import { runActions, MAX_SEND_FIELDS, MAX_SEND_TEXT, SEND_EVENT_NAME, isSendField, type Action, type ActionHost, type Interaction, type ItemEvent } from '@flatkit/engine/actions'
 import { containerLayers, getSymbol, isGroup, isInstance, isPoseable, isText } from '@flatkit/engine/layers'
 import { renderLayers, collectModifierTargets, docHasModifiers, type FilterCacheEntry, type RenderCtx } from './drawScene'
@@ -222,8 +222,7 @@ function seededRandom(seed: number): () => number {
   }
 }
 
-const SIM_HZ = 60
-const SIM_STEP = 1 / SIM_HZ // seconds per simulation step
+const SIM_STEP = 1 / SIM_HZ // seconds per simulation step (`DT` in the language)
 const RESERVED = new Set(['time', 'frame', 'clock', 'value']) // runtime-provided names; never shadowed by a variable
 /**
  * What the scene reads from the INPUT devices, over-approximated by ONE scan of the serialized document

@@ -10,6 +10,11 @@
 - A `.flatink` file splits in two: the **`scene { … }`** block (the VISUAL composition:
   `path`/`circle`/`group`/`image`/`text`) and the **behavior** that follows (`object "Name"
   { … }`, `every frame`, timeline bindings). The two do NOT share the same grammar.
+- **`every frame` is a 60 Hz simulation step, not a timeline frame.** One run is exactly 1/60 s —
+  the constant **`DT`** — whatever `timeline <fps>` says and whatever the display does; integrate with
+  `v = v + a * DT`, never with a `dt` measured from `clock`. Handlers run when their event arrives,
+  BEFORE the next step: a handler that reads a value derived in `every frame` reads the one of the last
+  step. The full order is in [how a frame runs](behavior-and-interactions.md#how-a-frame-runs).
 
 ## `object "X"` addresses an ANIMATABLE item — a group, instance, text or image
 

@@ -27,7 +27,7 @@ Inside `object "Name" { … }`:
 | `when held` | a long press |
 | `when dropped on <Zone> [at pointer]` | released over a drop zone (see [drag & drop](#drag--drop)) |
 
-Scene-wide: `when loaded { … }` (once), `every frame { … }` (each tick), `at frame <n> { … }`,
+Scene-wide: `when loaded { … }` (once), `every frame { … }` (each simulation step, 60 Hz — see [how a frame runs](#how-a-frame-runs)), `at frame <n> { … }`,
 `label <frame> "name"`. These live at the TOP LEVEL of the program, outside any `object` block — inside
 one they do nothing, and `--check` says so.
 
@@ -500,6 +500,45 @@ match Word1, Word2 onto Good, Bad {
 
 It generates, per item, `<Item>_placed` / `<Item>_ok` / `<Item>_zone` state and the drag+drop handlers;
 you keep the visual (`var <Item>_x`/`_y` + your channel expressions).
+
+## How a frame runs
+
+Three things happen, always in this order, and knowing it removes most "it reads the old value" surprises.
+
+**1. Events, as they arrive.** A press, a move, a release or a key runs its handlers **at once**, between
+two displays — not at the next step. At a release the order is: the gesture's outputs are written (drag
+position, `link` target), then `when released`, then `when dropped on …` (in declaration order), then
+`when clicked` if the press stayed a tap.
+
+**2. Steps of the simulation.** `every frame { … }` runs at a **fixed 60 Hz**: one run is one step of
+exactly 1/60 s, **whatever the `timeline` fps and whatever the display**. `timeline 30 …` only sets the
+speed of the playhead: after 60 steps `clock` has advanced by 1 and `frame` by 30. The step has a name,
+**`DT`** (= 1/60, in seconds), so an integration is written `v = v + a * DT` — never measure it from
+`clock`. In a browser `clock`, `time` and `frame` follow REAL time, once per display, so two steps run in
+the same display read the same `clock`; `clock - previous` is then the display's duration on the first and
+`0` on the second. (`flatc --play` advances them by 1/60 per step, which is why a replay is exact.)
+
+How many steps run before each display depends on the display: none or one at 120 Hz, one at 60 Hz, two at
+30. When the display stalls (a tab in the background, a slow device) the player does **not** catch up: it
+counts at most 0.25 s per display and runs at most 30 steps, dropping the rest. The simulation then runs
+slower than the wall clock; it never jumps. Within a step, the scene's `every frame` runs first, then
+those of the active symbols; `at frame <n>` scripts come after, in the same step.
+
+**3. The picture.** Channel bindings (`x = px`, `opacity = lit`) are not statements that run: they are
+read whenever something looks at the object — when it is drawn, when it is hit-tested, when a handler
+reads `Target.x` — and always give the value of NOW. What is drawn between two steps is interpolated
+between them, for smoothness; variables are never changed by that.
+
+What follows from it:
+
+- **A handler reads a derived value as the last step left it.** If `every frame { double = count * 2 }`
+  and a handler does `count = count + 1` then reads `double`, it reads the value from BEFORE its own
+  write. Two events between two steps: the second sees what the first *wrote*, not what `every frame`
+  derives from it. Derive in the handler what the handler needs, or make it a function (`fn`).
+- **`flatc --play` gives every pointer event one step** (see [tooling](tooling.md#headless-play----play)),
+  as a real pointer does; `"settle": 0` replays two events with no step in between, which is the case above.
+- **The step is guaranteed**; the number of steps per display is not. A rule that counts steps counts
+  sixtieths of a second of simulated time.
 
 ## See also
 
