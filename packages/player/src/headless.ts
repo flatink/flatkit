@@ -64,6 +64,7 @@ export type PlayResult = {
   vars: Record<string, number | number[]>
   steps?: TraceStep[] // present if `trace`: one record per gesture (inspection / debug-player)
   expectFailures?: string[] // mismatches reported by the `expect` gestures (empty/absent = all verified) -> exit != 0 in CLI
+  warnings?: string[] // what the replay noticed and did not treat as a failure (a `turn` whose press did not grab its target)
 }
 
 /** Trace of ONE gesture: its description, the `send`s emitted during it, and the variable diff. */
@@ -117,7 +118,7 @@ const describeGesture = (g: Gesture): string =>
  *  gestures are met. `handlers` are the listeners the player registered on its canvas (client coordinates
  *  = scene coordinates), `sends` the list its `onEvent` appends to. Shared by `playHeadless` and by the
  *  renderer, which replays a script and then draws what the scene has become. */
-export type Replayer = { apply(g: Gesture): void; readonly expectFailures: string[] }
+export type Replayer = { apply(g: Gesture): void; readonly expectFailures: string[]; readonly warnings: string[] }
 
 /** What a replay needs of a player — its public surface only, so a player built from another entry point
  *  of the package is accepted. */
@@ -151,6 +152,7 @@ export function createReplayer(pl: ReplayTarget, doc: Doc, handlers: Handlers, s
   // `expect`: self-verified assertions. `sendCursor` = window of sends SINCE the last `expect`.
   let sendCursor = 0
   const expectFailures: string[] = []
+  const warnings: string[] = []
   const apply = (g: Gesture): void => {
     if (g.type === 'set') { pl.setVar(g.name, g.value); return }
     if (g.type === 'wait') { pl.stepSim(g.frames); return }
@@ -185,24 +187,28 @@ export function createReplayer(pl: ReplayTarget, doc: Doc, handlers: Handlers, s
       // WHERE the press lands. `from` names it: two hands of a clock overlap at noon, and no default can
       // tell which one a test means. Without it, the object's resolved position, then the centre of its
       // drawn box — a hand drawn FROM its pivot has its origin on the very edge of its shape, where a
-      // press grabs nothing. Whatever the point, it must grab THIS object: a press that lands elsewhere
-      // used to turn another object, or none, and say nothing.
+      // press grabs nothing. A press that does not grab THIS object is REPORTED (it used to turn another
+      // object, or none, and say nothing) and the gesture is replayed all the same: a script may be
+      // proving precisely that a locked object does not respond, and that is not a failure.
       const tries = g.from ? [{ x: g.from[0], y: g.from[1] }] : [grabPoint(g.target), boxCentre(doc, g.target)].filter((p): p is { x: number; y: number } => p != null)
-      const start = tries.find((p) => pl.grabTargetAt(p) === ti.id)
-      if (!start) {
-        const p = tries[0]
-        throw new Error(g.from
-          ? `gesture: turn — the press at (${p.x}, ${p.y}) does not grab "${g.target}" (${describeGrab(doc, pl.grabTargetAt(p))}). "from" must be a point ON its shape, where nothing covers it.`
-          : `gesture: turn — no press point found on "${g.target}" (${describeGrab(doc, pl.grabTargetAt(p))}). Name one with "from": [x, y], a point ON its shape, where nothing covers it.`)
+      const found = tries.find((p) => pl.grabTargetAt(p) === ti.id)
+      const start = found ?? tries[0]
+      if (!found) {
+        warnings.push(g.from
+          ? `turn: the press at (${start.x}, ${start.y}) does not grab "${g.target}" (${describeGrab(doc, pl.grabTargetAt(start))}). If it should: "from" must be a point ON its shape, where nothing covers it.`
+          : `turn: no press point grabs "${g.target}" (${describeGrab(doc, pl.grabTargetAt(start))}). If it should: name one with "from": [x, y], a point ON its shape, where nothing covers it.`)
       }
       const piv = ti.pivot
       const R = Math.max(24, Math.hypot(start.x - piv.x, start.y - piv.y)) // radius to place the rotating pointer (only the ANGLE matters, not R)
       const at = (v: number) => { const rad = ti.deg ? (v * Math.PI) / 180 : v; return { x: piv.x + R * Math.cos(rad), y: piv.y + R * Math.sin(rad) } } // target value (deg/rad) -> pointer position
       const maxStep = ti.deg ? 60 : Math.PI / 3 // <= per sub-move: keeps each delta small (under the atan2 wrap / typical author jump-guards) so multi-turn works
       const N = Math.max(2, Math.ceil(Math.abs(g.angle) / maxStep))
-      const n = settleOf(g)
+      // The sub-moves have ALWAYS taken a step each (a delta-accumulating `every frame` integrates the
+      // turn), whatever the script's `settle`: only the gesture's own `settle` turns that off. So
+      // `settle: 0` for a script is exactly the replay of before, `turn` included.
+      const n = settleOf(g), between = Math.max(0, Math.floor(g.settle ?? Math.max(1, opts.settle ?? 1)))
       fire('down', start, id, n)
-      for (let k = 1; k <= N; k++) fire('move', at((g.angle * k) / N), id, n) // sweep; the sim advances so a delta-accumulating `every frame` integrates each sub-step
+      for (let k = 1; k <= N; k++) fire('move', at((g.angle * k) / N), id, between) // sweep
       fire('up', at(g.angle), id, n)
       return
     }
@@ -215,7 +221,7 @@ export function createReplayer(pl: ReplayTarget, doc: Doc, handlers: Handlers, s
     }
     fire(g.type, { x: g.x, y: g.y }, g.id, settleOf(g)) // low-level (down/move/up/cancel)
   }
-  return { apply, expectFailures }
+  return { apply, expectFailures, warnings }
 }
 
 /** Centre of an object's drawn box (static), or null when it has none. */
@@ -248,7 +254,7 @@ export function playHeadless(doc: Doc, gestures: Gesture[], opts: { trace?: bool
   const handlers: Handlers = {}
   const sends: PlayResult['sends'] = []
   const pl = new FlatPlayer(fakeCanvas(handlers, doc.width, doc.height), doc, { input: true, padding: 0, render: false, audio: false, seed: opts.seed ?? 1, onEvent: (e) => sends.push(e) })
-  const { apply: applyGesture, expectFailures } = createReplayer(pl, doc, handlers, sends, { settle: opts.settle })
+  const { apply: applyGesture, expectFailures, warnings } = createReplayer(pl, doc, handlers, sends, { settle: opts.settle })
   try {
     const steps: TraceStep[] = []
     for (const g of gestures) {
@@ -261,7 +267,7 @@ export function playHeadless(doc: Doc, gestures: Gesture[], opts: { trace?: bool
         if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) changed[k] = [before[k], after[k]]
       steps.push({ gesture: describeGesture(g), sends: sends.slice(sIdx), changed })
     }
-    return { sends, vars: pl.allVars(), ...(opts.trace ? { steps } : {}), ...(expectFailures.length ? { expectFailures } : {}) }
+    return { sends, vars: pl.allVars(), ...(opts.trace ? { steps } : {}), ...(expectFailures.length ? { expectFailures } : {}), ...(warnings.length ? { warnings } : {}) }
   } finally {
     pl.destroy()
     restore()

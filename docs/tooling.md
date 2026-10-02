@@ -261,8 +261,10 @@ flatc <file> --play --script gestures.json [--trace] [--settle N]
   assert on a draw. `--seed N` picks another one.
 - **A pointer event takes a frame.** Each press, move and release is followed by one simulation step, as
   a real pointer stays at least one frame on each position — so a rule written in `every frame` sees the
-  drag. `--settle N` sets that number for the whole script (`--settle 0` = the instantaneous replay of
-  before 0.38), and `"settle": N` on a gesture sets it for that one. A script that `expect`s a value which
+  drag. `--settle N` sets that number for the whole script, and `"settle": N` on a gesture sets it for that
+  one. **`--settle 0` is exactly the replay of before 0.38** (`turn` keeps the step it always took between
+  its sub-moves). A script that already paces itself with `wait` gestures gets one more frame per event:
+  drop the `wait`, or keep the script as it is with `--settle 0`. A script that `expect`s a value which
   decays every frame (a feedback pulse read right after the tap) needs `"settle": 0` on that tap.
 - **`turn`** turns a `turn`/`turnDeg` target **to** `angle`: the value the gesture ENDS at, wherever the
   press was — not a rotation added to the current one. Degrees for `turnDeg`, radians for `turn`; `0` is
@@ -270,8 +272,9 @@ flatc <file> --play --script gestures.json [--trace] [--settle N]
   land (`"angle": 540`). The press goes to the object's position, then to the centre of its drawn box (a
   hand drawn *from* its pivot has its origin on the edge of its shape). **`"from": [x, y]`** names the
   press point — the way to pick one of two hands overlapping at noon. A press that does not grab the
-  target is an **error** that names what is grabbed there instead; it used to turn the wrong object, or
-  none, in silence.
+  target is **reported** — a `warnings` entry in the JSON, a `flatc: warning:` line on stderr — naming
+  what is grabbed there instead; it used to turn the wrong object, or none, in silence. It is not a
+  failure: a script may be proving that a locked dial does not respond.
 - `set` drives a variable from the host; `wait` runs N fixed 60 Hz steps (advances `every frame` physics).
 - **`key`** holds a key down (`keys.<name>` reads `1`) for `frames` steps — default `1` — then releases
   it: the way to test a keyboard-driven scene in CI. Use the authored name (`"ArrowRight"`, `"Space"`).

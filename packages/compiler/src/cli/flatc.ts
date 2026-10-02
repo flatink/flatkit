@@ -337,6 +337,8 @@ function playOnce(filePath: string, scriptPath: string, trace: boolean, noLibs =
   try { gestures = JSON.parse(readFileSync(scriptPath, 'utf8')) as Gesture[] } catch (e) { process.stderr.write(`flatc: invalid JSON script: ${(e as Error).message}\n`); return 1 }
   if (!Array.isArray(gestures)) { process.stderr.write('flatc: the script must be an array of gestures\n'); return 1 }
   const res = playHeadless(doc, gestures, { trace, seed, settle })
+  // On stderr, and no effect on the exit code: the JSON on stdout stays what a caller parses.
+  for (const w of res.warnings ?? []) process.stderr.write(`flatc: warning: ${w}\n`)
   if (!trace) process.stdout.write(JSON.stringify(res, null, 2) + '\n')
   else // --trace: readable log (one gesture per line) → inspection / debug-player.
     for (const s of res.steps ?? []) {
@@ -417,7 +419,7 @@ async function renderAfterScript(doc: Doc, outPath: string, scriptPath: string, 
   if (!Array.isArray(gestures)) { process.stderr.write('flatc: the script must be an array of gestures\n'); return 1 }
   const shotPath = (name: string) => join(dirname(outPath), `${basename(outPath, extname(outPath))}.${name.replace(/[^\w.-]/g, '_')}${extname(outPath) || '.png'}`)
   const written: string[] = []
-  let failures: string[] = []
+  let failures: string[] = [], warned: string[] = []
   try {
     const { createRenderer } = await import('./render')
     const r = await createRenderer(doc, { scale, params: Object.keys(params).length ? params : undefined, interactive: true, settle })
@@ -427,7 +429,8 @@ async function renderAfterScript(doc: Doc, outPath: string, scriptPath: string, 
       let shots = 0
       for (const g of gestures) {
         if (g.type === 'shot') { const p = shotPath(g.name || String(++shots)); writeFileSync(p, await r.capture()); written.push(basename(p)); continue }
-        failures = r.play([g]).expectFailures
+        const rep = r.play([g])
+        failures = rep.expectFailures; warned = rep.warnings
       }
       if (steps > 0) r.play([{ type: 'wait', frames: Math.floor(steps) }])
       writeFileSync(outPath, await r.capture())
@@ -438,6 +441,7 @@ async function renderAfterScript(doc: Doc, outPath: string, scriptPath: string, 
   }
   const played = gestures.filter((g) => g.type !== 'shot').length
   process.stdout.write(`flatc: ${basename(outPath)} ✓  ${doc.width}×${doc.height} ×${scale} · after ${played} gesture(s)${steps ? ` · ${steps} step(s)` : ''}${written.length ? ` · shots: ${written.join(', ')}` : ''}\n`)
+  for (const w of warned) process.stderr.write(`flatc: warning: ${w}\n`)
   for (const f of failures) process.stderr.write(`flatc: ✗ ${f}\n`)
   return failures.length ? 1 : 0
 }

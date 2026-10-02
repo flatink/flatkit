@@ -41,7 +41,9 @@ export type Gesture =
   // the press was (signed; DEGREES for turnDeg, RADIANS for turn; 0 = to the right of the pivot, positive =
   // clockwise on screen), swept in sub-steps so several turns work. `from` = where the press lands (WORLD):
   // the way to name WHICH of two overlapping targets is grabbed. Without it the press goes to the object's
-  // position, then to the centre of its drawn box; a press that does not grab the target is an error.
+  // position, then to the centre of its drawn box; a press that does not grab the target is reported
+  // (`PlayResult.warnings`), not thrown: a script may be proving that a locked object does not respond.
+  // Its sub-moves take one step each whatever the script's `settle`; only its own `settle` changes that.
   | { type: 'turn'; target: string; angle: number; from?: [number, number]; settle?: number; id?: number }
   // Low-level (scene coords).
   | { type: 'down' | 'move' | 'up' | 'cancel'; x: number; y: number; id?: number; settle?: number }

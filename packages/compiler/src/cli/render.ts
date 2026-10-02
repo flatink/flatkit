@@ -17,7 +17,7 @@ import { join } from 'node:path'
 export type RenderOpts = { frame?: number; vars?: Record<string, number>; scale?: number; steps?: number; params?: Record<string, string>; script?: Gesture[]; settle?: number }
 
 /** What a replayed script reports: the `send`s it emitted, and the `expect` gestures that did not hold. */
-export type PlayReport = { sends: SendEvent[]; expectFailures: string[] }
+export type PlayReport = { sends: SendEvent[]; expectFailures: string[]; warnings: string[] }
 
 /** Cap on `--steps` (anti-DoS: an untrusted doc must not freeze the render host). One step = 1/60 s of sim. */
 const MAX_RENDER_STEPS = 10_000
@@ -169,7 +169,7 @@ export async function createRenderer(doc: Doc, opts: { scale?: number; params?: 
     if (!opts.interactive) throw new Error('this renderer cannot replay gestures: open it with createRenderer(doc, { interactive: true })')
     replayer ??= createReplayer(player, withParams, handlers, sends, { settle: opts.settle })
     for (const g of gestures) replayer.apply(g)
-    return { sends: [...sends], expectFailures: [...replayer.expectFailures] }
+    return { sends: [...sends], expectFailures: [...replayer.expectFailures], warnings: [...replayer.warnings] }
   }
 
   return {

@@ -591,9 +591,11 @@ describe('headless -- turning one of two overlapping targets', () => {
   ].join('\n')
   const play = (gestures: Gesture[]) => playHeadless(parseProgramFull(clock) as unknown as Doc, gestures).vars
 
-  it('without `from`, the gesture cannot reach the hand underneath — and says which one is in the way', () => {
-    // It used to turn the hand on TOP, the one the test did not name, in silence (the reported case).
-    expect(() => play([{ type: 'turn', target: 'Hours', angle: 120 }])).toThrow(/"Hours".*"Minutes" is grabbed there instead.*"from"/s)
+  it('without `from`, the semantic gesture grabs whatever is on TOP — and now SAYS so', () => {
+    const res = playHeadless(parseProgramFull(clock) as unknown as Doc, [{ type: 'turn', target: 'Hours', angle: 120 }])
+    expect(res.vars.minuteDeg).toBeCloseTo(120, 6) // …the hand it did not name (the reported case)
+    expect(res.vars.hourDeg).toBe(0)
+    expect(res.warnings?.join(' ')).toMatch(/"Hours".*"Minutes" is grabbed there instead.*"from"/s)
   })
 
   it('`from` names the press point, so the hand underneath can be turned', () => {
@@ -853,6 +855,16 @@ describe('headless -- a pointer event takes a frame', () => {
     expect(vars.frames).toBe(0)
     expect(vars.px).toBe(200) // the gesture itself is unchanged
   })
+  it('`settle: 0` is EXACTLY the replay of before: `turn` keeps the step it always took between its moves', () => {
+    // A rule that integrates a turn frame by frame was already served by `turn`, whatever the others did.
+    const src = ['size 300 300', 'var a = 0', 'var frames = 0',
+      'scene { layer "c" { group "Hand" at 150,150 pivot 0,0 { layer "a" { rect -6 -90 12 88 fill #333333 } } } }',
+      'object "Hand" {', '  turnDeg a around 150,150', '  rotationDeg = a', '}', 'every frame { frames = frames + 1 }'].join('\n')
+    const turn: Gesture[] = [{ type: 'turn', target: 'Hand', angle: 120 }] // two sub-moves of 60 degrees
+    expect(playHeadless(parseProgramFull(src) as unknown as Doc, turn, { settle: 0 }).vars.frames).toBe(2)
+    expect(playHeadless(parseProgramFull(src) as unknown as Doc, turn).vars.frames).toBe(4) // + the press and the release
+    expect(playHeadless(parseProgramFull(src) as unknown as Doc, [{ type: 'turn', target: 'Hand', angle: 120, settle: 0 }]).vars.frames).toBe(0)
+  })
   it('`settle` is the number of steps per event', () => {
     expect(playHeadless(doc(), LOW, { settle: 3 }).vars.frames).toBe(15)
   })
@@ -882,11 +894,26 @@ describe('headless -- `turn` presses on the shape, or says it could not', () => 
     expect(play(hand(), [{ type: 'turn', target: 'Hand', angle: 90, from: [150, 70] }]).vars.a).toBeCloseTo(90, 6)
     expect(play(hand(), [{ type: 'turn', target: 'Hand', angle: 90, from: [150, 100] }]).vars.a).toBeCloseTo(90, 6)
   })
-  it('a press that cannot reach the object is an error naming the way out, not a silent no-op', () => {
+  it('a press that does not grab the object is REPORTED, and the replay goes on', () => {
     // A cover drawn over the whole hand: nothing of it can be pressed.
     const covered = hand('  group "Lid" at 150,150 { layer "a" { rect -100 -100 200 200 fill #ffffff } }') + '\nobject "Lid" { when pressed { a = a } }'
-    expect(() => play(covered, [{ type: 'turn', target: 'Hand', angle: 90 }])).toThrow(/"Hand".*from/s)
+    const r1 = play(covered, [{ type: 'turn', target: 'Hand', angle: 90 }])
+    expect(r1.vars.a).toBe(0)
+    expect(r1.warnings?.join(' ')).toMatch(/"Hand".*"Lid" is grabbed there instead.*"from"/s)
     // …and an explicit `from` that misses is reported the same way.
-    expect(() => play(hand(), [{ type: 'turn', target: 'Hand', angle: 90, from: [10, 10] }])).toThrow(/\(10, ?10\).*"Hand"/s)
+    const r2 = play(hand(), [{ type: 'turn', target: 'Hand', angle: 90, from: [10, 10] }])
+    expect(r2.vars.a).toBe(0)
+    expect(r2.warnings?.join(' ')).toMatch(/\(10, ?10\).*"Hand"/s)
+  })
+  it('it is not an error: a script may be PROVING that an object does not respond', () => {
+    // A consumer's test turns a dial that is still locked and asserts that nothing came out. Throwing
+    // there turned a proof of inertness into a crash.
+    const locked = hand().replace('turnDeg a around 150,150', 'turnDeg a around 150,150 { enabled a > 999 }')
+    const res = play(locked, [{ type: 'turn', target: 'Hand', angle: 90 }, { type: 'wait', frames: 3 }, { type: 'expect', vars: { a: 0 } }])
+    expect(res.vars.a).toBe(0)
+    expect(res.expectFailures).toBeUndefined()
+  })
+  it('a turn that does grab its target reports nothing', () => {
+    expect(play(hand(), [{ type: 'turn', target: 'Hand', angle: 90 }]).warnings).toBeUndefined()
   })
 })
