@@ -124,3 +124,29 @@ describe('parsePathData — a path made only of lines', () => {
     expect(pts(parsePathData(TRAPEZOID, { smooth: true }))).toEqual(pts(parsePathData(TRAPEZOID)))
   })
 })
+
+// Reported by the editor after the move to 0.36: `polyPath` says "straight segments" and returned bare
+// anchors — free-hand material, rounded at gentle turns and exported with `smooth`. An SVG `<polygon>`
+// imported through it stayed soft while the same points given as a `<path>` came out straight.
+describe('polyPath — a polygon has straight sides', () => {
+  const octagon = Array.from({ length: 8 }, (_, i) => ({ x: 100 + 80 * Math.cos((i * Math.PI) / 4), y: 100 + 80 * Math.sin((i * Math.PI) / 4) }))
+  const straight = (sub: ReturnType<typeof polyPath>['subpaths'][number]): boolean => {
+    const bz = pathToBezier(sub)!
+    return bz.segs.every((s, i) => {
+      const p0 = i === 0 ? bz.start : bz.segs[i - 1].p
+      const cross = (a: { x: number; y: number }) => Math.abs((s.p.x - p0.x) * (a.y - p0.y) - (s.p.y - p0.y) * (a.x - p0.x))
+      return cross(s.c1) < 1e-9 && cross(s.c2) < 1e-9
+    })
+  }
+  it('gentle turns included, closed or open', () => {
+    expect(straight(polyPath(octagon, true).subpaths[0])).toBe(true)
+    expect(straight(polyPath(octagon.slice(0, 5), false).subpaths[0])).toBe(true)
+  })
+  it('draws exactly what the same points written as path data draw', () => {
+    const d = `M${octagon.map((p) => `${p.x} ${p.y}`).join(' L')} Z`
+    expect(pathToBezier(polyPath(octagon, true).subpaths[0])).toEqual(pathToBezier(parsePathData(d).subpaths[0]))
+  })
+  it('a rectangle (all corners sharp) is still bare anchors', () => {
+    expect(rectPath(0, 0, 40, 20).subpaths[0].segments.every((s) => !s.inHandle && !s.outHandle)).toBe(true)
+  })
+})

@@ -42,7 +42,7 @@ changed, an image or a font finished loading. A scene at rest costs no paint at 
 expressions read `time`, `clock`, `frame` or `random()`, or whose keyframes play with the playhead, is
 repainted every frame as before.
 
-Everything the player exposes paints on its own (`setVar`, `setKey`, `seek`, `load`…). If the host changes
+Everything the player exposes paints on its own (`setVar`, `setParam`, `setKey`, `seek`, `load`…). If the host changes
 what is drawn behind the player's back — it mutates the document it handed over, say — it calls
 `player.render()`.
 
@@ -104,6 +104,24 @@ player.allVars()                      // snapshot of everything, for debugging/s
 
 `getVar`/`allVars` return **copies**: mutating the result never touches the running scene. Symmetrically
 `setVar` clones what you pass in.
+
+### Driving a symbol's params (`setParam`)
+
+A control of the page that drives an instance of a symbol — a colour picker, a label field, a toggle —
+writes its exposed params directly:
+
+```ts
+player.setParam('Gauge', 'level', 0.4)          // number (clamped to its range)
+player.setParam('Gauge', 'active', true)        // bool
+player.setParam('Door', 'door', 'open')         // a state, by name: its transition plays
+player.setParam('Button', 'fill', '#33aa33')    // color
+player.setParam('Button', 'label', 'Check "it"') // text — as it is, no quoting, no escaping
+```
+
+It returns `false`, and changes nothing, when no instance of the scene has that name, when its symbol
+declares no such param or state, or when the value is not of the param's kind. It repaints on its own.
+This is the host's counterpart of `Inst.param = value` in the scene; unlike the scene's assignment it
+takes values, not expressions.
 
 ### Saving and restoring a session
 

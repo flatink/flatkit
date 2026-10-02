@@ -264,6 +264,23 @@ In the player, `player.startRecording()` / `stopRecording(): Gesture[]` capture 
 hand into a script that `--play` replays. (Authoring/CI helpers live in `@flatkit/player/debug`.)
 Pointer only — key presses are not captured; add the `key` gestures to the recorded script yourself.
 
+## Upgrading: what is drawn differently (`--since`)
+
+```
+flatc scene.flatink lib.flat other.flatink --since 0.35
+```
+
+A one-shot report for an upgrade: what these sources draw **differently** from that version, each finding
+with its `file:line`. Nothing is modified, and the exit code is 0.
+
+One change is recorded so far. Until 0.36 a path made only of lines (`L`, `H`, `V`) was rounded at its
+gentle turns; it is now drawn straight, as its data says. The report lists each such path that moves by
+1% of its size or more (`--all` adds the slighter ones), open or closed, with how far it moves — a soft
+hill written as four points wants `smooth` back (`path "…" smooth`), a hexagon does not.
+
+It is a report and not a `--check` warning on purpose: a polyline that is *meant* straight has nothing to
+add to say so, and would be warned about for ever.
+
 ## What does this program DO?
 
 Merging DSL you did not write (a generated skin, a themed layer) raises a question a compiler answers and

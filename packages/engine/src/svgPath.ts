@@ -211,10 +211,11 @@ export function rectPath(x: number, y: number, w: number, h: number, rx = 0, ry 
   )
 }
 
-/** Polyline / polygon (straight segments). */
+/** Polyline / polygon (straight segments — gentle turns included: it is marked literal like a path of
+ *  `L`s, see `asStraightLines`; free-hand material is `polygonsToPath`). */
 export function polyPath(points: Point[], closed: boolean): Path {
   if (points.length < 2) return { subpaths: [] }
-  return { subpaths: [{ closed, segments: points.map((p) => ({ anchor: { x: p.x, y: p.y } })) }] }
+  return { subpaths: [asStraightLines({ closed, segments: points.map((p) => ({ anchor: { x: p.x, y: p.y } })) })] }
 }
 
 export const linePath = (x1: number, y1: number, x2: number, y2: number): Path =>

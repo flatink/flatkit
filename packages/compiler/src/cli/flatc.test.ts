@@ -454,3 +454,47 @@ describe('flatc binary — a long report survives a pipe', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   }, 60_000)
 })
+
+// 0.36 made `L` a straight line. A corpus written before it holds paths of lines that were drawn rounded
+// and are not any more — some on purpose (a soft hill written as four points), most not (a hexagon). A
+// permanent warning could not tell them apart, and a polyline meant straight would be warned about for
+// ever. `--since` is the one-shot answer: it lists what is drawn differently, and the author decides.
+describe('flatc --since — what is drawn differently since an earlier version', () => {
+  const SRC = [
+    'size 400 300', 'scene {', '  layer "c" {',
+    '    path "M-20 250 L120 190 L280 240 L420 200" nofill stroke #334455 3',       // line 4: open, 4 points, soft
+    '    path "M100 0 L50 87 L-50 87 L-100 0 L-50 -87 L50 -87 Z" fill #223344',      // line 5: closed hexagon
+    '    path "M0 0 L40 0 L40 40 L0 40 Z" fill #223344',                             // square: sharp corners only
+    '    path "M0 100 L60 60 L140 110 L220 70" smooth nofill stroke #334455 3',      // already says smooth
+    '    path "M0 0 C10 -10 20 -10 30 0 L60 20" nofill stroke #334455 3',            // has a curve: not a path of lines
+    '    path "M0 200 L1 200.1 L2 200.3 L3 200.6 L4 201" nofill stroke #334455 1',   // gentle and tiny: nothing to see
+    '  }', '}', '',
+  ].join('\n')
+  const report = (args: string[]) => {
+    const dir = mkdtempSync(join(tmpdir(), 'flatc-since-'))
+    writeFileSync(join(dir, 'p.flatink'), SRC)
+    const outs: string[] = []
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation((s: string | Uint8Array) => { outs.push(String(s)); return true })
+    try { return { code: run(['node', 'flatc', join(dir, 'p.flatink'), ...args]) as number, lines: outs.join('').split('\n').filter(Boolean) } }
+    finally { spy.mockRestore(); rmSync(dir, { recursive: true, force: true }) }
+  }
+  it('lists the paths of lines that used to be rounded, with their line, and nothing else', () => {
+    const { code, lines } = report(['--since', '0.35'])
+    expect(code).toBe(0)
+    const listed = lines.filter((l) => /p\.flatink:\d+:/.test(l))
+    expect(listed).toHaveLength(2)
+    expect(listed[0]).toMatch(/p\.flatink:4: open path of 4 points.*was rounded.*`smooth`/)
+    expect(listed[1]).toMatch(/p\.flatink:5: closed path of 6 points/)
+  })
+  it('says how far each one moves, and sums up', () => {
+    const { lines } = report(['--since', '0.35'])
+    expect(lines.find((l) => /p\.flatink:4:/.test(l))).toMatch(/moves by up to \d+(\.\d)? (px|units)/)
+    expect(lines.at(-1)).toMatch(/2 path\(s\).*1 open.*1 closed/)
+  })
+  it('a version that already drew lines straight has nothing to report', () => {
+    const { code, lines } = report(['--since', '0.36'])
+    expect(code).toBe(0)
+    expect(lines.filter((l) => /p\.flatink:\d+:/.test(l))).toEqual([])
+    expect(lines.join(' ')).toMatch(/nothing is drawn differently since 0\.36/)
+  })
+})

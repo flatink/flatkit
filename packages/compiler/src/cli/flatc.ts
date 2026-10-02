@@ -20,6 +20,8 @@ import { unitsToFunctions } from '@flatkit/engine/scriptDoc'
 import { containerBBox, containerBBoxUnion } from '@flatkit/engine/groups'
 import { isInstance, isGroup } from '@flatkit/engine/layers'
 import { IDENTITY } from '@flatkit/engine/transform'
+import { parsePathData } from '@flatkit/engine/svgPath'
+import { softVertexCount, smoothingDeviation } from '@flatkit/engine/path'
 import { lintDocReport, docHasErrors } from '../programDoc'
 import { applyFixes, formatDiagnostics, programDiagnostics, repairLoop } from '../check'
 import { FlatSyntaxError } from '@flatkit/engine/flatFormat'
@@ -73,6 +75,10 @@ Usage:
                     folder, where a neighbouring scratch file is not a dependency)
   --watch           recompile on every change in the folder (agent → player loop)
   --play            run the file WITHOUT a canvas, replay --script and print { sends, vars } (JSON)
+  --since <ver>     what the given files (.flatink / .flat, as many as you like) draw DIFFERENTLY from
+                    that version — a one-shot report for an upgrade, with file:line. Recorded so far:
+                    before 0.36 a path made only of lines was rounded at its gentle turns. Lists the
+                    paths that move by 1% of their size or more; add --all for the slighter ones
   --seed N          (with --play) seed of random(). A replay is always seeded (default 1): the same script
                     gives the same result twice; another N gives another draw
   --trace           (with --play) HUMAN-READABLE log per gesture: emitted sends + variable diff (debug)
@@ -517,6 +523,50 @@ async function previewOnce(flatPath: string, symbolName: string, out: string, fr
   return code
 }
 
+/**
+ * `--since <version>`: what these sources draw DIFFERENTLY from that version, for an author deciding what
+ * to do about it once, when upgrading. Read from the SOURCE, so every finding has its line.
+ *
+ * One change is recorded: until 0.36 a path made only of lines was rounded at its gentle turns; it is now
+ * drawn straight. Each such path is listed with how far its outline moves — a soft hill written as four
+ * points wants `smooth` back, a hexagon does not. This is a report, not a warning of `--check`: a polyline
+ * that is MEANT straight has nothing to add to say so, and would be warned about for ever.
+ */
+function sinceReport(files: string[], since: string, all = false): number {
+  const [maj, min] = since.split('.').map(Number)
+  if (!Number.isFinite(maj) || !Number.isFinite(min)) { process.stderr.write(`flatc: --since takes a version, e.g. --since 0.35 (got "${since}")\n`); return 1 }
+  if (maj > 0 || min >= 36) { process.stdout.write(`flatc: nothing is drawn differently since ${since}\n`); return 0 }
+  let open = 0, closed = 0, slight = 0
+  for (const file of files) {
+    let src: string
+    try { src = readFileSync(file, 'utf8') } catch (e) { process.stderr.write(`flatc: cannot read ${file}: ${(e as Error).message}\n`); return 1 }
+    // Every `path "…"` of the file that does not already say `smooth` (a text laid `along path "…"` is not a shape).
+    for (const m of src.matchAll(/(?<!along\s)\bpath\s+"([^"]*)"(?!\s+smooth\b)/g)) {
+      // Read as it was BEFORE (free-hand material) to measure what smoothing did to it.
+      for (const sub of parsePathData(m[1], { smooth: true }).subpaths) {
+        if (sub.segments.some((sg) => sg.inHandle || sg.outHandle) || !softVertexCount(sub)) continue // has a curve, or only sharp corners
+        const moved = smoothingDeviation(sub)
+        const xs = sub.segments.map((sg) => sg.anchor.x), ys = sub.segments.map((sg) => sg.anchor.y)
+        const size = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys))
+        // Listed when the outline moves by 1% of the shape's size or more — RELATIVE, because artwork is often
+        // drawn in a large space and scaled down by its container. Below that the two renderings are a few
+        // pixels apart at most; `--all` lists those too.
+        if (moved <= 0 || size <= 0) continue
+        if (moved < size * 0.01 && !all) { slight++; continue }
+        const line = src.slice(0, m.index).split('\n').length
+        if (sub.closed) closed++; else open++
+        process.stdout.write(`${file}:${line}: ${sub.closed ? 'closed' : 'open'} path of ${sub.segments.length} points was rounded before 0.36 and is now straight — it moves by up to ${Math.round(moved * 10) / 10} units (${Math.round((1000 * moved) / (size || 1)) / 10}% of its size). Write \`smooth\` after its path data to keep the curve.\n`)
+      }
+    }
+  }
+  const n = open + closed
+  const rest = slight ? ` ${slight} more move by less than 1% of their size (\`--all\` lists them).` : ''
+  process.stdout.write(n
+    ? `flatc: ${n} path(s) of lines drawn differently since ${since}: ${open} open, ${closed} closed.${rest} Nothing was modified. (Rounded rectangles and paths mixing lines with curves changed too — their straight sides no longer bulge — and are not listed.)\n`
+    : `flatc: no path of lines is drawn visibly differently since ${since} in ${files.length} file(s).${rest}\n`)
+  return 0
+}
+
 export function run(argv: string[]): number | Promise<number> {
   const args = argv.slice(2)
   let out = '', scriptPath = '', symbolName = ''
@@ -524,6 +574,7 @@ export function run(argv: string[]): number | Promise<number> {
   let frame = 0, scale = 2, steps = 0, pad = 24
   let scaleAuto = false
   let seed: number | undefined
+  let since = ''
   let bboxMode: 'all' | 'frame0' = 'all'
   let assetMode: AssetMode = 'inline'
   const vars: Record<string, number> = {}
@@ -546,6 +597,8 @@ export function run(argv: string[]): number | Promise<number> {
     else if (a === '--pad') pad = Math.max(0, Number(args[++i] ?? '24') || 0)
     else if (a === '--bbox') bboxMode = args[++i] === 'frame0' ? 'frame0' : 'all'
     else if (a === '--frame') frame = Number(args[++i] ?? '0') || 0
+    else if (a === '--since') since = args[++i] ?? ''
+    else if (a === '--all') { /* read by --since */ }
     else if (a === '--seed') { const v = Number(args[++i]); if (Number.isFinite(v)) seed = v }
     else if (a === '--steps') steps = Math.max(0, Number(args[++i] ?? '0') || 0)
     else if (a === '--scale') { const v = args[++i] ?? '2'; if (v === 'auto') scaleAuto = true; else scale = Number(v) || 2 }
@@ -559,6 +612,7 @@ export function run(argv: string[]): number | Promise<number> {
   const filePath = resolve(positional[0])
   if (!existsSync(filePath)) { process.stderr.write(`flatc: not found: ${filePath}\n`); return 1 }
 
+  if (since) return sinceReport(positional.map((f) => resolve(f)), since, args.includes('--all'))
   const explicitFlats = positional.slice(1)
   if (doPreview) return previewOnce(filePath, symbolName, out, frame, vars, scale, steps, doRender, pad, bboxMode, setSpec, scaleAuto)
   if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps, scaleAuto, noLibs, setSpec, explicitFlats)

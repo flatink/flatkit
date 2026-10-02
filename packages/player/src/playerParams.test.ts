@@ -77,3 +77,60 @@ describe('FlatPlayer — a `color` param written while the scene runs', () => {
     expect(fillsOf('every frame {\n  B0.fond = go + 3\n}')).toEqual(['#cc3333', '#3366cc'])
   })
 })
+
+// Asked for by a host that drives a symbol's params from its own controls: it reached the private method
+// through a cast, built DSL literals by hand, and a rename would have broken it without a compile error.
+describe('FlatPlayer.setParam — the host sets an instance param', () => {
+  const [gauge] = parseFlat([
+    'symbol "Jauge" {', '  timeline 24 24', '  params {', '    number niveau = 0 range 0 1', '    bool actif = false', '    text titre = "Niveau"', '    color teinte = #3366cc', '  }',
+    '  states porte { fermee at 0   ouverte at 24   initial fermee   transition 0 }',
+    '  layer "l" {', '    rect 0 0 40 10 fill teinte', '    text titre at 0,20 font "sans-serif" size 12 align left line 1.2 color #000000 box 80 16', '  }', '}', '',
+  ].join('\n'))
+  const make = () => {
+    const r = recorder()
+    const doc = parseProgramFull('size 200 100\nscene {\n  layer "c" {\n  }\n}\n') as unknown as Doc
+    doc.layers[0].items.push({ id: 'j', kind: 'instance', name: 'J', transform: IDENTITY, symbolId: gauge.id })
+    doc.symbols = [gauge]
+    const pl = new FlatPlayer(r.canvas, doc, { input: false, audio: false })
+    const numbers = () => (pl as unknown as { paramsForInstance(id: string): Record<string, number> | undefined }).paramsForInstance('j') ?? {}
+    return { pl, r, numbers }
+  }
+
+  it('a number, a boolean and a state, by their natural values', () => {
+    const { pl, numbers } = make()
+    expect(pl.setParam('J', 'niveau', 0.4)).toBe(true)
+    expect(pl.setParam('J', 'actif', true)).toBe(true)
+    expect(pl.setParam('J', 'porte', 'ouverte')).toBe(true)
+    expect(numbers()).toEqual({ niveau: 0.4, actif: 1, porte: 1 })
+  })
+  it('a number is clamped to the declared range, as in the scene', () => {
+    const { pl, numbers } = make()
+    pl.setParam('J', 'niveau', 7)
+    expect(numbers().niveau).toBe(1)
+  })
+  it('a colour, and a text given RAW — no quoting, no escaping', () => {
+    const { pl, r } = make()
+    expect(pl.setParam('J', 'teinte', '#33aa33')).toBe(true)
+    expect(pl.setParam('J', 'titre', 'She said "50 %" \\ done')).toBe(true)
+    r.reset(); pl.render()
+    expect(r.seen.fills).toEqual(['#33aa33'])
+    expect(r.seen.texts).toEqual(['She said "50 %" \\ done'])
+  })
+  it('paints the change by itself', () => {
+    const { pl, r } = make()
+    r.reset()
+    pl.setParam('J', 'titre', 'Plein')
+    expect(r.seen.texts).toEqual(['Plein'])
+  })
+  it('says no — and changes nothing — for an unknown instance, an undeclared param or a value of the wrong kind', () => {
+    const { pl, r, numbers } = make()
+    expect(pl.setParam('Absente', 'niveau', 1)).toBe(false)
+    expect(pl.setParam('J', 'nivo', 1)).toBe(false)
+    expect(pl.setParam('J', 'teinte', 'rouge')).toBe(false)
+    expect(pl.setParam('J', 'niveau', 'beaucoup')).toBe(false)
+    expect(pl.setParam('J', 'porte', 'entrouverte')).toBe(false)
+    expect(numbers()).toEqual({})
+    r.reset(); pl.render()
+    expect([r.seen.fills, r.seen.texts]).toEqual([['#3366cc'], ['Niveau']])
+  })
+})

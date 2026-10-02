@@ -1081,7 +1081,7 @@ export class FlatPlayer {
       if (this.reads.has(name)) { this.dirty = true; this.moving = true }
     },
     fillVar: (name, count, value) => this.setVarLive(name, new Array<number>(Math.max(0, Math.min(MAX_FILL, Math.floor(count)))).fill(value)),
-    setParam: (target, param, value) => this.setParam(target, param, value),
+    setParam: (target, param, value) => { this.applyParam(target, param, value) },
     callProc: (name, args) => this.callProc(name, args),
     evalNumber: (src) => this.evalNumber(src),
     emit: (name, value, fields) => this.emit(name, value, fields),
@@ -1748,9 +1748,36 @@ export class FlatPlayer {
   /** `Door.door = open`: set an instance's exposed param. Resolves a state NAME via the symbol's state
    *  machine (else evaluates the expression), and starts a transition over the state machine's `transition`
    *  frames (snap if 0). Drives the instance's local playhead through `paramsForInstance`. */
-  private setParam(target: string, param: string, raw: string): void {
+  /**
+   * Sets an exposed param of an instance FROM THE HOST: a control of the page that drives a symbol.
+   *  - `number` param: a number (clamped to its `range`);
+   *  - `bool` param: `true` / `false`;
+   *  - a state machine: the NAME of a state (the transition plays), or its numeric value;
+   *  - `color` param: `'#rrggbb'` (or `#rgb`, `#rrggbbaa`);
+   *  - `text` param: the text AS IT IS — no quoting, no escaping.
+   * Returns `false`, and changes nothing, when no instance of the scene has that name, when its symbol
+   * declares no such param or state, or when the value is not of the param's kind. Paints the change.
+   */
+  setParam(instance: string, param: string, value: number | boolean | string): boolean {
+    const inst = this.instanceByName(instance)
+    if (!inst) return false
+    const sym = getSymbol(this.doc, inst.symbolId)
+    const def = sym?.params?.find((p) => p.name === param)
+    const sm = stateMachineByParam(sym?.states, param)
+    if (!def && !sm) return false
+    if (def?.type === 'text') return this.applyParam(instance, param, '', String(value))
+    if (def?.type === 'color') return typeof value === 'string' && this.applyParam(instance, param, value)
+    if (typeof value === 'boolean') return this.applyParam(instance, param, value ? '1' : '0')
+    // A string is a state name, or a number written out — never an expression: that is the scene's language.
+    if (typeof value === 'string' && !(sm?.states.some((st) => st.name === value.trim())) && !(value.trim() !== '' && Number.isFinite(Number(value)))) return false
+    if (typeof value === 'number' && !Number.isFinite(value)) return false
+    return this.applyParam(instance, param, String(value))
+  }
+  /** The write behind `Inst.param = value` (a scene action, `raw` in the scene's language) and behind
+   *  `setParam` (the host; `text` = a text param's value as it is). Returns whether the value was taken. */
+  private applyParam(target: string, param: string, raw: string, text?: string): boolean {
     const inst = this.instanceByName(target)
-    if (!inst) return // unknown instance → no-op
+    if (!inst) return false // unknown instance → no-op
     const sym = getSymbol(this.doc, inst.symbolId)
     const sm = stateMachineByParam(sym?.states, param)
     const trimmed = raw.trim()
@@ -1761,19 +1788,20 @@ export class FlatPlayer {
     if (typed) {
       const value = typed.type === 'color'
         ? (/^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(trimmed) ? trimmed : undefined)
+        : text !== undefined ? text
         : (/^"(?:[^"\\]|\\.)*"$/.test(trimmed) ? trimmed.slice(1, -1).replace(/\\(.)/g, (_m, c: string) => (c === 'n' ? '\n' : c)) : undefined)
-      if (value === undefined) return
+      if (value === undefined) return false
       let st = this.stringRt.get(inst.id)
       if (!st) { st = { color: {}, text: {} }; this.stringRt.set(inst.id, st) }
-      if (st[typed.type as 'color' | 'text'][param] === value) return
+      if (st[typed.type as 'color' | 'text'][param] === value) return true
       st[typed.type as 'color' | 'text'][param] = value
       this.imageEpoch++ // a baked (tinted/filtered) composite of this instance is stale
       this.dirty = true
       if (this.actionDepth === 0) this.render()
-      return
+      return true
     }
     let targetVal = sm && sm.states.some((s) => s.name === trimmed) ? stateValueOf(sm, trimmed) : this.evalNumber(raw)
-    if (!Number.isFinite(targetVal)) return
+    if (!Number.isFinite(targetVal)) return false
     // Clamp a declared number param to its range (consistent with call-site/default resolution).
     const def = sym?.params?.find((p) => p.name === param && p.type === 'number')
     if (def?.min != null && def.max != null && def.min <= def.max) targetVal = Math.max(def.min, Math.min(def.max, targetVal))
@@ -1781,7 +1809,7 @@ export class FlatPlayer {
     // Writing the value a param is ALREADY heading to changes nothing: mirroring a variable into a state
     // from `every frame` used to restart the transition on every step (from the current value, with zero
     // elapsed time), so an ease with a flat start never left its origin.
-    if (params?.get(param)?.target === targetVal) return
+    if (params?.get(param)?.target === targetVal) return true
     if (!params) { params = new Map(); this.paramRt.set(inst.id, params) }
     const cur = params.get(param)?.value ?? (sm ? initialStateValue(sm) : 0)
     const dur = Math.max(0, sm?.transition ?? 0)
@@ -1793,6 +1821,7 @@ export class FlatPlayer {
     // scene driving twenty components each frame drew itself twenty-one times. Nor is the named-objects
     // cache dropped: it resolves the scene without the instances' runtime params, so a write cannot change it.
     if (this.actionDepth === 0) this.render()
+    return true
   }
 
   /** Current values of an instance's params (for drawScene → drives the local frame + the subtree scope). */

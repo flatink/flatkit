@@ -1126,6 +1126,35 @@ function paintLeafCached(
   paintLeaf(ctx, tint ?? undefined, filters, opacity, devBBox, scale, draw, filterStr, slot)
 }
 
+/**
+ * `c.fill(path, 'evenodd')`, with a guard for ONE renderer. skia-canvas 3.x (Node: `flatc --render`, a
+ * host rendering video frames) discards everything drawn so far when a fill "covers the canvas" — and
+ * decides it from the path's LOCAL bounds, before the context transform. A shape much larger than the
+ * canvas and moved by its group, so that it covers only part of the frame, wiped the background behind it:
+ * half the picture came out transparent. When the local bounds contain the canvas under a transform, the
+ * path is filled in DEVICE space under an identity transform instead, where its bounds are the real ones.
+ * Solid fills only (a gradient lives in the transform it was created under). A browser's Path2D has no
+ * `bounds`, so nothing of this runs there; skia-canvas 4 no longer needs it.
+ */
+type SkiaPath = Path2D & { bounds?: { left: number; top: number; right: number; bottom: number }; transform?: (m: DOMMatrix) => Path2D }
+function fillPath(c: CanvasRenderingContext2D, path: Path2D): void {
+  const b = (path as SkiaPath).bounds
+  if (b !== undefined && typeof c.fillStyle === 'string' && typeof (path as SkiaPath).transform === 'function') {
+    const cv = c.canvas
+    if (cv && b.left <= 0 && b.top <= 0 && b.right >= cv.width && b.bottom >= cv.height) {
+      const m = c.getTransform()
+      if (m.a !== 1 || m.b !== 0 || m.c !== 0 || m.d !== 1 || m.e !== 0 || m.f !== 0) {
+        c.save()
+        c.setTransform(1, 0, 0, 1, 0, 0)
+        c.fill((path as SkiaPath).transform!(m), 'evenodd')
+        c.restore()
+        return
+      }
+    }
+  }
+  c.fill(path, 'evenodd')
+}
+
 /** Paints a region (fill + outline) into `c`. Module function (zero allocation per call). */
 function paintRegion(c: CanvasRenderingContext2D, reg: Region, colorParams?: Record<string, string>) {
   const trim = strokeWindow(reg)
@@ -1134,7 +1163,7 @@ function paintRegion(c: CanvasRenderingContext2D, reg: Region, colorParams?: Rec
   const path = !reg.noFill || !trim ? regionPath(reg) : null
   if (!reg.noFill && path) {
     c.fillStyle = fillStyleFor(c, reg, colorParams)
-    c.fill(path, 'evenodd')
+    fillPath(c, path)
   }
   if (reg.stroke) {
     const line = trim ? trimmedPath(reg, trim) : path

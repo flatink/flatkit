@@ -97,3 +97,27 @@ describe('params at render time', () => {
     expect(errs.join('')).toMatch(/no symbol exposes a param named "nope"/)
   }, 60_000)
 })
+
+// Reported by a consumer rendering video frames in Node: an opaque shape much larger than the canvas,
+// moved by its group so that it covers only part of the frame, wiped the background behind it — more than
+// half of the picture came out transparent. skia-canvas 3.x discards "the vector shapes below" a fill that
+// covers the canvas, and decides it from the path's LOCAL bounds, before the context transform. Browsers
+// are not concerned; skia-canvas 4 (release candidate at the time of writing) is fixed.
+describe('rendering — a large opaque shape, offset by its group, does not wipe what is behind it', () => {
+  const frame = async (shape: string) => {
+    const src = `size 960 540\nbackground #0b0f1a\ntimeline 30 30\n\nscene {\n  layer "a" {\n    group "G" at 0,0 pivot 0,0 {\n      layer "c" {\n        ${shape}\n      }\n    }\n  }\n}\nobject "G" {\n  dx = 600\n  dy = 300\n}\n`
+    const skiaPkg = 'skia-canvas'
+    const { loadImage, Canvas } = (await import(skiaPkg)) as { loadImage: (b: Buffer) => Promise<{ width: number; height: number }>; Canvas: new (w: number, h: number) => { getContext(t: '2d'): CanvasRenderingContext2D } }
+    const img = await loadImage(png(await renderDocToPng(compileFlatpack(src), { scale: 1 })))
+    const g = new Canvas(img.width, img.height).getContext('2d')
+    g.drawImage(img as unknown as CanvasImageSource, 0, 0)
+    return (x: number, y: number) => [...g.getImageData(x, y, 1, 1).data]
+  }
+  for (const [name, shape] of [['a rounded rectangle', 'rect -200 -200 2400 1500 60 fill #c9d0db'], ['a plain rectangle', 'rect -200 -200 2400 1500 fill #c9d0db'], ['a polygon written as a path', 'path "M-200 -200 L2200 -200 L2200 1300 L-200 1300 Z" fill #c9d0db']] as const) {
+    it(`${name}: the background shows where the shape is not`, async () => {
+      const at = await frame(shape)
+      expect(at(100, 50)).toEqual([11, 15, 26, 255]) // left of and above the shape: background
+      expect(at(900, 500)).toEqual([201, 208, 219, 255]) // inside the shape
+    })
+  }
+})
