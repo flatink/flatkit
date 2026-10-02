@@ -423,9 +423,10 @@ export function normalizeClosedForText(path: Path, tol = 0.25): Path {
 // ── Hybrid render: path → Bezier cubics ──────────────────────────────────────
 
 /**
- * Subpath → Bezier curves for render/export. Honors explicit handles; for missing tangents, derives
- * them via Catmull-Rom with sharp-angle preservation (logic identical to `smooth.ts`). `cornerCos` =
- * cosine of the threshold deviation (0.5 = 60°).
+ * Subpath → Bezier curves for render/export. A subpath with explicit handles renders LITERALLY (a missing
+ * handle is a straight line). A subpath with none is free-hand material: its tangents are derived via
+ * Catmull-Rom with sharp-angle preservation (logic identical to `smooth.ts`). `cornerCos` = cosine of
+ * the threshold deviation (0.5 = 60°).
  *
  * For a CLOSED subpath without handles, output === `smoothClosedRing(anchors)`.
  */
@@ -454,10 +455,16 @@ function computeBezier(sub: Subpath, cornerCos: number): { start: Point; segs: B
   const prev = (i: number) => (closed ? (i - 1 + n) % n : Math.max(0, i - 1))
   const next = (i: number) => (closed ? (i + 1) % n : Math.min(n - 1, i + 1))
 
+  // A subpath that carries ANY explicit handle was authored as curves and lines (a rounded rectangle, a
+  // pill, an `L` between two `C`): it renders literally, so a missing handle means "straight to the
+  // neighbour", never a tangent to invent. Only a subpath with no handle at all is free-hand material,
+  // and smoothed. Without this, a line running into an arc — a junction that is smooth by construction —
+  // was handed a Catmull-Rom tangent, and the straight sides bulged.
+  const literal = seg.some((s) => s.inHandle !== undefined || s.outHandle !== undefined)
   // Hard corner if the deviation between edges exceeds the threshold (same math as smooth.ts).
   const corner: boolean[] = new Array(n)
   for (let i = 0; i < n; i++) {
-    if (!closed && (i === 0 || i === n - 1)) { corner[i] = true; continue } // endpoints of an open path = corners
+    if (literal || (!closed && (i === 0 || i === n - 1))) { corner[i] = true; continue } // endpoints of an open path = corners
     const p = A(prev(i)); const c = A(i); const q = A(next(i))
     const ax = c.x - p.x, ay = c.y - p.y
     const bx = q.x - c.x, by = q.y - c.y

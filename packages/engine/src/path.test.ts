@@ -18,7 +18,7 @@ import {
   pathArcLength,
   type Path,
 } from './path'
-import { circlePath, parsePathData } from './svgPath'
+import { circlePath, parsePathData, rectPath } from './svgPath'
 
 const square = [
   { x: 0, y: 0 },
@@ -371,5 +371,51 @@ describe('trimPath (stroke extent by arc length)', () => {
       expect(pieces[0].pts.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))).toBe(true)
     }
     expect(len(trimPath(line, NaN, 0.5)[0].pts)).toBeCloseTo(50, 6) // only the broken bound falls back
+  })
+})
+
+// flatink/flatink#8 — the hybrid model is: a subpath WITHOUT handles is free-hand material and is
+// smoothed; a subpath WITH handles renders its literal curves. But in a subpath that mixes lines and
+// curves, a vertex with no handle on its line side was still handed a Catmull-Rom tangent whenever the
+// junction was smooth — which a line running into an arc always is. The straight sides of every rounded
+// rectangle bulged.
+describe('pathToBezier — straight segments next to curves stay straight', () => {
+  /** Is the cubic p0 → (c1, c2) → p a straight line (both controls on the chord)? */
+  const straight = (p0: { x: number; y: number }, s: { c1: { x: number; y: number }; c2: { x: number; y: number }; p: { x: number; y: number } }): boolean => {
+    const cross = (a: { x: number; y: number }) => Math.abs((s.p.x - p0.x) * (a.y - p0.y) - (s.p.y - p0.y) * (a.x - p0.x))
+    return cross(s.c1) < 1e-9 && cross(s.c2) < 1e-9
+  }
+  /** For each segment of the first subpath: is it authored as a line (no handle on either end)? is it drawn straight? */
+  const lines = (path: Path) => {
+    const sub = path.subpaths[0]
+    const bz = pathToBezier(sub)!
+    const n = sub.segments.length
+    return bz.segs.map((s, i) => {
+      const a = sub.segments[i], b = sub.segments[(i + 1) % n]
+      return { authoredLine: !a.outHandle && !b.inHandle, drawnStraight: straight(i === 0 ? bz.start : bz.segs[i - 1].p, s) }
+    })
+  }
+  it('a rounded rectangle: its four sides are straight', () => {
+    const sides = lines(rectPath(20, 20, 220, 80, 30)).filter((s) => s.authoredLine)
+    expect(sides).toHaveLength(4)
+    expect(sides.every((s) => s.drawnStraight)).toBe(true)
+  })
+  it('a pill written by hand with `L` and `A`', () => {
+    const sides = lines(parsePathData('M50 20 L210 20 A30 30 0 0 1 210 80 L50 80 A30 30 0 0 1 50 20 Z')).filter((s) => s.authoredLine)
+    expect(sides).toHaveLength(2)
+    expect(sides.every((s) => s.drawnStraight)).toBe(true)
+  })
+  it('a line between two `C` curves, in an open path', () => {
+    const sides = lines(parsePathData('M0 0 C10 -10 20 -10 30 0 L60 20 C70 30 80 30 90 20')).filter((s) => s.authoredLine)
+    expect(sides).toHaveLength(1)
+    expect(sides[0].drawnStraight).toBe(true)
+  })
+  it('the curves themselves are untouched', () => {
+    const before = pathToBezier(parsePathData('M0 0 C10 -10 20 -10 30 0 C40 10 50 10 60 0').subpaths[0])!
+    expect(before.segs[0]).toEqual({ c1: { x: 10, y: -10 }, c2: { x: 20, y: -10 }, p: { x: 30, y: 0 } })
+  })
+  it('free-hand material — a subpath with no handle at all — is still smoothed', () => {
+    const blob = lines(polygonsToPath([[{ x: 0, y: 0 }, { x: 30, y: -8 }, { x: 60, y: 0 }, { x: 68, y: 30 }, { x: 60, y: 60 }, { x: 30, y: 68 }, { x: 0, y: 60 }, { x: -8, y: 30 }]]))
+    expect(blob.some((s) => !s.drawnStraight)).toBe(true)
   })
 })
