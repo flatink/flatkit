@@ -1111,3 +1111,21 @@ describe('programDoc — the arrays of a `polyline`', () => {
     expect(none.some((m) => /polyline.*"tz".*not declared/.test(m))).toBe(true)
   })
 })
+
+// flatink/flatink#8 — a long run of points with soft turns and no curve is very likely material, or a
+// sampled curve: written before `smooth` existed, it used to be rounded and is now drawn as straight segments.
+describe('programDoc — a path that looks like material and does not say `smooth`', () => {
+  const spiral = Array.from({ length: 40 }, (_, i) => `${i === 0 ? 'M' : 'L'}${(100 + (20 + i) * Math.cos(i / 3)).toFixed(1)} ${(100 + (20 + i) * Math.sin(i / 3)).toFixed(1)}`).join(' ')
+  const prog = (line: string) => `size 200 200\nscene {\n  layer "c" {\n    ${line}\n  }\n}\n`
+  const msgs = (src: string) => lintDoc(compileFlatpack(src), src).map((d) => d.diag.message).filter((m) => /smooth/.test(m))
+  it('is pointed out, with the word to add', () => {
+    const ws = msgs(prog(`path "${spiral}" nofill stroke #333333 2`))
+    expect(ws).toHaveLength(1)
+    expect(ws[0]).toMatch(/40 points.*straight.*`smooth`/)
+  })
+  it('says nothing once it does, nor for a small polygon or a path with curves', () => {
+    expect(msgs(prog(`path "${spiral}" smooth nofill stroke #333333 2`))).toEqual([])
+    expect(msgs(prog('path "M20 100 L60 40 L160 40 L200 100 Z" fill #333333'))).toEqual([])
+    expect(msgs(prog('rect 10 10 100 60 20 fill #333333'))).toEqual([])
+  })
+})

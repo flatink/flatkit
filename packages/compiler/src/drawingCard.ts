@@ -23,7 +23,8 @@ and groups (which nest their own layers). Coordinates are PIXELS in the parent's
 circle  <cx> <cy> <r>
 ellipse <cx> <cy> <rx> <ry>
 rect    <x> <y> <w> <h> [<r>]              // r = rounded corners (or <rx> <ry> for distinct)
-path    "M0 0 C40 -20 80 20 120 0 Z"       // raw SVG path data — total freedom
+path    "M0 0 C40 -20 80 20 120 0 Z"       // raw SVG path data — total freedom; L/H/V are STRAIGHT lines
+path    "M0 0 L8 3 L15 9 …" smooth         // free-hand material / a sampled curve: gentle turns are rounded
 circle 100 100 40 as "Ring"                // name it (right after the geometry) → addressable
 polyline <xs> <ys> [count "<expr>"] [closed] // points = two ARRAY variables, read every frame (a trajectory, a computed curve)
 

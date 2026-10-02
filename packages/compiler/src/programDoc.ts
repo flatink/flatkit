@@ -20,7 +20,7 @@ import { objectNames } from '@flatkit/engine/sceneRefs'
 import { behaviorRegions } from '@flatkit/engine/flatFormat'
 import { itemBBox, itemBoundsById, dropZoneBounds, transformBBox, revealGrid } from '@flatkit/engine/groups'
 import { IDENTITY, apply, compose } from '@flatkit/engine/transform'
-import { makePathSampler } from '@flatkit/engine/path'
+import { makePathSampler, softVertexCount } from '@flatkit/engine/path'
 import { bboxIntersects } from '@flatkit/engine/bbox'
 import { lint, localVariables, type LintContext } from './lint'
 import { forEachAction, forEachExpression } from './docWalk'
@@ -307,6 +307,29 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
       if (by) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `parameter "${p}" of fn ${f.name} is hidden by ${by} — the body reads that, never the argument. Rename it` } })
     }
   }
+  // (b sexies) A long run of points with gentle turns and no curve, read as straight segments: very likely
+  //     free-hand material or a sampled curve written before `smooth` existed. It used to be rounded.
+  const looksLikeMaterial = (r: Region): number => {
+    for (const sp of r.path.subpaths) {
+      const n = sp.segments.length
+      if (n < 12) continue
+      // literal BY THE MARKER only: every handle sits on its anchor (a real curve has handles elsewhere)
+      const handles = sp.segments.flatMap((sg) => [[sg.inHandle, sg.anchor], [sg.outHandle, sg.anchor]] as const).filter(([h]) => h !== undefined)
+      if (!handles.length || handles.some(([h, a]) => h!.x !== a.x || h!.y !== a.y)) continue
+      if (softVertexCount(sp) >= n * 0.75) return n
+    }
+    return 0
+  }
+  const scanMaterial = (items: Item[]): void => {
+    for (const it of items) {
+      if (isRegion(it) && !it.poly) {
+        const n = looksLikeMaterial(it)
+        if (n) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `a path of ${n} points with no curve is drawn with straight segments — if it is free-hand material or a sampled curve, write \`smooth\` after its path data (\`path "…" smooth\`) to have it rounded` } })
+      }
+      if (isGroup(it)) for (const l of it.layers) { scanMaterial(l.items); for (const c of l.cels ?? []) scanMaterial(c.matter ?? []) }
+    }
+  }
+  for (const l of [...doc.layers, ...(doc.symbols ?? []).flatMap((sy) => sy.layers)]) { scanMaterial(l.items); for (const c of l.cels ?? []) scanMaterial(c.matter ?? []) }
   // (b quinquies) A `polyline` names two ARRAY variables. Anything else resolves to an empty shape: nothing
   //     is drawn, and nothing says why.
   const polyNames = new Set<string>()

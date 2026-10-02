@@ -24,7 +24,14 @@ ellipse <cx> <cy> <rx> <ry>
 rect    <x> <y> <w> <h>            # · <r> for uniform rounded corners · <rx> <ry> for distinct
 path    "M0 0 L10 0 L10 10 Z"      # raw SVG path data
 circle  100 100 40 as "Ring"       # name a shape (right after the geometry) → addressable, e.g. text `along "Ring"`
+path    "M0 0 L8 3 L15 9 …" smooth # free-hand material: rounded wherever the outline turns gently
 ```
+
+A `path` means what its data says: `L`, `H` and `V` are **straight lines**, next to a curve or on their own
+— a hexagon has six flat sides. **`smooth`**, right after the path data, reads the path as **free-hand
+material** instead: its points are joined by a curve that rounds every gentle turn (under 60°) and keeps
+the sharp ones. It is what the editor's brush exports, and what a curve sampled as many small `L` steps
+wants. `flatc --check` points at a long run of points with gentle turns that does not say `smooth`.
 
 ### Fill, stroke, opacity
 

@@ -14,7 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Asset, Doc, Folder, FuncDef, Group, Image, Instance, InstancePlayback, Item, Layer, ParamDef, Region, StateAnchor, StateMachine, SymbolDef, Text } from '@flatkit/types'
 import type { Path } from './path'
-import { normalizeClosedForText } from './path'
+import { normalizeClosedForText, isSmoothedMaterial } from './path'
 import type { Paint, Stop, Tint } from './paint'
 import type { Filter } from './filters'
 import type { Transform } from './transform'
@@ -56,7 +56,9 @@ export function pathToData(path: Path): string {
       const a = segs[i]
       const b = segs[(i + 1) % segs.length]
       const isClosingEdge = sp.closed && i === edges - 1
-      const straight = !a.outHandle && !b.inHandle
+      // A handle sitting ON its anchor is a line (it is also how a subpath of lines is marked literal).
+      const on = (h: { x: number; y: number } | undefined, at: { x: number; y: number }) => !h || (h.x === at.x && h.y === at.y)
+      const straight = on(a.outHandle, a.anchor) && on(b.inHandle, b.anchor)
       if (isClosingEdge && straight) break // `Z` closes with a straight line -> no need to make it explicit
       if (straight) out.push(`L${n(b.anchor.x)} ${n(b.anchor.y)}`)
       else {
@@ -137,7 +139,9 @@ type Ctx = { symName: (id: string) => string; inlineExpr: boolean; folderPath?: 
 function printRegion(r: Region, d: string): string {
   let s = r.poly
     ? `polyline ${r.poly.xs} ${r.poly.ys}${r.poly.count !== undefined ? ` count ${/^-?[\d.]+$/.test(r.poly.count) ? r.poly.count : q(r.poly.count)}` : ''}${r.poly.closed ? ' closed' : ''}`
-    : `path "${d}"`
+    // `smooth`: free-hand material (no handle anywhere, soft vertices) — what the editor's brush produces.
+    // Without the word a path of lines is read back as straight segments, and the shape would change.
+    : `path "${d}"${r.path.subpaths.some(isSmoothedMaterial) ? ' smooth' : ''}`
   if (r.name) s += ` as ${q(r.name)}` // stable name (addressable, e.g. `text … along "<id>"`)
   if (r.noFill) s += ' nofill'
   else if (r.fillParam) s += ` fill ${r.fillParam}` // fill bound to a symbol color param
@@ -1235,7 +1239,7 @@ function expandHoldCels(cels: Cel[]): void {
 }
 
 /** Words that end the two names of a `polyline` (they start its options or its paint). */
-const POLY_WORDS = new Set(['count', 'closed', 'as', 'fill', 'nofill', 'stroke', 'draw', 'opacity', 'nohit', 'filter'])
+const POLY_WORDS = new Set(['count', 'closed', 'smooth', 'as', 'fill', 'nofill', 'stroke', 'draw', 'opacity', 'nohit', 'filter'])
 
 /** Options that belong to a `stroke`, not to the item carrying it — see the ordering error in `eat`. */
 const STROKE_OPTIONS = new Set(['cap', 'join', 'miter', 'dash'])
@@ -1600,7 +1604,11 @@ class FlatParser {
       const ry = this.isNum() ? this.num() : rx
       return rectPath(x, y, w, h, rx, ry)
     }
-    this.eat('path'); return parsePathData(this.str())
+    this.eat('path')
+    const d = this.str()
+    // `path "…" smooth`: free-hand material — its lines are rounded where the outline turns gently.
+    const smooth = this.is('smooth') ? (this.next(), true) : false
+    return parsePathData(d, { smooth })
   }
   /** `polyline <xs> <ys> [count <n|"expr">] [closed]`: a shape whose points are two array variables. */
   private polyline(): NonNullable<Region['poly']> {

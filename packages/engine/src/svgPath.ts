@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Point } from '@flatkit/types'
 import type { Path, Seg, Subpath } from './path'
+import { asStraightLines } from './path'
 
 /** Split a `d` command string into command letters and numbers. */
 function tokenize(d: string): (string | number)[] {
@@ -95,8 +96,14 @@ function dropClosingDup(segs: Seg[], start: Point): Seg[] {
   return segs
 }
 
-/** Parse an SVG `d` attribute into a FlatInk `Path` (all curves → cubics). */
-export function parsePathData(d: string): Path {
+/**
+ * Parse an SVG `d` attribute into a FlatInk `Path` (all curves → cubics). A line is a LINE: a subpath
+ * made only of `L`/`H`/`V` is drawn with straight sides, soft angles included. `smooth` reads the path as
+ * free-hand MATERIAL instead — vertices without handles, rounded by the renderer wherever the outline
+ * turns gently — which is what the editor's brush produces and what the `smooth` word of the text
+ * format asks for.
+ */
+export function parsePathData(d: string, opts: { smooth?: boolean } = {}): Path {
   const t = tokenize(d)
   let i = 0
   const subpaths: Subpath[] = []
@@ -176,7 +183,8 @@ export function parsePathData(d: string): Path {
     }
   }
   flushOpen()
-  return { subpaths: subpaths.filter((sp) => sp.segments.length > 0) }
+  const kept = subpaths.filter((sp) => sp.segments.length > 0)
+  return { subpaths: opts.smooth ? kept : kept.map(asStraightLines) }
 }
 
 // ── Basic shape builders (reuse parsePathData / the arc for curves) ──

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { parsePathData, ellipsePath, rectPath, polyPath, linePath } from './svgPath'
-import { pathToPolygons, pathBBox } from './path'
+import { pathToPolygons, pathBBox, pathToBezier } from './path'
 
 describe('parsePathData', () => {
   it('M/L/Z → closed subpath, correct anchors, no handles', () => {
@@ -88,5 +88,39 @@ describe('shape builders', () => {
     const l = linePath(0, 0, 10, 10)
     expect(l.subpaths[0].closed).toBe(false)
     expect(pathToPolygons(l)[0].length).toBe(2)
+  })
+})
+
+// flatink/flatink#8, second half — `L` is a LINE. A path made only of lines used to be read as free-hand
+// material and rounded at every vertex turning by less than 60 degrees: a hexagon written by hand came
+// out soft. Material is now what says so (`{ smooth: true }`, the `smooth` word of the text format).
+describe('parsePathData — a path made only of lines', () => {
+  const straightEverywhere = (path: ReturnType<typeof parsePathData>): boolean => {
+    const bz = pathToBezier(path.subpaths[0])!
+    return bz.segs.every((s, i) => {
+      const p0 = i === 0 ? bz.start : bz.segs[i - 1].p
+      const cross = (a: { x: number; y: number }) => Math.abs((s.p.x - p0.x) * (a.y - p0.y) - (s.p.y - p0.y) * (a.x - p0.x))
+      return cross(s.c1) < 1e-9 && cross(s.c2) < 1e-9
+    })
+  }
+  const TRAPEZOID = 'M20 100 L60 40 L160 40 L200 100 Z' // two vertices turn by less than 60 degrees
+  const HEXAGON = 'M100 0 L50 87 L-50 87 L-100 0 L-50 -87 L50 -87 Z'
+  it('is drawn with straight sides, soft angles included', () => {
+    expect(straightEverywhere(parsePathData(TRAPEZOID))).toBe(true)
+    expect(straightEverywhere(parsePathData(HEXAGON))).toBe(true)
+    expect(straightEverywhere(parsePathData('M0 0 L40 10 L80 30 L120 60'))).toBe(true) // open
+  })
+  it('`smooth` keeps it as free-hand material: the soft vertices are rounded', () => {
+    expect(straightEverywhere(parsePathData(TRAPEZOID, { smooth: true }))).toBe(false)
+    expect(parsePathData(TRAPEZOID, { smooth: true }).subpaths[0].segments.every((s) => !s.inHandle && !s.outHandle)).toBe(true)
+  })
+  it('a polygon whose corners are all sharp carries nothing extra', () => {
+    const square = parsePathData('M0 0 L10 0 L10 10 L0 10 Z')
+    expect(square.subpaths[0].segments).toEqual([{ anchor: { x: 0, y: 0 } }, { anchor: { x: 10, y: 0 } }, { anchor: { x: 10, y: 10 } }, { anchor: { x: 0, y: 10 } }])
+  })
+  it('the anchors are the points that were written, either way', () => {
+    const pts = (p: ReturnType<typeof parsePathData>) => p.subpaths[0].segments.map((s) => [s.anchor.x, s.anchor.y])
+    expect(pts(parsePathData(TRAPEZOID))).toEqual([[20, 100], [60, 40], [160, 40], [200, 100]])
+    expect(pts(parsePathData(TRAPEZOID, { smooth: true }))).toEqual(pts(parsePathData(TRAPEZOID)))
   })
 })

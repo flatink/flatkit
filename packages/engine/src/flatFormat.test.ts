@@ -1888,3 +1888,31 @@ describe('program — `focusable` in an `object` block (flatink/flatink#35)', ()
     expect(itemOnlyUnitDiagnostics(src('  opacity = 1', 'focusable\n')).map((d) => d.diag.message).join(' ')).toMatch(/focusable.*object/)
   })
 })
+
+describe('`path "…" smooth` — free-hand material says so (flatink/flatink#8)', () => {
+  const TRAPEZOID = 'M20 100L60 40L160 40L200 100Z'
+  const shape = (line: string) => parseProgram(prog0('').replace('path "M0 0L10 0L10 10Z" fill #000000', line)).layers[0].items[0] as Region
+  const handles = (r: Region) => r.path.subpaths[0].segments.filter((s) => s.inHandle || s.outHandle).length
+  it('without the word, the lines are lines; with it, the path is material', () => {
+    expect(handles(shape(`path "${TRAPEZOID}" fill #000000`))).toBeGreaterThan(0)
+    expect(handles(shape(`path "${TRAPEZOID}" smooth fill #000000`))).toBe(0)
+  })
+  it('both print back as written', () => {
+    for (const line of [`path "${TRAPEZOID}" fill #000000`, `path "${TRAPEZOID}" smooth fill #000000`, `path "${TRAPEZOID}" smooth as "Blob" fill #000000`]) {
+      const once = printProgram(parseProgram(prog0('').replace('path "M0 0L10 0L10 10Z" fill #000000', line)))
+      expect(once).toContain(line)
+      expect(printProgram(parseProgram(once))).toBe(once)
+    }
+  })
+  it('material built by the editor (no handle anywhere, soft vertices) is exported WITH the word', () => {
+    const blob: Region = { id: 'b', color: '#000000', path: { subpaths: [{ closed: true, segments: [[20, 100], [60, 40], [160, 40], [200, 100]].map(([x, y]) => ({ anchor: { x, y } })) }] } }
+    const text = printFlat([{ id: 's', name: 'S', layers: [layer('l', 'c', [blob])] }])
+    expect(text).toContain(`path "${TRAPEZOID}" smooth`)
+    const back = parseFlat(text)[0].layers[0].items[0] as Region
+    expect(handles(back)).toBe(0) // still material after the round-trip
+  })
+  it('a shape with sharp corners only is printed as before, without it', () => {
+    expect(printProgram(parseProgram(prog0('')))).not.toContain('smooth')
+    expect(printProgram(parseProgram(prog0('').replace('path "M0 0L10 0L10 10Z" fill #000000', 'rect 0 0 40 20 fill #000000')))).not.toContain('smooth')
+  })
+})

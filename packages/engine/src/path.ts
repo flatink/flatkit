@@ -445,6 +445,46 @@ const CORNER_COS = 0.5
 // scene) — and so does every arc-length walk (`trace`, `draw`). CALLERS MUST TREAT THE RESULT AS READ-ONLY.
 const bezierCache = new WeakMap<Subpath, { start: Point; segs: BezierSeg[] } | null>()
 
+/** Is vertex `i` a hard corner by its ANCHORS alone (the edges turn by more than the threshold, or it is
+ *  an end of an open subpath)? What decides whether free-hand material is smoothed there. */
+function isCorner(sub: Subpath, i: number, cornerCos: number): boolean {
+  const seg = sub.segments, n = seg.length
+  if (!sub.closed && (i === 0 || i === n - 1)) return true // endpoints of an open path = corners
+  const p = seg[sub.closed ? (i - 1 + n) % n : i - 1].anchor, c = seg[i].anchor, q = seg[sub.closed ? (i + 1) % n : i + 1].anchor
+  const ax = c.x - p.x, ay = c.y - p.y
+  const bx = q.x - c.x, by = q.y - c.y
+  const la = Math.hypot(ax, ay) || 1
+  const lb = Math.hypot(bx, by) || 1
+  return (ax * bx + ay * by) / (la * lb) < cornerCos
+}
+
+/** How many vertices of a subpath WOULD be rounded if it were free-hand material — its anchors alone,
+ *  whatever handles it carries. 0 = smoothing it or not draws the same thing. */
+export function softVertexCount(sub: Subpath): number {
+  const n = sub.segments.length
+  if (n < 3) return 0
+  let k = 0
+  for (let i = 0; i < n; i++) if (!isCorner(sub, i, CORNER_COS)) k++
+  return k
+}
+const hasHandles = (sub: Subpath): boolean => sub.segments.some((s) => s.inHandle !== undefined || s.outHandle !== undefined)
+
+/** Is a subpath free-hand MATERIAL that the renderer rounds somewhere: no handle at all, and at least one
+ *  soft vertex? (With no soft vertex, material and straight lines draw the same.) */
+export const isSmoothedMaterial = (sub: Subpath): boolean => !hasHandles(sub) && softVertexCount(sub) > 0
+
+/**
+ * Marks a subpath made of lines as LITERAL — straight segments, soft angles included — when it would
+ * otherwise be read as material: one zero-length handle on its first vertex is enough, a subpath that
+ * carries any handle being rendered literally (see `pathToBezier`). A subpath that is already literal, or
+ * whose corners are all sharp, is returned untouched: nothing to say, and nothing added to the document.
+ */
+export function asStraightLines(sub: Subpath): Subpath {
+  if (!isSmoothedMaterial(sub)) return sub
+  const [first, ...rest] = sub.segments
+  return { closed: sub.closed, segments: [{ ...first, outHandle: { x: first.anchor.x, y: first.anchor.y } }, ...rest] }
+}
+
 function computeBezier(sub: Subpath, cornerCos: number): { start: Point; segs: BezierSeg[] } | null {
   const seg = sub.segments
   const n = seg.length
@@ -463,15 +503,7 @@ function computeBezier(sub: Subpath, cornerCos: number): { start: Point; segs: B
   const literal = seg.some((s) => s.inHandle !== undefined || s.outHandle !== undefined)
   // Hard corner if the deviation between edges exceeds the threshold (same math as smooth.ts).
   const corner: boolean[] = new Array(n)
-  for (let i = 0; i < n; i++) {
-    if (literal || (!closed && (i === 0 || i === n - 1))) { corner[i] = true; continue } // endpoints of an open path = corners
-    const p = A(prev(i)); const c = A(i); const q = A(next(i))
-    const ax = c.x - p.x, ay = c.y - p.y
-    const bx = q.x - c.x, by = q.y - c.y
-    const la = Math.hypot(ax, ay) || 1
-    const lb = Math.hypot(bx, by) || 1
-    corner[i] = (ax * bx + ay * by) / (la * lb) < cornerCos
-  }
+  for (let i = 0; i < n; i++) corner[i] = literal || isCorner(sub, i, cornerCos)
 
   const segs: BezierSeg[] = []
   const edges = closed ? n : n - 1
