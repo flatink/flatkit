@@ -162,9 +162,13 @@ Render a PNG (skia backend, faithful to the browser). Needs the optional `skia-c
 (`npm i -D skia-canvas`).
 
 `skia-canvas` 3 (3.0.8 or later) and 4 (from `4.0.0-rc7`) are both accepted. They do not render to the
-same pixels: **version 4 sets text one device pixel lower** (half a unit at the default scale of 2);
-shapes are identical. Frames rendered with one must not be mixed with frames rendered with the other in
-the same video, and a pixel comparison between two renders needs the same version on both sides.
+same pixels: **version 4 can set a line of text one device pixel higher or lower** than version 3 (half a
+unit at the default scale of 2); shapes are identical. It is a rounding that falls one way or the other
+from one text to the next, not a uniform shift: on a same picture one block may move down, another up, a
+third not at all (measured by a consumer on 545 scenes: 16 identical to the pixel, a median of 0.31% of
+pixels visibly different, 3.4% at most on a page of text). Frames rendered with one must not be mixed
+with frames rendered with the other in the same video, and a pixel comparison between two renders needs
+the same version on both sides. While version 4 is a release candidate, pin the exact version.
 
 ```
 flatc <file> --render -o out.png [--frame N] [--at k=v[,k2=v2]] [--steps N] [--scale S]
