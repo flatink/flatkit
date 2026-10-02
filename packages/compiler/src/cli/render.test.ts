@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+import { FlatPlayer } from '@flatkit/player'
 import { createRenderer, renderDocToPng } from './render'
 import { compileFlatpack } from '../compile'
 
@@ -200,5 +201,30 @@ object "Lamp" { opacity = lit }
   it('a renderer that was not opened for it refuses to play, and says how', async () => {
     const r = await createRenderer(compileFlatpack(SRC), { scale: 1 })
     try { expect(() => r.play([{ type: 'tap', target: 'Button' }])).toThrow(/interactive: true/) } finally { r.close() }
+  }, 60_000)
+})
+
+// Found by comparing a consumer's slides between 0.37.1 and 0.39.0: packs identical to the byte, and two
+// slides in 61 rendered differently — by one to three levels in 255, on scenes with `filter blur`, masks
+// and `blend`. The renderer had started drawing a plain frame TWICE before capturing it, and a second draw
+// goes through the filter cache: not the same pixels as the first. Invisible, but a render is compared to
+// the byte by the people who make videos with it.
+describe('rendering — a plain frame is drawn once', () => {
+  const doc = () => compileFlatpack(PROGRAM, [DOOR])
+  it('`frame()` without a script draws exactly what the seek draws', async () => {
+    const r = await createRenderer(doc())
+    const spy = vi.spyOn(FlatPlayer.prototype, 'render')
+    try {
+      await r.frame(3)
+      expect(spy).toHaveBeenCalledTimes(1)
+    } finally { spy.mockRestore(); r.close() }
+  }, 60_000)
+  it('a replayed script is drawn again before the capture: what it changed must be in the picture', async () => {
+    const r = await createRenderer(doc(), { interactive: true })
+    const spy = vi.spyOn(FlatPlayer.prototype, 'render')
+    try {
+      await r.frame(3, { script: [{ type: 'wait', frames: 2 }] })
+      expect(spy.mock.calls.length).toBeGreaterThan(1)
+    } finally { spy.mockRestore(); r.close() }
   }, 60_000)
 })

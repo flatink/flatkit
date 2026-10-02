@@ -186,7 +186,10 @@ export async function createRenderer(doc: Doc, opts: { scale?: number; params?: 
         if (steps > MAX_RENDER_STEPS) process.stderr.write(`flatc: steps clamped to ${MAX_RENDER_STEPS} (was ${steps})\n`)
         player.stepSim(n) // run N fixed sim steps (onEnterFrame) so a stateful act unfolds before capture
       }
-      player.render() // a gesture or a step paints only what it changed: draw the frame that is asked for
+      // A replayed gesture paints only what it changed: draw again after a script. NOT otherwise — the seek
+      // (and `stepSim`) have just drawn this frame, and a second draw goes through the filter cache, which
+      // is not the same pixels to the bit as the first (one to three levels in 255 under a blur).
+      if (frameOpts.script?.length) player.render()
       return el.toBuffer('png')
     },
     play,
