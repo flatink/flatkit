@@ -47,12 +47,21 @@ Coordinates are plain numbers; canvas origin is **top-left**. Layers stack botto
 circle  <cx> <cy> <r>
 ellipse <cx> <cy> <rx> <ry>
 rect    <x> <y> <w> <h>  [<r> | <rx> <ry>]      // optional rounded corners
-path    "M0 0 L10 0 L10 10 Z"                    // raw SVG path data
+path    "M0 0 L10 0 L10 10 Z"                    // raw SVG path data: L is a STRAIGHT line
+path    "M0 60 L80 40 L200 52 L320 44" smooth    // the same points joined by a curve (a hill, a wave)
+polyline xs ys [count "n"] [closed]              // points read from two array vars, every frame
 text    "Hi" font "sans-serif" size 24 align center line 1.2 color #fff box 200 40
 image   "logo" 80 80 at -40,-40                  // origin = top-left → center with at -w/2,-h/2
 group   "Name" at x,y pivot px,py { layer "c" { … } }   // nests its own layers
 instance "Symbol" as "Name" at x,y              // place a symbol from a .flat lib
 ```
+
+**A path of lines is drawn straight.** `L`, `H` and `V` join their points with flat segments — a hexagon
+has six flat sides, and a hill written as four points is a broken line. For a curve through the points,
+write **`smooth`** right after the path data (it rounds every turn under 60° and keeps the sharp ones), or
+use real curves (`C`, `Q`, `A`). `flatc --check` only warns about a missing `smooth` from 12 points up:
+on a shorter path nothing tells you. `polyline` takes the NAMES of two arrays (`var xs = fill(50, 0)`);
+its segments are straight too.
 
 Paint / style (work on shapes; most on text & groups too):
 ```

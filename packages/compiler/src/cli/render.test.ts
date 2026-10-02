@@ -120,4 +120,23 @@ describe('rendering — a large opaque shape, offset by its group, does not wipe
       expect(at(900, 500)).toEqual([201, 208, 219, 255]) // inside the shape
     })
   }
+
+  // The first guard covered solid fills only, so a gradient sky larger than the frame, under a camera,
+  // still wiped the picture. The reference is the same shape started one unit to the right: its local
+  // bounds no longer contain the canvas, so the renderer's shortcut never fires on it.
+  const GRADIENTS = [['a linear gradient', 'linear(90, 0:#c9d0db, 1:#4a90e2)'], ['a radial gradient', 'radial(0.5, 0.5, 0.7, 0:#c9d0db, 1:#4a90e2)']] as const
+  for (const [fillName, fill] of GRADIENTS) {
+    for (const [name, radius] of [['a rounded rectangle', ' 60'], ['a plain rectangle', '']] as const) {
+      it(`${name} filled with ${fillName}: the background shows, and the gradient is the one it would be`, async () => {
+        const at = await frame(`rect -200 -200 2400 1500${radius} fill ${fill}`)
+        const ref = await frame(`rect -199 -200 2399 1500${radius} fill ${fill}`)
+        expect(at(100, 50)).toEqual([11, 15, 26, 255]) // left of and above the shape: background
+        for (const [x, y] of [[450, 150], [700, 320], [900, 500]] as const) {
+          const got = at(x, y), want = ref(x, y)
+          expect(got[3], `the gradient is not opaque at ${x},${y}`).toBe(255)
+          for (let k = 0; k < 3; k++) expect(Math.abs(got[k] - want[k]), `channel ${k} at ${x},${y}: ${got} for ${want}`).toBeLessThanOrEqual(2)
+        }
+      })
+    }
+  }
 })

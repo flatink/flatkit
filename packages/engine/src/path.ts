@@ -60,6 +60,9 @@ function flattenCubic(p0: Point, c1: Point, c2: Point, p3: Point, tol: number, o
 
 const mid = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
 
+/** Does a handle pull its edge off the straight line? A missing one does not, nor one sitting on its anchor. */
+const bends = (h: Point | undefined, anchor: Point): boolean => h !== undefined && (h.x !== anchor.x || h.y !== anchor.y)
+
 const POLY_TOL = 0.25 // default flatness tolerance (px) — the only tolerance the hot hit-test path uses
 
 // Memoized flatten at the DEFAULT tolerance. A path's geometry is invariant: the doc owns it, and dynamic
@@ -72,7 +75,8 @@ const polygonCache = new WeakMap<Path, Polygon[]>()
 
 /**
  * Flatten a path into point rings (for boolean ops / hit / bbox).
- * Handle-less edge → straight line (we only push the target anchor); edge with handle(s) →
+ * Handle-less edge → straight line (we only push the target anchor), and so is an edge whose handles sit
+ * ON their anchors (the mark `asStraightLines` leaves on a path of lines); edge with real handle(s) →
  * adaptive subdivision of the cubic. `tol` = flatness tolerance (px). Memoized at the default tolerance
  * (see `polygonCache`); the returned rings are shared — DO NOT mutate them.
  */
@@ -89,7 +93,7 @@ export function pathToPolygons(path: Path, tol = POLY_TOL): Polygon[] {
       const a = segs[i]
       const b = segs[(i + 1) % segs.length]
       const last = i === edges - 1 && sub.closed // last edge of a closed ring → do not duplicate the first point
-      if (!a.outHandle && !b.inHandle) {
+      if (!bends(a.outHandle, a.anchor) && !bends(b.inHandle, b.anchor)) {
         if (!last) ring.push({ ...b.anchor }) // straight: just the target anchor
       } else {
         const c1 = a.outHandle ?? a.anchor

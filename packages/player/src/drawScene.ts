@@ -1133,20 +1133,38 @@ function paintLeafCached(
  * canvas and moved by its group, so that it covers only part of the frame, wiped the background behind it:
  * half the picture came out transparent. When the local bounds contain the canvas under a transform, the
  * path is filled in DEVICE space under an identity transform instead, where its bounds are the real ones.
- * Solid fills only (a gradient lives in the transform it was created under). A browser's Path2D has no
- * `bounds`, so nothing of this runs there; skia-canvas 4 no longer needs it.
+ * A gradient lives in the transform it was created under, so it cannot move to device space: the path
+ * becomes the CLIP instead, and the paint is laid with `fillRect` (which has no such shortcut) over the
+ * visible frame. A browser's Path2D has no `bounds`, so nothing of this runs there; skia-canvas 4 no longer
+ * needs it.
  */
 type SkiaPath = Path2D & { bounds?: { left: number; top: number; right: number; bottom: number }; transform?: (m: DOMMatrix) => Path2D }
 function fillPath(c: CanvasRenderingContext2D, path: Path2D): void {
   const b = (path as SkiaPath).bounds
-  if (b !== undefined && typeof c.fillStyle === 'string' && typeof (path as SkiaPath).transform === 'function') {
+  if (b !== undefined && typeof (path as SkiaPath).transform === 'function') {
     const cv = c.canvas
     if (cv && b.left <= 0 && b.top <= 0 && b.right >= cv.width && b.bottom >= cv.height) {
       const m = c.getTransform()
       if (m.a !== 1 || m.b !== 0 || m.c !== 0 || m.d !== 1 || m.e !== 0 || m.f !== 0) {
         c.save()
-        c.setTransform(1, 0, 0, 1, 0, 0)
-        c.fill((path as SkiaPath).transform!(m), 'evenodd')
+        if (typeof c.fillStyle === 'string') {
+          c.setTransform(1, 0, 0, 1, 0, 0)
+          c.fill((path as SkiaPath).transform!(m), 'evenodd')
+        } else {
+          c.clip(path, 'evenodd')
+          // The frame's four corners, back in the shape's space: the rectangle that holds them covers
+          // everything the clip can show.
+          const inv = m.inverse()
+          let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+          for (const [px, py] of [[0, 0], [cv.width, 0], [0, cv.height], [cv.width, cv.height]]) {
+            const x = inv.a * px + inv.c * py + inv.e, y = inv.b * px + inv.d * py + inv.f
+            if (x < x0) x0 = x
+            if (x > x1) x1 = x
+            if (y < y0) y0 = y
+            if (y > y1) y1 = y
+          }
+          c.fillRect(x0, y0, x1 - x0, y1 - y0)
+        }
         c.restore()
         return
       }

@@ -84,14 +84,18 @@ symbol "Boat" {
 3. **`stroke`, `opacity`, `filter` all exist on `path` AND `text`.** Outline text with
    `text "…" color #fff stroke #000 4 join round` (stroke drawn behind fill) — never stack two texts.
 4. **`image` origin is top-left** → center with `at -w/2,-h/2`.
-5. **Text never wraps unless you add `wrap`** (`… box W H wrap`); otherwise only explicit `\n` breaks.
+5. **A path of lines is drawn STRAIGHT.** `L`/`H`/`V` are flat segments: a hill, a wave or a blob written
+   as a few points comes out as a broken line. For a curve through the points write `smooth` after the
+   data — `path "M0 60 L80 40 L200 52 L320 44" smooth nofill stroke #fff 3` — or use `C`/`Q`/`A`.
+   `flatc --check` warns about a missing `smooth` only from 12 points up; below that, nothing tells you.
+6. **Text never wraps unless you add `wrap`** (`… box W H wrap`); otherwise only explicit `\n` breaks.
    Also, `at x,y` on `text`/`image` must come **right after the content**, before `font`/`box`/`fill`
    (`text "…" at x,y box W H`, not `… box W H at x,y`).
-6. **Filters are cheap only on static decor** (auto-cached). Fine here since your assets are static —
+7. **Filters are cheap only on static decor** (auto-cached). Fine here since your assets are static —
    but a large blurred plane is costly; for big soft shadows prefer a "baked" offset copy in `#00000028`.
-7. **Layer order = z-order.** Bottom layer drawn first. Put shadows/backings on lower layers.
-8. **Don't hand-compute Bezier circles** — use `circle`/`ellipse`/`rect` sugar; they normalize to paths.
-9. **Center art on `0,0`** so the asset rotates/scales cleanly when someone animates it later.
+8. **Layer order = z-order.** Bottom layer drawn first. Put shadows/backings on lower layers.
+9. **Don't hand-compute Bezier circles** — use `circle`/`ellipse`/`rect` sugar; they normalize to paths.
+10. **Center art on `0,0`** so the asset rotates/scales cleanly when someone animates it later.
 
 ## Self-check
 - File is only `symbol "…" { … }` blocks, no `size`, no behavior.

@@ -109,6 +109,26 @@ describe('prompts — shipped with the package', () => {
       expect(gotcha.slice(0, 600), `${name} states the gotcha without offering dx/dy`).toMatch(/\bdx\b/)
     }
   })
+
+  // 0.36 changed what a path of lines LOOKS like: `L` is a straight line, and a curve written as a few
+  // points needs `smooth`. `--check` only warns from 12 points up, so below that the one protection is
+  // that whoever writes the path knows the rule — and neither the references nor the gotchas page, which
+  // a consumer copies for its agents, said a word of it.
+  const read = (file: string) => readFileSync(file, 'utf8')
+  it('every file that teaches `path` says a path of lines is straight, and names `smooth`', () => {
+    const files = ['flatink-core.md', 'flatink-lite.md', 'role-asset-creator.md'].map((n) => ({ name: n, text: read(join(promptsDir, n)) }))
+    files.push({ name: 'docs/dsl-gotchas.md', text: read(join(pkgDir, '..', '..', 'docs', 'dsl-gotchas.md')) })
+    for (const { name, text } of files) {
+      expect(text, `${name} never shows \`path "…" smooth\``).toMatch(/path\s+"[^"]*"\s+smooth\b/)
+      expect(text, `${name} does not say that lines are drawn straight`).toMatch(/straight/i)
+      expect(text, `${name} does not say the warning is silent on a short path`).toMatch(/12 points/)
+    }
+  })
+
+  it('the general references and the gotchas page know `polyline`', () => {
+    const files = [...texts(), { name: 'docs/dsl-gotchas.md', text: read(join(pkgDir, '..', '..', 'docs', 'dsl-gotchas.md')) }]
+    for (const { name, text } of files) expect(text, `${name} never mentions \`polyline\``).toMatch(/\bpolyline\s+<?\w+>?\s+<?\w+/)
+  })
 })
 
 // Shipping the files was only half of it: the `exports` map did not list them, so a consumer could see

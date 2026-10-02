@@ -78,7 +78,8 @@ Usage:
   --since <ver>     what the given files (.flatink / .flat, as many as you like) draw DIFFERENTLY from
                     that version — a one-shot report for an upgrade, with file:line. Recorded so far:
                     before 0.36 a path made only of lines was rounded at its gentle turns. Lists the
-                    paths that move by 1% of their size or more; add --all for the slighter ones
+                    paths that move by 1% of their size or more, and the open lines that move by 2
+                    units or more; add --all for the slighter ones
   --seed N          (with --play) seed of random(). A replay is always seeded (default 1): the same script
                     gives the same result twice; another N gives another draw
   --trace           (with --play) HUMAN-READABLE log per gesture: emitted sends + variable diff (debug)
@@ -532,6 +533,8 @@ async function previewOnce(flatPath: string, symbolName: string, out: string, fr
  * points wants `smooth` back, a hexagon does not. This is a report, not a warning of `--check`: a polyline
  * that is MEANT straight has nothing to add to say so, and would be warned about for ever.
  */
+const SINCE_OPEN_UNITS = 2 // an open line moving by this much is reported whatever its length
+
 function sinceReport(files: string[], since: string, all = false): number {
   const [maj, min] = since.split('.').map(Number)
   if (!Number.isFinite(maj) || !Number.isFinite(min)) { process.stderr.write(`flatc: --since takes a version, e.g. --since 0.35 (got "${since}")\n`); return 1 }
@@ -549,10 +552,11 @@ function sinceReport(files: string[], since: string, all = false): number {
         const xs = sub.segments.map((sg) => sg.anchor.x), ys = sub.segments.map((sg) => sg.anchor.y)
         const size = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys))
         // Listed when the outline moves by 1% of the shape's size or more — RELATIVE, because artwork is often
-        // drawn in a large space and scaled down by its container. Below that the two renderings are a few
-        // pixels apart at most; `--all` lists those too.
+        // drawn in a large space and scaled down by its container. An OPEN line is also listed from 2 units:
+        // a long stroke with gentle turns (a hill, a horizon) moves by little of its length and visibly all
+        // the same. Below that the two renderings are a few pixels apart at most; `--all` lists those too.
         if (moved <= 0 || size <= 0) continue
-        if (moved < size * 0.01 && !all) { slight++; continue }
+        if (moved < size * 0.01 && (sub.closed || moved < SINCE_OPEN_UNITS) && !all) { slight++; continue }
         const line = src.slice(0, m.index).split('\n').length
         if (sub.closed) closed++; else open++
         process.stdout.write(`${file}:${line}: ${sub.closed ? 'closed' : 'open'} path of ${sub.segments.length} points was rounded before 0.36 and is now straight — it moves by up to ${Math.round(moved * 10) / 10} units (${Math.round((1000 * moved) / (size || 1)) / 10}% of its size). Write \`smooth\` after its path data to keep the curve.\n`)
@@ -560,7 +564,7 @@ function sinceReport(files: string[], since: string, all = false): number {
     }
   }
   const n = open + closed
-  const rest = slight ? ` ${slight} more move by less than 1% of their size (\`--all\` lists them).` : ''
+  const rest = slight ? ` ${slight} more move by less than 1% of their size, and by less than ${SINCE_OPEN_UNITS} units if open (\`--all\` lists them).` : ''
   process.stdout.write(n
     ? `flatc: ${n} path(s) of lines drawn differently since ${since}: ${open} open, ${closed} closed.${rest} Nothing was modified. (Rounded rectangles and paths mixing lines with curves changed too — their straight sides no longer bulge — and are not listed.)\n`
     : `flatc: no path of lines is drawn visibly differently since ${since} in ${files.length} file(s).${rest}\n`)

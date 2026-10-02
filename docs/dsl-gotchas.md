@@ -59,6 +59,16 @@
   - `ellipse <cx> <cy> <rx> <ry>`
   - `rect <x> <y> <w> <h>` · `… <r>` (uniform rounded corners) · `… <rx> <ry>`
   No more hand-computing the k = 0.5523·r Bezier constant.
+- **A path of lines is drawn STRAIGHT (since 0.36).** `L`, `H` and `V` are flat segments, next to a curve
+  or on their own: a hexagon has six flat sides, and a hill written as `path "M-20 250 L220 218 L620 228
+  L980 222"` is a broken line. Before 0.36 such a path was rounded at every turn under 60°. For a curve
+  through the points, write **`smooth`** right after the path data: `path "M-20 250 L220 218 L620 228"
+  smooth nofill stroke #fff 3`. **There is no warning on a short path**: `flatc --check` reports a
+  missing `smooth` only on a run of 12 points or more whose outline would really move. When upgrading a
+  corpus, `flatc <files> --since 0.35` lists every path of lines that changed, with its `file:line`.
+- **`polyline <xs> <ys> [count <n> | count "<expr>"] [closed]`** draws through two ARRAY variables, read
+  every frame (a trajectory, a curve being computed). It takes the arrays' **names**, its segments are
+  straight, and fewer than two points draw nothing.
 - **`filter` on a path**: accepted (`path "…" fill #000 filter glow 6 #fff`). No need to wrap
   in a `group` just to add a shadow/glow. (Also works on group/image/text.)
 - **`linear(angle, …)` gradient**: `0` = → (left to right), `90` = ↓ (top to bottom).

@@ -161,6 +161,11 @@ item, and a roster item no cel ever poses. Each renders an empty frame with no o
 Render a PNG (skia backend, faithful to the browser). Needs the optional `skia-canvas` dep
 (`npm i -D skia-canvas`).
 
+`skia-canvas` 3 (3.0.8 or later) and 4 (from `4.0.0-rc7`) are both accepted. They do not render to the
+same pixels: **version 4 sets text one device pixel lower** (half a unit at the default scale of 2);
+shapes are identical. Frames rendered with one must not be mixed with frames rendered with the other in
+the same video, and a pixel comparison between two renders needs the same version on both sides.
+
 ```
 flatc <file> --render -o out.png [--frame N] [--at k=v[,k2=v2]] [--steps N] [--scale S]
 ```
@@ -275,8 +280,10 @@ with its `file:line`. Nothing is modified, and the exit code is 0.
 
 One change is recorded so far. Until 0.36 a path made only of lines (`L`, `H`, `V`) was rounded at its
 gentle turns; it is now drawn straight, as its data says. The report lists each such path that moves by
-1% of its size or more (`--all` adds the slighter ones), open or closed, with how far it moves — a soft
-hill written as four points wants `smooth` back (`path "…" smooth`), a hexagon does not.
+1% of its size or more, open or closed, with how far it moves — a soft hill written as four points wants
+`smooth` back (`path "…" smooth`), a hexagon does not. An open line is also listed when it moves by 2
+units or more, however little that is of its length: a horizon across the whole frame bends by a few
+units and by a fraction of a percent. `--all` adds the slighter ones.
 
 It is a report and not a `--check` warning on purpose: a polyline that is *meant* straight has nothing to
 add to say so, and would be warned about for ever.

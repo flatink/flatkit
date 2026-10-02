@@ -36,7 +36,10 @@ text "Hi" font "sans-serif" size 24 align center line 1.2 color #fff box 200 40 
 image "id" w h at -w/2,-h/2        // origin top-left → center yourself ; needs: asset "id" "f.png" image
 group "Name" at x,y pivot px,py { layer "c" { … } }      // nests its own layers
 instance "Symbol" as "Name" at x,y                        // place a symbol from a .flat
+polyline xs ys [count "n"] [closed]                       // straight segments through two array vars, live
 ```
+A path of lines (`L`/`H`/`V`) is drawn **straight**; for a curve through the points add `smooth` after the
+data: `path "M0 60 L80 40 L200 52" smooth`. `--check` warns about a missing `smooth` only from 12 points up.
 Style: `fill #rrggbb | nofill` · `stroke #rgb <w> [cap round][join round][dash a,b]` · `opacity 0..1` ·
 `draw <0..1> [from <0..1>]` (stroke extent by ARC LENGTH; quoted = expression: `draw "avance"` = ink drawn
 behind a finger, the measure `trace` reports) ·

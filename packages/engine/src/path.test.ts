@@ -3,6 +3,7 @@ import { smoothClosedRing } from './smooth'
 import {
   polygonsToPath,
   pathToPolygons,
+  asStraightLines,
   pathToBezier,
   transformPath,
   translatePath,
@@ -59,6 +60,23 @@ describe('polygonsToPath / pathToPolygons', () => {
     const ring = pathToPolygons(path)[0]
     expect(ring.length).toBeGreaterThan(4) // curved edge 0→1 subdivided
     expect(ring[0]).toEqual({ x: 0, y: 0 })
+  })
+
+  // A path of lines carries ONE zero-length handle (the mark `asStraightLines` leaves so that it is read
+  // literally). That handle made the first edge a "curve": it was subdivided into some twenty-five aligned
+  // points, which a consumer rebuilding material from the rings got back at every pass.
+  it('a zero-length handle is no curve: a marked path of lines flattens to its vertices alone', () => {
+    const line = asStraightLines({ closed: false, segments: [{ anchor: { x: -20, y: 250 } }, { anchor: { x: 220, y: 218 } }, { anchor: { x: 620, y: 228 } }, { anchor: { x: 980, y: 222 } }] })
+    expect(line.segments[0].outHandle).toEqual({ x: -20, y: 250 }) // the mark is there
+    expect(pathToPolygons({ subpaths: [line] })).toEqual([[{ x: -20, y: 250 }, { x: 220, y: 218 }, { x: 620, y: 228 }, { x: 980, y: 222 }]])
+    const octagon = Array.from({ length: 8 }, (_, i) => ({ x: Math.round(100 + 80 * Math.cos((i * Math.PI) / 4)), y: Math.round(100 + 80 * Math.sin((i * Math.PI) / 4)) }))
+    const ring = asStraightLines({ closed: true, segments: octagon.map((anchor) => ({ anchor })) })
+    expect(pathToPolygons({ subpaths: [ring] })).toEqual([octagon])
+  })
+
+  it('a zero-length handle facing a real one is still a curve', () => {
+    const sub = { closed: false, segments: [{ anchor: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 } }, { anchor: { x: 100, y: 0 }, inHandle: { x: 100, y: 50 } }] }
+    expect(pathToPolygons({ subpaths: [sub] })[0].length).toBeGreaterThan(2)
   })
 
   // Memoization (hit-test hot path): a path's geometry is invariant, so flatten ONCE and reuse — re-flattening

@@ -470,9 +470,9 @@ describe('flatc --since — what is drawn differently since an earlier version',
     '    path "M0 200 L1 200.1 L2 200.3 L3 200.6 L4 201" nofill stroke #334455 1',   // gentle and tiny: nothing to see
     '  }', '}', '',
   ].join('\n')
-  const report = (args: string[]) => {
+  const report = (args: string[], src = SRC) => {
     const dir = mkdtempSync(join(tmpdir(), 'flatc-since-'))
-    writeFileSync(join(dir, 'p.flatink'), SRC)
+    writeFileSync(join(dir, 'p.flatink'), src)
     const outs: string[] = []
     const spy = vi.spyOn(process.stdout, 'write').mockImplementation((s: string | Uint8Array) => { outs.push(String(s)); return true })
     try { return { code: run(['node', 'flatc', join(dir, 'p.flatink'), ...args]) as number, lines: outs.join('').split('\n').filter(Boolean) } }
@@ -490,6 +490,15 @@ describe('flatc --since — what is drawn differently since an earlier version',
     const { lines } = report(['--since', '0.35'])
     expect(lines.find((l) => /p\.flatink:4:/.test(l))).toMatch(/moves by up to \d+(\.\d)? (px|units)/)
     expect(lines.at(-1)).toMatch(/2 path\(s\).*1 open.*1 closed/)
+  })
+  // A long line with gentle turns moves by little of its SIZE and by several units all the same: a hill's
+  // highlight across a 960-wide frame moved by 3.9 units, 0.4% of its length, and only `--all` listed it —
+  // among 35 000 others.
+  it('a long open line that moves by 2 units or more is listed, however small that is of its size', () => {
+    const { lines } = report(['--since', '0.35'], 'size 960 540\nscene {\n  layer "c" {\n    path "M-20 250 L220 218 L620 228 L980 222" nofill stroke #ffffff 3\n  }\n}\n')
+    const listed = lines.filter((l) => /p\.flatink:\d+:/.test(l))
+    expect(listed).toHaveLength(1)
+    expect(listed[0]).toMatch(/p\.flatink:4: open path of 4 points.*moves by up to 3\.9 units \(0\.4% of its size\)/)
   })
   it('a version that already drew lines straight has nothing to report', () => {
     const { code, lines } = report(['--since', '0.36'])
