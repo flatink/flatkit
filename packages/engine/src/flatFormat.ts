@@ -180,7 +180,7 @@ function printText(t: Text, withExpr: boolean): string {
     if (tp.spacingExpr) place += ` spacing ${q(tp.spacingExpr)}` // animated (eased tracking); else literal px
     else if (tp.spacing) place += ` spacing ${n(tp.spacing)}`
   }
-  let s = `text ${q(t.content)}${asId}${place} font ${q(t.font)} size ${n(t.size)} align ${t.align} line ${n(t.lineHeight)} color ${t.color}`
+  let s = `text ${t.contentParam ?? q(t.content)}${asId}${place} font ${q(t.font)} size ${n(t.size)} align ${t.align} line ${n(t.lineHeight)} color ${t.color}`
   if (t.stroke) {
     s += ` stroke ${printPaint(t.stroke.paint)} ${n(t.stroke.width)}`
     if (t.stroke.cap) s += ` cap ${t.stroke.cap}`
@@ -217,7 +217,10 @@ function printInstance(it: Instance, ctx: Ctx): string {
 /** Call-site param values: ` { name = value, … }` (empty/absent → nothing). */
 function printCallSiteParams(params?: Record<string, string>): string {
   const entries = params ? Object.entries(params) : []
-  return entries.length ? ` { ${entries.map(([k, v]) => `${k} = ${v}`).join(', ')} }` : ''
+  // A value that is one token (a color, a number, a state name) prints bare; anything else is a text and
+  // needs its quotes back to stay one token.
+  const lit = (v: string) => (/^(#[0-9a-fA-F]+|-?[\d.]+(e[-+]?\d+)?|[A-Za-z_][\w-]*)$/.test(v) ? v : q(v))
+  return entries.length ? ` { ${entries.map(([k, v]) => `${k} = ${lit(v)}`).join(', ')} }` : ''
 }
 
 function printItem(it: Item, depth: number, ctx: Ctx): string | null {
@@ -313,7 +316,7 @@ function printSymbol(sym: SymbolDef, ctx: Ctx): string {
 function printParams(params: ParamDef[], depth: number): string {
   const ind = IND.repeat(depth)
   const lines = params.map((p) => {
-    let s = `${IND.repeat(depth + 1)}${p.type} ${p.name} = ${p.default}`
+    let s = `${IND.repeat(depth + 1)}${p.type} ${p.name} = ${p.type === 'text' ? q(p.default) : p.default}`
     if (p.min != null || p.max != null) s += ` range ${n(p.min ?? p.max ?? 0)} ${n(p.max ?? p.min ?? 0)}`
     if (p.doc) s += ` ${q(p.doc)}`
     return s
@@ -1240,6 +1243,8 @@ class FlatParser {
   // Color-param defaults of the symbol being parsed (name → default hex) — the fallback color for a stop/tint
   // bound to a param (`0:teinte@…`, `tint teinte …`), so it renders even outside an instance scope.
   private colorDefaults = new Map<string, string>()
+  // `text` params of the symbol being parsed (name → default) — what `text <param>` may name.
+  private textDefaults = new Map<string, string>()
   constructor(private readonly t: Tok[], private readonly src = '') {}
 
   /** 1-based line/column of a source OFFSET, in the text the parser was handed. */
@@ -1417,19 +1422,21 @@ class FlatParser {
     }
     // Expose this symbol's color-param defaults so a stop/tint bound to a param keeps a usable fallback hex.
     this.colorDefaults = new Map(params.filter((p) => p.type === 'color').map((p) => [p.name, p.default]))
+    this.textDefaults = new Map(params.filter((p) => p.type === 'text').map((p) => [p.name, p.default]))
     const layers: Layer[] = []
     while (!this.is('}')) layers.push(...this.layer())
     this.eat('}')
     this.colorDefaults = new Map()
+    this.textDefaults = new Map()
     return { id: uid('sym'), name, layers, ...(timeline ? { timeline } : {}), ...(params.length ? { params } : {}), ...(states.length ? { states } : {}), ...(folderId ? { folderId } : {}) }
   }
-  /** `params { <type> <name> = <default> [range <min> <max>] ["doc"] … }` — color | number | bool. */
+  /** `params { <type> <name> = <default> [range <min> <max>] ["doc"] … }` — color | number | bool | text. */
   private paramsBlock(): ParamDef[] {
     this.eat('params'); this.eat('{')
     const out: ParamDef[] = []
     while (!this.is('}')) {
       const type = this.next().v
-      if (type !== 'color' && type !== 'number' && type !== 'bool') throw new Error(`param type expected (color/number/bool): "${type}"`)
+      if (type !== 'color' && type !== 'number' && type !== 'bool' && type !== 'text') throw new Error(`param type expected (color/number/bool/text): "${type}"`)
       const name = this.next().v
       this.eat('=')
       const def = this.next().v // raw default literal (#color / number / true|false)
@@ -1698,7 +1705,15 @@ class FlatParser {
   }
   private text(): Text {
     this.eat('text')
-    const content = this.str()
+    // `text "…"`, or inside a symbol `text <param>`: the content is then the instance's `text` param of that
+    // name. Its default stands in as `content`, so the text draws (and measures) outside any instance too.
+    let contentParam: string | undefined
+    if (this.peek()?.k === 'id') {
+      const ref = this.peek()!.v
+      if (!this.textDefaults.has(ref)) this.fail(`"${ref}" is not a text param of this symbol — \`text\` takes a quoted string, or the name of a param declared \`text ${ref} = "…"\` in the symbol's \`params\``)
+      contentParam = ref
+    }
+    const content = contentParam ? (this.next(), this.textDefaults.get(contentParam)!) : this.str()
     // optional `as "<id>"`: sets a STABLE id (cf. text("…") / host). Asymmetry deliberately kept with
     // `instance … as "<name>"` which sets the NAME (objects refer to it by name; texts by id).
     let id: string | undefined
@@ -1750,7 +1765,7 @@ class FlatParser {
       else break
     }
     const a = this.poseAttrs()
-    const t: Text = { id: id ?? uid('t'), kind: 'text', name: content || 'Text', ...(id !== undefined ? { idExplicit: true } : {}), transform, content, font, size, align, lineHeight, color, ...(stroke ? { stroke } : {}), ...(weight ? { weight } : {}), ...(italic ? { italic } : {}), box, ...(wrap ? { wrap: true } : {}), ...(bind ? { bind } : {}), ...(decimals != null ? { decimals } : {}), ...leafAttrs(a), ...exprAttr(a), ...modAttr(a) }
+    const t: Text = { id: id ?? uid('t'), kind: 'text', name: content || 'Text', ...(id !== undefined ? { idExplicit: true } : {}), transform, content, ...(contentParam ? { contentParam } : {}), font, size, align, lineHeight, color, ...(stroke ? { stroke } : {}), ...(weight ? { weight } : {}), ...(italic ? { italic } : {}), box, ...(wrap ? { wrap: true } : {}), ...(bind ? { bind } : {}), ...(decimals != null ? { decimals } : {}), ...leafAttrs(a), ...exprAttr(a), ...modAttr(a) }
     // text-on-path: inline `along path "<d>"` is baked here (literal — author owns orientation); a named
     // `along "<id>"` defers to resolveTextPaths (forward refs allowed). `side over`/`spacing 0` = defaults → dropped.
     const tpAttrs = { ...(startFrac != null ? { start: startFrac } : {}), ...(side === 'under' ? { side } : {}), ...(spacing ? { spacing } : {}), ...(startExpr ? { startExpr } : {}), ...(spacingExpr ? { spacingExpr } : {}) }

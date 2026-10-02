@@ -1815,3 +1815,34 @@ describe('`.flat` — the channel of an inline `expr`', () => {
     expect(() => parseFlat(sym('expr rotationn "a"'))).toThrow(/unknown channel "rotationn".*rotation/)
   })
 })
+
+// flatink/flatink#9 — a symbol's params were color, number and bool: a reusable button could not carry
+// its label, so every program laid a text over it by hand. `text` is the fourth type.
+describe('`.flat` — a `text` param', () => {
+  const lib = (body: string) => `symbol "Bouton" {\n  params {\n    text libelle = "OK" "label of the button"\n    color fond = #3366cc\n  }\n  layer "l" {\n    ${body}\n  }\n}\n`
+  const label = 'text libelle at -40,-10 font "sans-serif" size 20 align center line 1.2 color #ffffff box 80 24'
+  it('is declared with a quoted default, and an optional doc string after it', () => {
+    expect(parseFlat(lib(label))[0].params![0]).toEqual({ name: 'libelle', type: 'text', default: 'OK', doc: 'label of the button' })
+  })
+  it('`text <param>` draws the param: the default is its content, the name is kept', () => {
+    const t = parseFlat(lib(label))[0].layers[0].items[0] as Text
+    expect([t.content, t.contentParam]).toEqual(['OK', 'libelle'])
+  })
+  it('a bare name that is not a `text` param of the symbol is an error naming the rule', () => {
+    expect(() => parseFlat(lib(label.replace('libelle', 'fond')))).toThrow(/"fond" is not a text param/)
+    expect(() => parseFlat(lib(label.replace('libelle', 'titre')))).toThrow(/"titre" is not a text param/)
+  })
+  it('round-trips, default with spaces and quotes included', () => {
+    const src = lib(label).replace('"OK"', '"Tout \\"bon\\" ?"')
+    const once = printFlat(parseFlat(src))
+    expect(once).toContain('text libelle = "Tout \\"bon\\" ?" "label of the button"')
+    expect(once).toContain('text libelle at -40,-10')
+    expect(printFlat(parseFlat(once))).toBe(once)
+  })
+  it('an instance gives it a value, which survives a round-trip of the program', () => {
+    const p = parseProgram(prog0('').replace('path "M0 0L10 0L10 10Z" fill #000000', 'instance "Bouton" as "B" at 10,10 { libelle = "Check my answer", fond = #33aa55 }'))
+    const inst = p.layers[0].items[0] as Instance
+    expect(inst.params).toEqual({ libelle: 'Check my answer', fond: '#33aa55' })
+    expect((parseProgram(printProgram(p)).layers[0].items[0] as Instance).params).toEqual(inst.params)
+  })
+})

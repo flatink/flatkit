@@ -39,7 +39,7 @@ describe('params — resolveInstanceParams', () => {
   })
 
   it('no symbol → empty maps', () => {
-    expect(resolveInstanceParams(undefined, inst({ x: '1' }))).toEqual({ numeric: {}, color: {} })
+    expect(resolveInstanceParams(undefined, inst({ x: '1' }))).toEqual({ numeric: {}, color: {}, text: {} })
   })
 })
 
@@ -102,5 +102,16 @@ describe('params — instanceFrames (pose vs playback clock)', () => {
   it('freeze (editor freezeNested) keeps both frozen at the selected state frame', () => {
     expect(instanceFrames(parent(), playback(), 30, true, { state: 0 })).toEqual({ pose: 0, clock: 0 })
     expect(instanceFrames(spin(24), playback(), 30, true)).toEqual({ pose: 0, clock: 0 }) // no states → 0
+  })
+})
+
+describe('params — a `text` param (flatink/flatink#9)', () => {
+  const button: SymbolDef = { id: 'b', name: 'Bouton', layers: [], params: [{ name: 'libelle', type: 'text', default: 'OK' }, { name: 'n', type: 'number', default: '2' }] }
+  it('resolves to the default, or to the value given at the instance', () => {
+    expect(resolveInstanceParams(button, {}).text).toEqual({ libelle: 'OK' })
+    expect(resolveInstanceParams(button, { params: { libelle: 'Valider' } }).text).toEqual({ libelle: 'Valider' })
+  })
+  it('never lands in the numeric scope', () => {
+    expect(resolveInstanceParams(button, { params: { libelle: '12' } }).numeric).toEqual({ n: 2 })
   })
 })

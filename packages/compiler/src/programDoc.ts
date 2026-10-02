@@ -164,6 +164,85 @@ function timeCapturedVars(doc: Doc): Set<string> {
   return out
 }
 
+/** The closest of `names` to `word` (edit distance <= 2), as a ` — did you mean "…"?` suffix, or ''. */
+function didYouMean(word: string, names: string[]): string {
+  const dist = (a: string, b: string): number => {
+    const row = Array.from({ length: b.length + 1 }, (_, j) => j)
+    for (let i = 1; i <= a.length; i++) {
+      let prev = row[0]; row[0] = i
+      for (let j = 1; j <= b.length; j++) { const t = row[j]; row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = t }
+    }
+    return row[b.length]
+  }
+  const best = names.map((n) => ({ n, d: dist(word, n) })).filter((x) => x.d <= 2).sort((a, b) => a.d - b.d)[0]
+  return best ? ` — did you mean "${best.n}"?` : ''
+}
+
+const COLOR_LITERAL = /^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
+
+/** Messages about the params and states handed to instances (see the call in `docStructureWarnings`). */
+function instanceParamWarnings(doc: Doc): string[] {
+  const out: string[] = []
+  const names = (sym: SymbolDef) => [...(sym.params ?? []).map((p) => p.name), ...(sym.states ?? []).map((sm) => sm.param)]
+  const stateNames = (sym: SymbolDef, param: string) => sym.states?.find((sm) => sm.param === param)?.states.map((st) => st.name)
+  // A LITERAL given to a param: the instance's call site, or a constant on the right of an assignment.
+  const checkLiteral = (who: string, sym: SymbolDef, key: string, value: string): void => {
+    const def = sym.params?.find((p) => p.name === key)
+    const states = stateNames(sym, key)
+    if (!def && !states) { out.push(`${who}: unknown param "${key}" (symbol "${sym.name}")${didYouMean(key, names(sym))}`); return }
+    if (states) {
+      if (!states.includes(value) && !Number.isFinite(Number(value))) out.push(`${who}: "${value}" is not a state of "${key}" (${states.join(', ')})`)
+      return
+    }
+    if (def!.type === 'color') { if (!COLOR_LITERAL.test(value)) out.push(`${who}: "${key}" is a color param and was given "${value}"`) }
+    else if (def!.type === 'bool') { if (!['true', 'false', '0', '1'].includes(value)) out.push(`${who}: "${key}" is true or false, and was given "${value}"`) }
+    else if (def!.type === 'number') {
+      const v = Number(value)
+      if (!Number.isFinite(v)) out.push(`${who}: "${key}" is a number param and was given "${value}"`)
+      else if (def!.min != null && def!.max != null && def!.min <= def!.max && (v < def!.min || v > def!.max)) out.push(`${who}: "${key}" = ${value} is outside its range ${def!.min}..${def!.max} (it is clamped)`)
+    }
+  }
+  // Call sites, wherever the instance sits (scene, groups, other symbols).
+  const byName = new Map<string, SymbolDef>()
+  const visit = (items: Item[], atRoot: boolean): void => {
+    for (const it of items) {
+      if (isGroup(it)) { for (const l of it.layers) visit(l.items, atRoot); continue }
+      if (!isInstance(it)) continue
+      const sym = doc.symbols.find((x) => x.id === it.symbolId)
+      if (!sym) continue // unresolved: reported on its own
+      if (atRoot && it.name && !byName.has(it.name)) byName.set(it.name, sym)
+      for (const [k, v] of Object.entries(it.params ?? {})) checkLiteral(`instance "${it.name}"`, sym, k, v)
+    }
+  }
+  for (const l of doc.layers) visit(l.items, true)
+  for (const sy of doc.symbols ?? []) for (const l of sy.layers) visit(l.items, false)
+  // Assignments `Inst.p = v`. The right-hand side may be an expression: only what CANNOT be right is said.
+  const known = new Set([...Object.keys(doc.variables ?? {}), ...(doc.functions ?? []).flatMap((f) => f.params)])
+  const reported = new Set<string>()
+  const say = (m: string) => { if (!reported.has(m)) { reported.add(m); out.push(m) } }
+  forEachAction(doc, (a) => {
+    if (a.do !== 'setParam') return
+    const sym = byName.get(a.target)
+    if (!sym) { say(`no instance named "${a.target}" in the scene — \`${a.target}.${a.param} = …\` does nothing${didYouMean(a.target, [...byName.keys()])}`); return }
+    const who = `${a.target}.${a.param} = …`
+    const value = a.value.trim()
+    const def = sym.params?.find((p) => p.name === a.param)
+    const states = stateNames(sym, a.param)
+    if (!def && !states) { say(`${who}: unknown param "${a.param}" (symbol "${sym.name}")${didYouMean(a.param, names(sym))}`); return }
+    if (states) {
+      // A bare word that is neither a state nor anything the program declares can only be a misspelt state.
+      if (/^[A-Za-z_]\w*$/.test(value) && !states.includes(value) && !known.has(value)) say(`${who}: "${value}" is not a state of "${a.param}" (${states.join(', ')})`)
+    } else if (def!.type === 'color') { if (!COLOR_LITERAL.test(value)) say(`${who}: "${a.param}" is a color param — it takes a color literal (#rrggbb), not an expression`) }
+    else if (def!.type === 'text') { if (!/^".*"$/.test(value)) say(`${who}: "${a.param}" is a text param — it takes a quoted text`) }
+    else if (/^-?[\d.]+$/.test(value)) {
+      const before = out.length
+      checkLiteral(who, sym, a.param, value)
+      for (const m of out.splice(before)) say(m)
+    }
+  })
+  return out
+}
+
 /** STRUCTURAL warnings (non-blocking) of a Doc: phantom drop zones, dead variables. */
 export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnostic }[] {
   const out: { scope: string; diag: Diagnostic }[] = []
@@ -228,6 +307,10 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
       if (by) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `parameter "${p}" of fn ${f.name} is hidden by ${by} — the body reads that, never the argument. Rename it` } })
     }
   }
+  // (b quater) What an instance is GIVEN — at its call site (`instance "X" { p = v }`) and by assignment
+  //     (`Inst.p = v`): a param the symbol does not declare, a value of the wrong type, a number out of its
+  //     range, a state that does not exist. None of it failed anywhere: the scene just drew wrong.
+  out.push(...instanceParamWarnings(doc).map((message) => ({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning' as const, message } })))
   // (b bis) An `instance "X"` that resolved to NO symbol. Compilation keeps the unresolved `@X` marker all
   //     the way into the .flatpack, the instance draws nothing, and everything else about the file looks
   //     fine — the same family as the phantom drop zone above: a name that points at nothing. Only a

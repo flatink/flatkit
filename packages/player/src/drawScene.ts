@@ -50,6 +50,11 @@ export type RenderCtx = {
   monoTime?: number
   // Current instance's COLOR params (param name → hex) for `fill <param>` regions in its subtree.
   colorParams?: Record<string, string>
+  // `text` params of the instance being drawn (name → content), read by `text <param>` items.
+  textParams?: Record<string, string>
+  // Runtime overrides of an instance's color/text params (`Inst.fond = #33aa33`, `Inst.libelle = "…"`),
+  // layered on the declared/call-site values — the counterpart of `paramsFor` for what is not a number.
+  stringsFor?: (instanceId: string) => { color?: Record<string, string>; text?: Record<string, string> } | undefined
   // STATEFUL channel modifiers (smooth/spring): `statePath` is the composed ancestor-INSTANCE path of this
   // scope (empty at root; `gru1/` inside instance gru1) → the per-instance state key is `statePath+itemId`.
   // `channelValue` returns the PLAYER's integrated value for that key+channel (absent → snap to target).
@@ -664,7 +669,7 @@ const monoFrameOf = (childFps: number, rctx: RenderCtx): number | undefined =>
  *  override) into the expr scope, and surface its color params. Shared by render/bbox/shape paths AND by
  *  the hit test, so the driven local frame and the subtree expressions read the SAME param values —
  *  what is touched is what is drawn. */
-export function instanceScope(doc: Doc, it: Instance, rctx: Pick<RenderCtx, 'expr' | 'paramsFor'>): { sym: SymbolDef | undefined; expr: ExprContext | undefined; color: Record<string, string> } {
+export function instanceScope(doc: Doc, it: Instance, rctx: Pick<RenderCtx, 'expr' | 'paramsFor' | 'stringsFor'>): { sym: SymbolDef | undefined; expr: ExprContext | undefined; color: Record<string, string>; text: Record<string, string> } {
   const sym = getSymbol(doc, it.symbolId)
   const resolved = resolveInstanceParams(sym, it)
   const runtime = rctx.paramsFor?.(it.id)
@@ -674,7 +679,8 @@ export function instanceScope(doc: Doc, it: Instance, rctx: Pick<RenderCtx, 'exp
   let any = false
   for (const _ in numeric) { any = true; break }
   const expr = any ? childScope(rctx.expr, numeric) : rctx.expr
-  return { sym, expr, color: resolved.color }
+  const over = rctx.stringsFor?.(it.id)
+  return { sym, expr, color: over?.color ? { ...resolved.color, ...over.color } : resolved.color, text: over?.text ? { ...resolved.text, ...over.text } : resolved.text }
 }
 
 /**
@@ -705,12 +711,12 @@ function renderContainerChildren(
     // editor shows it open), else 0. PLAYER (no freeze): the full local frame (animation + driven states).
     // Exposed params scope this instance's subtree (declared/call-site/state-initial + runtime override);
     // color params feed `fill <param>` regions.
-    const { sym, expr: subExpr, color } = instanceScope(doc, it, rctx)
+    const { sym, expr: subExpr, color, text } = instanceScope(doc, it, rctx)
     // (A) pose vs clock: a state machine pins `pose` (the symbol's cels) while `clock` keeps flowing into
     // the subtree → nested loops play under a pinned state. `clockFrame: clock` carries that forward.
     const childFps = subFps(sym?.timeline?.fps, rctx)
     const { pose, clock } = instanceFrames(sym, it, clockOf(frame, rctx), rctx.freezeNested, subExpr, monoFrameOf(childFps, rctx))
-    renderLayers(ctx, doc, containerLayers(doc, it), pose, hidden, seen, { fps: childFps, expr: subExpr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, paramsFor: rctx.paramsFor, clockFrame: clock, monoTime: rctx.monoTime, colorParams: color, scratched: rctx.scratched, scope: (rctx.scope ?? '') + it.id + '/', statePath: rctx.channelValue ? (rctx.statePath ?? '') + it.id + '/' : undefined, channelValue: rctx.channelValue }, parent, depth + 1)
+    renderLayers(ctx, doc, containerLayers(doc, it), pose, hidden, seen, { fps: childFps, expr: subExpr, freezeNested: rctx.freezeNested, image: rctx.image, filterCache: rctx.filterCache, imageEpoch: rctx.imageEpoch, itemState: rctx.itemState, paramsFor: rctx.paramsFor, stringsFor: rctx.stringsFor, textParams: text, clockFrame: clock, monoTime: rctx.monoTime, colorParams: color, scratched: rctx.scratched, scope: (rctx.scope ?? '') + it.id + '/', statePath: rctx.channelValue ? (rctx.statePath ?? '') + it.id + '/' : undefined, channelValue: rctx.channelValue }, parent, depth + 1)
   } else if (isGroup(it) && it.timeline) {
     // Local symbol (group with its own timeline) = a nested timeline too → rides the advancing clock so it
     // keeps playing under a state-pinned ancestor (frozen only in the editor's freezeNested mode).
@@ -1040,7 +1046,10 @@ function renderOneItem(
         else expandRect(acc, compose(matOf(ctx.getTransform()), it.transform), 0, 0, it.box.w, it.box.h)
         return acc
       }
-      paintLeafCached(ctx, rctx, doc, it, it.filters, opacity, devBBox, (c) => paintText(c, it))
+      // `text <param>`: the instance's value of that param (declared default, call site, or written at runtime).
+      const said = it.contentParam ? rctx.textParams?.[it.contentParam] : undefined
+      const shown = said !== undefined && said !== it.content ? { ...it, content: said } : it
+      paintLeafCached(ctx, rctx, doc, it, it.filters, opacity, devBBox, (c) => paintText(c, shown))
     } else if (isImage(it)) {
       const src = rctx.image?.(it.assetId) ?? null
       const devBBox = () => {

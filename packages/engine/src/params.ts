@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  params.ts — a symbol's exposed typed PARAMS (its public interface). PURE.
 //
-//  `color` params feed `fill <name>` (resolved per instance at render); `number`/`bool` params become
-//  variables in the symbol's expression scope. Values come from (lowest→highest precedence): the param's
+//  `color` params feed `fill <name>` and `text` params feed `text <name>` (both resolved per instance at
+//  render); `number`/`bool` params become variables in the symbol's expression scope. Values come from (lowest→highest precedence): the param's
 //  declared default, the instance call-site (`instance "Boat" { hull = #fff }`), then — for number/bool —
 //  a runtime override (`Boat.wave = 1.5`, layered on by the player). State params (the `states` block)
 //  also surface here as numeric scope values so internal expressions agree with the driven playhead.
@@ -12,7 +12,7 @@ import { stateValueOf, initialStateValue, stateFrame } from './states'
 import { resolveInstanceFrame } from './timeline'
 export type { ParamDef, ParamType } from '@flatkit/types'
 
-export type ResolvedParams = { numeric: Record<string, number>; color: Record<string, string> }
+export type ResolvedParams = { numeric: Record<string, number>; color: Record<string, string>; text: Record<string, string> }
 
 /** Parse a number/bool param literal (call-site raw, else the declared default), clamped to range. */
 function parseNumeric(def: ParamDef, raw: string | undefined): number {
@@ -33,7 +33,8 @@ function parseNumeric(def: ParamDef, raw: string | undefined): number {
 export function resolveInstanceParams(sym: SymbolDef | undefined, inst: Pick<Instance, 'params'>): ResolvedParams {
   const numeric: Record<string, number> = {}
   const color: Record<string, string> = {}
-  if (!sym) return { numeric, color }
+  const text: Record<string, string> = {}
+  if (!sym) return { numeric, color, text }
   // State machines: seed the initial state value so internal expressions match the driven playhead.
   for (const sm of sym.states ?? []) {
     const raw = inst.params?.[sm.param]
@@ -43,9 +44,10 @@ export function resolveInstanceParams(sym: SymbolDef | undefined, inst: Pick<Ins
   for (const def of sym.params ?? []) {
     const raw = inst.params?.[def.name]
     if (def.type === 'color') color[def.name] = (raw ?? def.default).trim()
+    else if (def.type === 'text') text[def.name] = raw ?? def.default // as written: a label keeps its spaces
     else numeric[def.name] = parseNumeric(def, raw)
   }
-  return { numeric, color }
+  return { numeric, color, text }
 }
 
 /**

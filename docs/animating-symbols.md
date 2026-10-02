@@ -303,18 +303,23 @@ symbol "Boat" {
 ```
 
 - `params { <type> <name> = <default> [range <min> <max>] ["doc"] … }` — `<type>` is `color`, `number`,
-  or `bool`. The default, range, and doc string make the interface self-describing.
+  `bool` or `text`. The default, range, and doc string make the interface self-describing.
 - **`color` params** are used as a paint — `fill hull`, `stroke hull <width>`, a **gradient stop**
   (`0:hull@0.8`, optional `@alpha`), or a **`tint hull <amount>`** (anywhere a `#color` literal goes).
   Resolved per instance at render; *not* available in numeric expressions.
+- **`text` params** are what a text says — `text libelle at …` (the bare name instead of a quoted
+  string) draws the instance's value: a reusable button carries its own label. Declared with a quoted
+  default: `text libelle = "OK" "label of the button"`.
 - **`number` / `bool` params** become **variables in the symbol's expressions** (`wave`, `flag`). `bool`
   reads as `1`/`0`. (`flatc --check` knows them — reading a declared param in an `expr` is not an "unknown
   variable".)
 
 > The `timeline`, `params`, and `states` header blocks may appear in **any order** before the layers.
 
-Set params at the instance **call-site** (literals), in `--preview`, or — for `number`/`bool` — at
-runtime (`Boat.wave = 1.5`, see below):
+Set params at the instance **call-site** (literals), in `--preview`, or at runtime (see below):
+`Boat.wave = 1.5` for a `number`/`bool` (any expression), `Boat.hull = #33aa33` for a `color` (a color
+literal), `Bouton.libelle = "Bravo"` for a `text` (a quoted text). `flatc --check` reports a param the
+symbol does not declare, a value of the wrong type or out of its range, and a state that does not exist.
 
 ```
 instance "Boat" as "Hero" at center { hull = #1a5f3a, wave = 1.5, flag = false }

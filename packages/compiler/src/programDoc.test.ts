@@ -1050,3 +1050,49 @@ describe('programDoc — a variable hidden by a built-in name', () => {
     expect(hidden(`size 200 200\nvar score = 0\nfn twice(n) = n * 2\n${scene}`)).toEqual([])
   })
 })
+
+// flatink/flatink#10 — nothing checked what an instance is GIVEN: a misspelt param, a value of the wrong
+// type or out of range, a state that does not exist. The scene simply drew wrong.
+describe('programDoc — the params and states given to an instance', () => {
+  const LIB = [
+    'symbol "Robot" {', '  timeline 24 24', '  params {', '    color corps = #cc3333', '    number queue = 1 range 0 2', '    bool casque = true', '    text nom = "Robo"', '  }',
+    '  states bras { repos at 0   leve at 24   initial repos   transition 6 }',
+    '  layer "l" {', '    rect 0 0 20 20 fill corps', '  }', '}', '',
+  ].join('\n')
+  const prog = (inst: string, behavior = '') => `size 200 200\nvar v = 0\nscene {\n  layer "c" {\n    instance "Robot" as "R" at 50,50${inst}\n  }\n}\n${behavior}\n`
+  const about = (inst: string, behavior = '') => docStructureWarnings(compileFlatpack(prog(inst, behavior), [LIB])).map((w) => w.diag.message).filter((m) => /Robot|"R"|\bR\./.test(m))
+
+  it('a correct instance says nothing', () => {
+    expect(about(' { corps = #2e86de, queue = 2, casque = false, nom = "Zed", bras = leve }')).toEqual([])
+    expect(about('', 'when loaded {\n  R.bras = leve\n  R.queue = v + 1\n  R.corps = #33aa33\n  R.nom = "Zed"\n}')).toEqual([])
+  })
+  it('an unknown param is named, with the one it probably meant', () => {
+    const ws = about(' { corp = #2e86de }')
+    expect(ws).toHaveLength(1)
+    expect(ws[0]).toMatch(/unknown param "corp".*did you mean "corps"/)
+  })
+  it('a value of the wrong type', () => {
+    expect(about(' { corps = 3 }')[0]).toMatch(/"corps".*color.*"3"/)
+    expect(about(' { queue = #ffffff }')[0]).toMatch(/"queue".*number/)
+    expect(about(' { casque = peut }')[0]).toMatch(/"casque".*true or false/)
+  })
+  it('a number outside its range', () => {
+    expect(about(' { queue = 5 }')[0]).toMatch(/"queue" = 5.*range 0\.\.2/)
+  })
+  it('a state that does not exist, at the instance and in an assignment', () => {
+    expect(about(' { bras = haut }')[0]).toMatch(/"haut" is not a state of "bras".*repos, leve/)
+    expect(about('', 'when loaded {\n  R.bras = haut\n}')[0]).toMatch(/"haut" is not a state of "bras".*repos, leve/)
+  })
+  it('an assignment to a param the symbol does not have, or to a colour/text with the wrong kind of value', () => {
+    expect(about('', 'when loaded {\n  R.bra = leve\n}')[0]).toMatch(/unknown param "bra".*did you mean "bras"/)
+    expect(about('', 'when loaded {\n  R.corps = v + 1\n}')[0]).toMatch(/"corps".*color literal/)
+    expect(about('', 'when loaded {\n  R.nom = v\n}')[0]).toMatch(/"nom".*quoted text/)
+  })
+  it('a state param may be driven by a variable or an expression', () => {
+    expect(about('', 'when loaded {\n  R.bras = v\n  R.bras = v * 0.5\n}')).toEqual([])
+  })
+  it('an assignment whose target is no instance of the scene', () => {
+    const ws = docStructureWarnings(compileFlatpack(prog('', 'when loaded {\n  Rr.bras = leve\n}'), [LIB])).map((w) => w.diag.message).filter((m) => /Rr\b/.test(m))
+    expect(ws[0]).toMatch(/no instance named "Rr".*did you mean "R"/)
+  })
+})

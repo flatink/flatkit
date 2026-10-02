@@ -1504,6 +1504,7 @@ export class FlatPlayer {
     this.dropGestures() // …and whatever was being held belonged to the old one
     this.reseedDerivedState() // …then the seeded variables put the derived state back (trace progress, scratched grid)
     this.paramRt.clear() // new document -> per-instance param transitions reset
+    this.stringRt.clear()
     this.channelState.clear() // new document -> modifier integrator state resets
     this.drawnMods.clear()
     this.velocityState.clear()
@@ -1551,7 +1552,7 @@ export class FlatPlayer {
     const expr = this.playing && this.simActive && this.prevSimVars && this.simAlpha < 1
       ? this.exprCtx(lerpVars(this.prevSimVars, this.vars, this.simAlpha))
       : this.exprCtx()
-    renderLayers(ctx, doc, doc.layers, this.frame, null, new Set(), { fps: this.fps, expr, image: (id) => this.imageFor(id), filterCache: this.filterCache, imageEpoch: this.imageEpoch, itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), monoTime: this.mono / this.fps, ...(this.scratched.size ? { scratched: this.scratched } : {}), ...(this.hasModifiers ? { statePath: '', channelValue: (key: string, ch: string) => this.channelValueFor(key, ch) } : {}) })
+    renderLayers(ctx, doc, doc.layers, this.frame, null, new Set(), { fps: this.fps, expr, image: (id) => this.imageFor(id), filterCache: this.filterCache, imageEpoch: this.imageEpoch, itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), stringsFor: this.stringsOf, monoTime: this.mono / this.fps, ...(this.scratched.size ? { scratched: this.scratched } : {}), ...(this.hasModifiers ? { statePath: '', channelValue: (key: string, ch: string) => this.channelValueFor(key, ch) } : {}) })
     ctx.restore()
   }
 
@@ -1574,7 +1575,7 @@ export class FlatPlayer {
    *  an asset's own "feel" must animate even with no scene behavior (this is the whole point of the feature). */
   private advanceChannelModifiers(steps: number): void {
     if (!this.hasModifiers || steps <= 0) return
-    const rctx: RenderCtx = { fps: this.fps, expr: this.exprCtx(), itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), monoTime: this.mono / this.fps, statePath: '' }
+    const rctx: RenderCtx = { fps: this.fps, expr: this.exprCtx(), itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), stringsFor: this.stringsOf, monoTime: this.mono / this.fps, statePath: '' }
     // `velocity(arg)` resolver for this tick: per-(key,channel) prev values, delta PER SECOND (dt = real time
     // advanced this tick). A fresh closure per target carries its own occurrence index → one slot per velocity().
     const dt = steps * SIM_STEP
@@ -1624,6 +1625,24 @@ export class FlatPlayer {
     const sym = getSymbol(this.doc, inst.symbolId)
     const sm = stateMachineByParam(sym?.states, param)
     const trimmed = raw.trim()
+    // A `color` or `text` param is not a number: it takes a literal (`#33aa33`, `"Bravo"`), kept per
+    // instance and handed to the renderer next to the declared values. Anything else is ignored — the
+    // instance keeps what it had, and `--check` says why.
+    const typed = sym?.params?.find((p) => p.name === param && (p.type === 'color' || p.type === 'text'))
+    if (typed) {
+      const value = typed.type === 'color'
+        ? (/^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(trimmed) ? trimmed : undefined)
+        : (/^"(?:[^"\\]|\\.)*"$/.test(trimmed) ? trimmed.slice(1, -1).replace(/\\(.)/g, (_m, c: string) => (c === 'n' ? '\n' : c)) : undefined)
+      if (value === undefined) return
+      let st = this.stringRt.get(inst.id)
+      if (!st) { st = { color: {}, text: {} }; this.stringRt.set(inst.id, st) }
+      if (st[typed.type as 'color' | 'text'][param] === value) return
+      st[typed.type as 'color' | 'text'][param] = value
+      this.imageEpoch++ // a baked (tinted/filtered) composite of this instance is stale
+      this.dirty = true
+      if (this.actionDepth === 0) this.render()
+      return
+    }
     let targetVal = sm && sm.states.some((s) => s.name === trimmed) ? stateValueOf(sm, trimmed) : this.evalNumber(raw)
     if (!Number.isFinite(targetVal)) return
     // Clamp a declared number param to its range (consistent with call-site/default resolution).
@@ -1648,6 +1667,8 @@ export class FlatPlayer {
   }
 
   /** Current values of an instance's params (for drawScene → drives the local frame + the subtree scope). */
+  private readonly stringRt = new Map<string, { color: Record<string, string>; text: Record<string, string> }>() // runtime color/text params, per instance
+  private readonly stringsOf = (id: string) => this.stringRt.get(id)
   private readonly paramsOf = (id: string): Record<string, number> | undefined => this.paramsForInstance(id)
   private paramsForInstance(id: string): Record<string, number> | undefined {
     const params = this.paramRt.get(id)

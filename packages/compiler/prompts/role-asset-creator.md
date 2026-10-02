@@ -69,7 +69,9 @@ symbol "Boat" {
   }
 }
 ```
-- Types: `color`, `number` (`number wave = 1 range 0 2 "…"`), `bool`.
+- Types: `color`, `number` (`number wave = 1 range 0 2 "…"`), `bool`, `text` (`text label = "OK" "…"`).
+- A `text` param is drawn with `text label at …` (the bare name instead of a quoted string): a button
+  carries its own label, set per instance with `{ label = "Play" }`.
 - `color` params go anywhere a `#color` literal goes (`fill hull`, `stroke hull 3`).
 - Preview a restyle: `flatc --preview Boat.flat --render --set hull=#1a5f3a -o boat.png`.
 

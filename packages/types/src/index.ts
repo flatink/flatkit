@@ -410,7 +410,7 @@ export type StateMachine = {
 }
 
 /** Type of an exposed symbol param. `color` → a fill (`fill <name>`); `number`/`bool` → a scope variable. */
-export type ParamType = 'color' | 'number' | 'bool'
+export type ParamType = 'color' | 'number' | 'bool' | 'text'
 /**
  * One exposed param of a symbol — its public, named, defaulted, documented interface. A consumer sets it
  * at the instance call-site (`instance "Boat" { hull = #fff }`), in `--preview --set`, or (number/bool)
@@ -420,7 +420,7 @@ export type ParamType = 'color' | 'number' | 'bool'
 export type ParamDef = {
   name: string
   type: ParamType
-  default: string // raw default literal (#color / number / true|false), parsed per `type`
+  default: string // raw default literal (#color / number / true|false / the text itself), parsed per `type`
   min?: number // number range (optional, advisory/clamp)
   max?: number
   doc?: string // one-line description (the interface, for tooling / a restyle model)
@@ -463,6 +463,7 @@ export type Text = {
   name: string
   transform: Transform
   content: string
+  contentParam?: string // `text <param>` inside a symbol: the content is the instance's `text` param of that name (`content` = its default)
   font: string // CSS font stack (e.g. "Geist, sans-serif")
   size: number // px in local coords
   align: 'left' | 'center' | 'right'
