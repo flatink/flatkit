@@ -141,3 +141,64 @@ describe('rendering — a large opaque shape, offset by its group, does not wipe
     }
   }
 })
+
+// flatink/flatink#38 — to LOOK at a state reached by playing (third right answer, piece dropped, level 2),
+// rendering only started from the initial values: every picture cost a copy of the program with other
+// `var`s, dozens of times per activity. The replay and the renderer drive the same player; nothing joined them.
+describe('rendering after a gesture script', () => {
+  const SRC = `size 200 100
+background #ffffff
+var lit = 0
+var count = 0
+scene {
+  layer "a" {
+    group "Button" at 50,50 { layer "c" { rect -30 -30 60 60 fill #3366cc } }
+    group "Lamp" at 150,50 { layer "c" { rect -30 -30 60 60 fill #cc3333 } }
+  }
+}
+object "Button" { when clicked { lit = 1
+  count = count + 1
+  send "on" } }
+object "Lamp" { opacity = lit }
+`
+  const pixel = async (bytes: Uint8Array, x: number, y: number) => {
+    const skiaPkg = 'skia-canvas'
+    const { loadImage, Canvas } = (await import(skiaPkg)) as { loadImage: (b: Buffer) => Promise<{ width: number; height: number }>; Canvas: new (w: number, h: number) => { getContext(t: '2d'): CanvasRenderingContext2D } }
+    const img = await loadImage(png(bytes))
+    const g = new Canvas(img.width, img.height).getContext('2d')
+    g.drawImage(img as unknown as CanvasImageSource, 0, 0)
+    return [...g.getImageData(x, y, 1, 1).data]
+  }
+  const WHITE = [255, 255, 255, 255], RED = [204, 51, 51, 255]
+
+  it('`play` replays gestures on the renderer, `capture` draws the scene as they left it', async () => {
+    const r = await createRenderer(compileFlatpack(SRC), { scale: 1, interactive: true })
+    try {
+      expect(await pixel(await r.capture(), 150, 50)).toEqual(WHITE) // the lamp is off
+      const res = r.play([{ type: 'tap', target: 'Button' }])
+      expect(res.sends.map((e) => e.name)).toEqual(['on'])
+      expect(await pixel(await r.capture(), 150, 50)).toEqual(RED) // …and on, in the picture
+    } finally { r.close() }
+  }, 60_000)
+
+  it('a script in several calls keeps going where it was (one `expect` window, one state)', async () => {
+    const r = await createRenderer(compileFlatpack(SRC), { scale: 1, interactive: true })
+    try {
+      r.play([{ type: 'tap', target: 'Button' }])
+      const res = r.play([{ type: 'tap', target: 'Button' }, { type: 'expect', vars: { count: 3 } }])
+      expect(res.expectFailures).toEqual(['expect: count expected 3, got 2'])
+    } finally { r.close() }
+  }, 60_000)
+
+  it('`renderDocToPng` takes a `script`: replayed after the seek, before the capture', async () => {
+    const off = await renderDocToPng(compileFlatpack(SRC), { scale: 1 })
+    const on = await renderDocToPng(compileFlatpack(SRC), { scale: 1, script: [{ type: 'tap', target: 'Button' }] })
+    expect(await pixel(off, 150, 50)).toEqual(WHITE)
+    expect(await pixel(on, 150, 50)).toEqual(RED)
+  }, 60_000)
+
+  it('a renderer that was not opened for it refuses to play, and says how', async () => {
+    const r = await createRenderer(compileFlatpack(SRC), { scale: 1 })
+    try { expect(() => r.play([{ type: 'tap', target: 'Button' }])).toThrow(/interactive: true/) } finally { r.close() }
+  }, 60_000)
+})

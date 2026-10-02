@@ -34,7 +34,7 @@ every frame { if score >= 10 { send "win" } }
 circle cx cy r   ·   ellipse cx cy rx ry   ·   rect x y w h [r | rx ry]   ·   path "M0 0 L10 0 L10 10 Z"
 text "Hi" font "sans-serif" size 24 align center line 1.2 color #fff box 200 40 [bold] [italic] [wrap]
 image "id" w h at -w/2,-h/2        // origin top-left → center yourself ; needs: asset "id" "f.png" image
-group "Name" at x,y pivot px,py { layer "c" { … } }      // nests its own layers
+group "Name" at x,y pivot px,py [rotate deg] [scale s] { layer "c" { … } }   // nests its own layers
 instance "Symbol" as "Name" at x,y                        // place a symbol from a .flat
 polyline xs ys [count "n"] [closed]                       // straight segments through two array vars, live
 ```
@@ -102,7 +102,7 @@ State/funcs: `var a = 0` · `var arr = fill(8,0)` (also as an ASSIGNMENT: `arr =
 · `each "Key" as i { when clicked { … } }` · `at center` · `align top of "Bin" [offset dx,dy]`.
 
 ## Expressions
-Pure numeric, no booleans (compare/logic → 1/0). Ops: `?: || && == != < > <= >= + - * / % - ! . [] fn()`.
+Pure numeric, no booleans (compare/logic → 1/0). Ops: `?: || && == != < > <= >= + - * / % - ! . [] fn()` · inline table `[10, 20, 30][i]`.
 Funcs: `sin cos tan atan2 abs sqrt pow floor ceil round sign min max hypot clamp(x,lo,hi) lerp(a,b,t)
 mod(a,b) between(x,lo,hi) rad(deg) deg(rad) turns(n)`. Const `PI TAU E`.
 Reserved: `time`(s, **wraps**) `clock`(s, **monotone**) `frame` `value` `mouse.x/y` `keys.<Key>` `self.*` `<Name>.*`.

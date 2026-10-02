@@ -36,9 +36,11 @@ export type MediaMap = Record<string, { mime: string; data: string }>
  */
 export function compileFlatpack(programSrc: string, assetSrcs: string[] = [], media: MediaMap = {}): Doc {
   const libs = assetSrcs.map((src) => parseFlatLib(src))
-  const symbols = libs.flatMap((l) => l.symbols)
-  const folders = libs.flatMap((l) => l.folders) // library folders (organization)
   const prog = parseProgramFull(programSrc)
+  // The program's OWN symbols (`symbol "X" { … }` written in the `.flatink`) come last: on a name both
+  // declare, the program's wins over the library's.
+  const symbols = [...libs.flatMap((l) => l.symbols), ...(prog.symbols ?? [])]
+  const folders = libs.flatMap((l) => l.folders) // library folders (organization)
   const byName = new Map(symbols.map((s) => [s.name, s.id]))
   symbols.forEach((s) => resolveRefs(s.layers, byName)) // cross-lib refs
   resolveRefs(prog.layers, byName) // program refs

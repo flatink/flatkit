@@ -591,10 +591,9 @@ describe('headless -- turning one of two overlapping targets', () => {
   ].join('\n')
   const play = (gestures: Gesture[]) => playHeadless(parseProgramFull(clock) as unknown as Doc, gestures).vars
 
-  it('without `from`, the semantic gesture grabs whatever is on TOP (the reported case)', () => {
-    const vars = play([{ type: 'turn', target: 'Hours', angle: 120 }])
-    expect(vars.minuteDeg).toBeCloseTo(120, 6) // …the hand it did not name
-    expect(vars.hourDeg).toBe(0)
+  it('without `from`, the gesture cannot reach the hand underneath — and says which one is in the way', () => {
+    // It used to turn the hand on TOP, the one the test did not name, in silence (the reported case).
+    expect(() => play([{ type: 'turn', target: 'Hours', angle: 120 }])).toThrow(/"Hours".*"Minutes" is grabbed there instead.*"from"/s)
   })
 
   it('`from` names the press point, so the hand underneath can be turned', () => {
@@ -824,5 +823,70 @@ describe('headless -- a gesture by NAME aims at where the object stands NOW', ()
   it('an object moved by `when loaded` through an array is tapped where it went, not where the file put it', () => {
     const doc = parseProgramFull('size 300 100\nvar n = 0\nvar xs = [50, 250]\nscene {\n  layer "c" {\n    group "B" at 0,50 {\n      layer "a" {\n        circle 0 0 20 fill #3366cc\n      }\n    }\n  }\n}\nwhen loaded {\n  xs[0] = 250\n}\nobject "B" {\n  x = xs[0]\n  when clicked {\n    n = n + 1\n  }\n}\n')
     expect(playHeadless(doc, [{ type: 'tap', target: 'B' }]).vars.n).toBe(1)
+  })
+})
+
+// flatink/flatink#16 — a replayed gesture took no time at all: `every frame` never ran between a press, its
+// moves and its release, so a rule written there did not see the drag. A real pointer stays at least one
+// frame on each position. Only `wait`, `key`, `wheel` and `turn` advanced the simulation.
+describe('headless -- a pointer event takes a frame', () => {
+  const SRC = [
+    'size 300 100', 'var px = 50', 'var py = 50', 'var frames = 0', 'var seenMax = 0',
+    'scene { layer "c" { group "P" at 0,0 { layer "a" { circle 0 0 15 fill #cc3333 } } } }',
+    'object "P" {', '  x = px', '  y = py', '  drag px, py', '}',
+    'every frame {', '  frames = frames + 1', '  seenMax = max(seenMax, px)', '}',
+  ].join('\n')
+  const doc = () => parseProgramFull(SRC) as unknown as Doc
+  const LOW: Gesture[] = [{ type: 'down', x: 50, y: 50 }, { type: 'move', x: 100, y: 50 }, { type: 'move', x: 150, y: 50 }, { type: 'move', x: 200, y: 50 }, { type: 'up', x: 200, y: 50 }]
+
+  it('low-level down / move / up: `every frame` sees every position', () => {
+    const { vars } = playHeadless(doc(), LOW)
+    expect(vars.frames).toBe(5) // one step per event
+    expect(vars.seenMax).toBe(200)
+  })
+  it('the semantic gestures too (tap: press + release; drag: press + move + release)', () => {
+    expect(playHeadless(doc(), [{ type: 'tap', target: 'P' }]).vars.frames).toBe(2)
+    expect(playHeadless(doc(), [{ type: 'tap', x: 250, y: 20 }]).vars.frames).toBe(2)
+  })
+  it('`settle: 0` gives the instantaneous replay back, for the whole script', () => {
+    const { vars } = playHeadless(doc(), LOW, { settle: 0 })
+    expect(vars.frames).toBe(0)
+    expect(vars.px).toBe(200) // the gesture itself is unchanged
+  })
+  it('`settle` is the number of steps per event', () => {
+    expect(playHeadless(doc(), LOW, { settle: 3 }).vars.frames).toBe(15)
+  })
+  it('`wait` still counts what it says, on top', () => {
+    expect(playHeadless(doc(), [...LOW, { type: 'wait', frames: 10 }]).vars.frames).toBe(15)
+  })
+})
+
+// flatink/flatink#17 — `turn` without `from` pressed at the object's ORIGIN, which for a hand drawn from its
+// pivot is the very edge of the shape: nothing was grabbed, nothing moved, and nothing said so.
+describe('headless -- `turn` presses on the shape, or says it could not', () => {
+  const hand = (extra = '') => [
+    'size 300 300', 'var a = 0',
+    'scene { layer "c" {',
+    '  circle 150 150 100 fill #eeeeee',
+    '  group "Hand" at 150,150 pivot 0,0 { layer "a" { rect -6 -90 12 88 fill #333333 } }',
+    extra,
+    '} }',
+    'object "Hand" {', '  turnDeg a around 150,150', '  rotationDeg = a', '}',
+  ].join('\n')
+  const play = (src: string, g: Gesture[]) => playHeadless(parseProgramFull(src) as unknown as Doc, g)
+
+  it('with no `from`, the press lands on the shape: the hand turns', () => {
+    expect(play(hand(), [{ type: 'turn', target: 'Hand', angle: 180 }]).vars.a).toBeCloseTo(180, 6)
+  })
+  it('`angle` is the value the gesture ENDS at, wherever the press was', () => {
+    expect(play(hand(), [{ type: 'turn', target: 'Hand', angle: 90, from: [150, 70] }]).vars.a).toBeCloseTo(90, 6)
+    expect(play(hand(), [{ type: 'turn', target: 'Hand', angle: 90, from: [150, 100] }]).vars.a).toBeCloseTo(90, 6)
+  })
+  it('a press that cannot reach the object is an error naming the way out, not a silent no-op', () => {
+    // A cover drawn over the whole hand: nothing of it can be pressed.
+    const covered = hand('  group "Lid" at 150,150 { layer "a" { rect -100 -100 200 200 fill #ffffff } }') + '\nobject "Lid" { when pressed { a = a } }'
+    expect(() => play(covered, [{ type: 'turn', target: 'Hand', angle: 90 }])).toThrow(/"Hand".*from/s)
+    // …and an explicit `from` that misses is reported the same way.
+    expect(() => play(hand(), [{ type: 'turn', target: 'Hand', angle: 90, from: [10, 10] }])).toThrow(/\(10, ?10\).*"Hand"/s)
   })
 })

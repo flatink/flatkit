@@ -371,11 +371,35 @@ export function printProgram(doc: Program): string {
   return out
 }
 
+/**
+ * The plain symbols a PROGRAM declares for itself: `symbol "X" { … }` at the top level, outside the scene —
+ * the very block a `.flat` library holds (its own timeline, cels, states, params). `rest` is the program
+ * with those blocks BLANKED (newlines kept, so every position still maps onto the source); `flat` is their
+ * text, to be read as a library. A parameterized `symbol "X"(…) { … }` is a template, not one of these.
+ */
+export function splitLocalSymbols(src: string): { rest: string; flat: string } {
+  if (!/\bsymbol\b/.test(src)) return { rest: src, flat: '' }
+  const re = /\bscene\s*\{|\bsymbol\s*"(?:[^"\\]|\\.)*"\s*(?:in\s*"(?:[^"\\]|\\.)*"\s*)?\{/g
+  let rest = '', flat = '', cursor = 0
+  for (;;) {
+    re.lastIndex = cursor
+    const m = re.exec(src)
+    if (!m) break
+    const close = matchBrace(src, m.index + m[0].length - 1)
+    if (close < 0) break
+    if (m[0].startsWith('scene')) { rest += src.slice(cursor, close + 1) } // the scene is walked over, never searched
+    else { rest += src.slice(cursor, m.index) + blankSpan(src.slice(m.index, close + 1)); flat += src.slice(m.index, close + 1) + '\n' }
+    cursor = close + 1
+  }
+  return { rest: rest + src.slice(cursor), flat }
+}
+
 /** Parses the COMPOSITION of a `.flatink` program (`@Name` refs, resolved at compile time). */
 export function parseProgram(src: string): Program {
-  const expanded = expandSceneRepeats(src)
+  const { rest: expanded, flat } = splitLocalSymbols(expandSceneRepeats(src))
   const parser = new FlatParser(tokenize(expanded), expanded)
   const prog = parser.program()
+  if (flat) prog.symbols = parseFlatLib(flat).symbols // the program's own symbols; the compiler merges the libraries'
   resolveAligns(prog, parser.pendingAligns) // `align …` anchors: bbox computable once the scene is built
   resolveTextPaths(prog, parser.pendingTextPaths) // `along "<id>"`: bake the shape outline into textPath
   return prog
@@ -620,7 +644,7 @@ export function expandSceneSugar(src: string): { src: string; symbolGroups: Map<
   const { src: s2, templates } = extractSymbolTemplates(sd)
   const hasParamInstance = /\binstance\s+"(?:[^"\\]|\\.)*"\s*\(/.test(s2) // parameterized call → always expand (otherwise hard error)
   if (!/\brepeat\b/.test(s2) && !/\$\(/.test(s2) && templates.size === 0 && !hasParamInstance) return { src: s2, symbolGroups, defs }
-  const si = s2.search(/\bscene\b/)
+  const si = splitLocalSymbols(s2).rest.search(/\bscene\b/) // same offsets; a local symbol is not the scene
   const open = si >= 0 ? s2.indexOf('{', si) : -1
   const close = open >= 0 ? matchBrace(s2, open) : -1
   if (close < 0) return { src: s2, symbolGroups, defs }
@@ -877,6 +901,7 @@ const HEADER_DIRECTIVE = /^[ \t]*(?:size|background|timeline|var|asset|sound|use
  *  offset stays 1:1 with the source. `bodyAt` = absolute offset of each object body (drives line mapping);
  *  `at` = offset of the `object` KEYWORD (so a diagnostic about the block itself points at its header). */
 function extractBehavior(expanded: string): { sceneText: string; tailAt: number; objects: { name: string; body: string; bodyAt: number; at: number }[] } {
+  expanded = splitLocalSymbols(expanded).rest // a program's own `symbol "X" { … }` blocks are composition, not behavior
   const si = expanded.search(/\bscene\b/)
   const open = si >= 0 ? expanded.indexOf('{', si) : -1
   const close = open >= 0 ? matchBrace(expanded, open) : -1
@@ -1207,7 +1232,7 @@ function tokenize(src: string): Tok[] {
   return out
 }
 
-type ParsedAttrs = { opacity?: number; pivot?: { x: number; y: number }; tint?: Tint; filters?: Filter[]; expressions?: Partial<Record<BindChannel, string>>; modifiers?: Partial<Record<ExprChannel, ChannelModifier>>; noHit?: boolean; blend?: BlendMode; hitbox?: { w: number; h: number }; clip?: { x: number; y: number; w: number; h: number }; playback?: InstancePlayback }
+type ParsedAttrs = { opacity?: number; pivot?: { x: number; y: number }; tint?: Tint; filters?: Filter[]; expressions?: Partial<Record<BindChannel, string>>; modifiers?: Partial<Record<ExprChannel, ChannelModifier>>; noHit?: boolean; blend?: BlendMode; hitbox?: { w: number; h: number }; clip?: { x: number; y: number; w: number; h: number }; playback?: InstancePlayback; rotate?: number; scaleX?: number; scaleY?: number }
 
 /** An `align <point> of "target" [offset]` pending: `tf` is the SHARED ref with the item, mutated
  *  in place by resolveAligns once the scene is parsed (the bbox of `target` is then computable). */
@@ -1701,8 +1726,9 @@ class FlatParser {
   private group(): Group {
     this.eat('group')
     const name = this.str()
-    const transform = this.transform(name)
+    const at = this.transform(name)
     const a = this.poseAttrs()
+    const transform = this.placed(at, a)
     this.eat('{')
     const timeline = this.is('timeline') ? this.timeline() : undefined
     const layers: Layer[] = []
@@ -1715,8 +1741,9 @@ class FlatParser {
     const symName = this.str()
     let name = symName
     if (this.is('as')) { this.next(); name = this.str() }
-    const transform = this.transform(name)
+    const at = this.transform(name)
     const a = this.poseAttrs()
+    const transform = this.placed(at, a)
     const params = this.is('{') ? this.callSiteParams() : undefined // `instance "X" { hull = #fff, wave = 1.5 }`
     // `synced` is the default → store a `playback` only for the non-default modes (keeps round-trips minimal).
     const playback = a.playback && a.playback.mode !== 'synced' ? a.playback : undefined
@@ -1797,7 +1824,7 @@ class FlatParser {
       else break
     }
     const a = this.poseAttrs()
-    const t: Text = { id: id ?? uid('t'), kind: 'text', name: content || 'Text', ...(id !== undefined ? { idExplicit: true } : {}), transform, content, ...(contentParam ? { contentParam } : {}), font, size, align, lineHeight, color, ...(stroke ? { stroke } : {}), ...(weight ? { weight } : {}), ...(italic ? { italic } : {}), box, ...(wrap ? { wrap: true } : {}), ...(bind ? { bind } : {}), ...(decimals != null ? { decimals } : {}), ...leafAttrs(a), ...exprAttr(a), ...modAttr(a) }
+    const t: Text = { id: id ?? uid('t'), kind: 'text', name: content || 'Text', ...(id !== undefined ? { idExplicit: true } : {}), transform: this.placed(transform, a), content, ...(contentParam ? { contentParam } : {}), font, size, align, lineHeight, color, ...(stroke ? { stroke } : {}), ...(weight ? { weight } : {}), ...(italic ? { italic } : {}), box, ...(wrap ? { wrap: true } : {}), ...(bind ? { bind } : {}), ...(decimals != null ? { decimals } : {}), ...leafAttrs(a), ...exprAttr(a), ...modAttr(a) }
     // text-on-path: inline `along path "<d>"` is baked here (literal — author owns orientation); a named
     // `along "<id>"` defers to resolveTextPaths (forward refs allowed). `side over`/`spacing 0` = defaults → dropped.
     const tpAttrs = { ...(startFrac != null ? { start: startFrac } : {}), ...(side === 'under' ? { side } : {}), ...(spacing ? { spacing } : {}), ...(startExpr ? { startExpr } : {}), ...(spacingExpr ? { spacingExpr } : {}) }
@@ -1810,8 +1837,9 @@ class FlatParser {
     const assetId = this.str()
     const w = this.num(), h = this.num()
     const name = this.is('as') ? (this.next(), this.str()) : 'Image'
-    const transform = this.transform(name)
+    const at = this.transform(name)
     const a = this.poseAttrs()
+    const transform = this.placed(at, a)
     return { id: uid('im'), kind: 'image', name, transform, assetId, w, h, ...leafAttrs(a), ...exprAttr(a), ...modAttr(a) }
   }
   /** Coordinate of an `at`: a number, or the `center` keyword (canvas center on the relevant axis). */
@@ -1858,6 +1886,20 @@ class FlatParser {
     }
     return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }
   }
+  /** Bakes a declared `rotate` / `scale` into the item's matrix, around its pivot — which stays where `at`
+   *  put it, exactly as a `pose` does. Nothing declared → the very same transform object (an `align` keeps
+   *  its shared reference). */
+  private placed(t: Transform, a: ParsedAttrs): Transform {
+    if (a.rotate == null && a.scaleX == null && a.scaleY == null) return t
+    if (this.aligns.some((al) => al.tf === t)) this.fail('`rotate` / `scale` cannot be declared on an item placed with `align`: place it with `at <x>,<y>`, or turn it from an `object` block')
+    const pv = a.pivot ?? { x: 0, y: 0 }
+    const r = ((a.rotate ?? 0) * Math.PI) / 180, sx = a.scaleX ?? 1, sy = a.scaleY ?? 1
+    const cos = Math.cos(r), sin = Math.sin(r)
+    const la = sx * cos, lb = sx * sin, lc = -sy * sin, ld = sy * cos
+    // The pivot's place in the parent is the one the bare `at` gives it.
+    const px = t.a * pv.x + t.c * pv.y + t.e, py = t.b * pv.x + t.d * pv.y + t.f
+    return { a: la, b: lb, c: lc, d: ld, e: px - (la * pv.x + lc * pv.y), f: py - (lb * pv.x + ld * pv.y) }
+  }
   private poseAttrs(): ParsedAttrs {
     const a: ParsedAttrs = {}
     for (;;) {
@@ -1865,6 +1907,11 @@ class FlatParser {
       else if (this.is('pivot')) { this.next(); const x = this.num(); this.eat(','); const y = this.num(); a.pivot = { x, y } }
       else if (this.is('tint')) { this.next(); a.tint = this.tintValue() }
       else if (this.is('filter')) { (a.filters ??= []).push(this.filter()) }
+      // A FIXED rotation / scale, where the item is declared — the units of a `pose` (degrees, multipliers).
+      else if (this.is('rotate')) { this.next(); a.rotate = this.num() }
+      else if (this.is('scale')) { this.next(); a.scaleX = a.scaleY = this.num() }
+      else if (this.is('scaleX')) { this.next(); a.scaleX = this.num() }
+      else if (this.is('scaleY')) { this.next(); a.scaleY = this.num() }
       else if (this.is('expr')) {
         // Same channel spellings as a modifier (`rotate`, `rotationDeg`), and nothing else: a channel the
         // renderer does not know was stored as written, compiled, and animated nothing.
@@ -1960,6 +2007,16 @@ const exprAttr = (a: ParsedAttrs) => (a.expressions ? { expressions: a.expressio
 // Stateful channel modifiers: same poseable leaves.
 const modAttr = (a: ParsedAttrs) => (a.modifiers ? { modifiers: a.modifiers } : {})
 
+/** The composition sugar of a program's scene, in a LIBRARY: `def`, `repeat <i> from <a> to <b> { … }` and
+ *  `$(expr)`. A symbol holds no script, so every `repeat` of a `.flat` is this one. A library that uses
+ *  none of them is returned untouched (same text, same positions in a syntax error). */
+function expandLibSugar(src: string): string {
+  if (!/\b(?:repeat|def)\b/.test(src) && !src.includes('$(')) return src
+  const { src: s1, defs } = extractDefs(src)
+  // `$(def)` first, everywhere (a loop bound may be one), then the loops and their own `$(index)`.
+  return expandRepeats(Object.keys(defs).length ? interpolate(s1, defs) : s1, defs, { n: 0 })
+}
+
 /** Resolves the `symbolId: '@Name'` (references by name) into real ids, recursively. */
 function resolveInstanceNames(symbols: SymbolDef[]): void {
   const byName = new Map(symbols.map((s) => [s.name, s.id]))
@@ -1974,6 +2031,7 @@ function resolveInstanceNames(symbols: SymbolDef[]): void {
 
 /** Parses a `.flat` library → symbols + folders (ids regenerated; instances resolved by name). */
 export function parseFlatLib(src: string): { symbols: SymbolDef[]; folders: Folder[] } {
+  src = expandLibSugar(src)
   const parser = new FlatParser(tokenize(src), src)
   const symbols = parser.parse()
   resolveInstanceNames(symbols)

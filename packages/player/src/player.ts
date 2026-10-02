@@ -31,17 +31,22 @@ import type { ScratchMask } from './drawScene'
  *  resolves the coords (cf. [[flatink-semantic-gestures]]). The low-level gestures remain for special cases. */
 export type Gesture =
   // Semantic (by NAME) -- the engine resolves them into down/move/up.
-  | { type: 'drag'; source: string; target: string; id?: number } // drags the `source` object onto the `target` zone
-  | { type: 'tap'; target?: string; x?: number; y?: number; id?: number } // clicks the `target` object where it stands, or the point (`x`, `y`) when no name is given
-  | { type: 'scratch'; target: string; id?: number } // sweeps a `reveal` target's bbox (covers it -> fraction ~1)
-  | { type: 'connect'; source: string; target: string; id?: number } // pulls a `link` wire from `source` to `target` (resolves the target index)
-  // rotates a `turn`/`turnDeg` target by `angle` around its pivot (signed; DEGREES for turnDeg, RADIANS for
-  // turn), swept in sub-steps; `settle` = sim frames advanced between sub-steps (default 1) so a
-  // delta-accumulating `every frame` integrates the turn. `from` = where the press lands (WORLD): the way to
-  // name WHICH of two overlapping targets is grabbed, since the engine's own grab point picks the topmost.
+  // Every pointer event of a gesture is followed by `settle` simulation steps (default 1: a pointer event
+  // takes a frame, as a real pointer does; 0 = instantaneous). `settle` on a gesture overrides the script's.
+  | { type: 'drag'; source: string; target: string; id?: number; settle?: number } // drags the `source` object onto the `target` zone
+  | { type: 'tap'; target?: string; x?: number; y?: number; id?: number; settle?: number } // clicks the `target` object where it stands, or the point (`x`, `y`) when no name is given
+  | { type: 'scratch'; target: string; id?: number; settle?: number } // sweeps a `reveal` target's bbox (covers it -> fraction ~1)
+  | { type: 'connect'; source: string; target: string; id?: number; settle?: number } // pulls a `link` wire from `source` to `target` (resolves the target index)
+  // turns a `turn`/`turnDeg` target TO `angle` around its pivot: the value the gesture ENDS at, wherever
+  // the press was (signed; DEGREES for turnDeg, RADIANS for turn; 0 = to the right of the pivot, positive =
+  // clockwise on screen), swept in sub-steps so several turns work. `from` = where the press lands (WORLD):
+  // the way to name WHICH of two overlapping targets is grabbed. Without it the press goes to the object's
+  // position, then to the centre of its drawn box; a press that does not grab the target is an error.
   | { type: 'turn'; target: string; angle: number; from?: [number, number]; settle?: number; id?: number }
   // Low-level (scene coords).
-  | { type: 'down' | 'move' | 'up' | 'cancel'; x: number; y: number; id?: number }
+  | { type: 'down' | 'move' | 'up' | 'cancel'; x: number; y: number; id?: number; settle?: number }
+  // A marker for `flatc --render --script`: write the image of the scene as it is at this point. Ignored by a replay.
+  | { type: 'shot'; name?: string }
   | { type: 'set'; name: string; value: number } // drives a variable from the "host"
   | { type: 'wait'; frames: number } // lets the simulation run N fixed steps (60 Hz): `every frame` + playhead advance
   | { type: 'wheel'; dy: number; frames?: number } // scrolls the wheel by `dy` px, then advances `frames` sim steps (default 1) so `every frame` integrates `mouse.wheel`
@@ -1473,6 +1478,12 @@ export class FlatPlayer {
     this.exprCtx()
     const ch = this.namedCache?.[name]
     return ch ? { x: ch.x, y: ch.y } : null
+  }
+  /** Which object a press at `p` (scene coordinates) would GRAB — its id, or null. Changes nothing: it is
+   *  the question a replayed gesture asks before pressing, so that a press that misses is reported. */
+  grabTargetAt(p: Point): string | null {
+    const chains = hitChains(this.doc, this.frame, this.exprCtx(), p, this.grabZones, this.paramsOf)
+    return this.pickTarget(chains, GRAB_EVENTS) ?? this.pickInteractor(chains) ?? null
   }
   /** Captures a gesture (no-op outside recording). Inserts a `wait` = frames elapsed since the last gesture. */
   private record(type: 'down' | 'move' | 'up' | 'cancel', p: Point, id: number): void {

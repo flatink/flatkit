@@ -378,12 +378,17 @@ and composes with `self.x`/`self.y` etc. (same `self`).
     param = error.
   - ⚠️ Compile-time sugar (re-serialized as groups, like `def`/`repeat`). For shared
     BEHAVIOR, see `each` below.
+  - **A plain `symbol "X" { … }` may be written in the program too** (before or after the `scene`): it is
+    the very block a `.flat` holds — its own `timeline`, cels, `states`, `params` — instanced without
+    parens, and it wins over a library symbol of the same name. No dummy parameter needed any more.
+  - **`repeat` / `def` / `$()` work in a `.flat` library**, as in a program's scene: `repeat i from 0 to 8
+    { circle $(i*20) 0 6 fill #333 }` inside a symbol's layer is unfolded when the library is read.
   - ⚠️ **`.flatink`-only**: a parameterized `symbol "X"(…)` lives in the **program** (`.flatink`), NOT in a
     `.flat` library. `.flat` libs hold **non-parameterized** symbols, instanced **without** parens
     (`instance "Hero" as "H"`); a parameterized one is instanced **with** args (`instance "Card"("A")`).
     Putting a `(…)` symbol in a `.flat` — or letting `flatc` auto-discover such a `.flat` in the folder —
     surfaces as a misleading `"{" expected, "("` (the `.flat` parser doesn't take parameters). Rule of
-    thumb: parens ⇔ parameterized ⇔ inline in the `.flatink`.
+    thumb: parens ⇔ parameterized ⇔ program only; no parens ⇔ a real symbol, in a `.flat` or in the program.
 - **`each "Symbol" as i { … }`**: applies BEHAVIOR to every instance of a symbol, with
   index `i`.
   - **Channel bindings** on real instances (`each "Brick" as i { opacity = bricks[i] }`) →

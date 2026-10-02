@@ -62,7 +62,13 @@ per second), `deg(r)` (the inverse, for readouts). Or bind the **`rotationDeg`**
 var slots = [0, 0, 0]
 object "P" { x = slots[i] }          // computed index
 slots[i + 1] = 1                      // indexed assignment (in actions)
+v = [10, 20, 30][i]                   // a table written in place, indexed at once
 ```
+
+A table written in place — `[a, b, c][i]` — saves a global array for a lookup used once. Its elements and
+its index are expressions, only the element picked is evaluated, and it indexes as an array does (the
+index is rounded; outside the table it is `NaN`, so the binding keeps its fallback). It is not a value on
+its own: `[1, 2, 3]` without an index is an error — to keep a table, declare `var t = [1, 2, 3]`.
 
 ## Functions (`fn`)
 

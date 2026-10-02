@@ -507,3 +507,124 @@ describe('flatc --since — what is drawn differently since an earlier version',
     expect(lines.join(' ')).toMatch(/nothing is drawn differently since 0\.36/)
   })
 })
+
+// The `flatc` half of a wave of reports from a crew writing real activities (flatink/flatink#16 #21 #23 #38).
+describe('flatc — replay and preview, as reported', () => {
+  const work = () => mkdtempSync(join(tmpdir(), 'flatc-lot5-'))
+  const capture = async (args: string[]) => {
+    const outs: string[] = [], errs: string[] = []
+    const so = vi.spyOn(process.stdout, 'write').mockImplementation((s: string | Uint8Array) => { outs.push(String(s)); return true })
+    const se = vi.spyOn(process.stderr, 'write').mockImplementation((s: string | Uint8Array) => { errs.push(String(s)); return true })
+    try { return { code: await run(['node', 'flatc', ...args]), out: outs.join(''), err: errs.join('') } }
+    finally { so.mockRestore(); se.mockRestore() }
+  }
+  const hasSkia = async () => { const skiaPkg: string = 'skia-canvas'; try { await import(skiaPkg); return true } catch { return false } }
+  const PROG = `size 200 100
+background #ffffff
+var lit = 0
+var frames = 0
+scene {
+  layer "a" {
+    group "Button" at 50,50 { layer "c" { rect -30 -30 60 60 fill #3366cc } }
+    group "Lamp" at 150,50 { layer "c" { rect -30 -30 60 60 fill #cc3333 } }
+  }
+}
+object "Button" { when clicked { lit = lit + 1 } }
+object "Lamp" { opacity = lit > 0 }
+every frame { frames = frames + 1 }
+`
+
+  it('--play: a pointer event takes a frame; --settle 0 gives the instantaneous replay back (#16)', async () => {
+    const dir = work()
+    try {
+      writeFileSync(join(dir, 'p.flatink'), PROG)
+      writeFileSync(join(dir, 's.json'), JSON.stringify([{ type: 'tap', target: 'Button' }]))
+      const base = [join(dir, 'p.flatink'), '--play', '--script', join(dir, 's.json'), '--no-libs']
+      expect(JSON.parse((await capture(base)).out).vars.frames).toBe(2)
+      expect(JSON.parse((await capture([...base, '--settle', '0'])).out).vars.frames).toBe(0)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('--render --script: the image of the state the script reaches (#38)', async () => {
+    if (!(await hasSkia())) return
+    const dir = work()
+    try {
+      writeFileSync(join(dir, 'p.flatink'), PROG)
+      writeFileSync(join(dir, 's.json'), JSON.stringify([{ type: 'tap', target: 'Button' }, { type: 'expect', vars: { lit: 1 } }]))
+      const plain = join(dir, 'plain.png'), played = join(dir, 'played.png')
+      expect((await capture([join(dir, 'p.flatink'), '--render', '-o', plain, '--scale', '1', '--no-libs'])).code).toBe(0)
+      const r = await capture([join(dir, 'p.flatink'), '--render', '--script', join(dir, 's.json'), '-o', played, '--scale', '1', '--no-libs'])
+      expect(r.code).toBe(0)
+      expect(r.out).toMatch(/played\.png ✓.*after 2 gesture\(s\)/)
+      expect(readFileSync(plain).equals(readFileSync(played)), 'the script changed nothing in the picture').toBe(false)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  }, 60_000)
+
+  it('--render --script: a `shot` writes the picture at that point, and a failed `expect` fails the run', async () => {
+    if (!(await hasSkia())) return
+    const dir = work()
+    try {
+      writeFileSync(join(dir, 'p.flatink'), PROG)
+      writeFileSync(join(dir, 's.json'), JSON.stringify([
+        { type: 'shot', name: 'before' }, { type: 'tap', target: 'Button' }, { type: 'shot', name: 'after' }, { type: 'expect', vars: { lit: 7 } },
+      ]))
+      const out = join(dir, 'state.png')
+      const r = await capture([join(dir, 'p.flatink'), '--render', '--script', join(dir, 's.json'), '-o', out, '--scale', '1', '--no-libs'])
+      expect(existsSync(join(dir, 'state.before.png'))).toBe(true)
+      expect(existsSync(join(dir, 'state.after.png'))).toBe(true)
+      expect(existsSync(out)).toBe(true) // the final state, always
+      expect(readFileSync(join(dir, 'state.before.png')).equals(readFileSync(join(dir, 'state.after.png')))).toBe(false)
+      expect(readFileSync(join(dir, 'state.after.png')).equals(readFileSync(out))).toBe(true)
+      expect(r.code).toBe(1)
+      expect(r.err).toMatch(/expect: lit expected 7, got 1/)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  }, 60_000)
+
+  const BAR = `symbol "Bar" {
+  params { number long = 3 range 1 5 "length" }
+  layer "a" {
+    group "Body" pivot 0,0 expr scaleX "long" { layer "p" { rect 0 -10 50 20 fill #3366cc } }
+  }
+}
+`
+  it('--preview measures the symbol as it is DRAWN: its `expr` and the --set values (#21)', async () => {
+    const dir = work()
+    try {
+      writeFileSync(join(dir, 'bar.flat'), BAR)
+      const size = async (extra: string[]) => {
+        const out = join(dir, 'o.flatpack')
+        expect((await capture([join(dir, 'bar.flat'), '--preview', '-o', out, ...extra])).code).toBe(0)
+        const d = JSON.parse(readFileSync(out, 'utf8'))
+        return [d.width, d.height]
+      }
+      expect(await size([])).toEqual([198, 68]) // long = 3: 150 wide, plus the 24 of padding on each side
+      expect(await size(['--set', 'long=5'])).toEqual([298, 68])
+      expect(await size(['--set', 'long=1'])).toEqual([98, 68])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  const SWITCH = `symbol "Switch" {
+  timeline 24 24
+  states pos { off at 0   on at 24   initial off   transition 12 }
+  layer "b" {
+    group "Ball" at 0,0 { layer "a" { circle 0 0 10 fill #cc3333 } }
+    cel 0 tween { pose "Ball" at 0,0 }
+    cel 24 { pose "Ball" at 60,0 }
+  }
+}
+`
+  it('--preview --frame on a symbol driven by its states says it has no effect, and what to write (#23)', async () => {
+    const dir = work()
+    try {
+      writeFileSync(join(dir, 'sw.flat'), SWITCH)
+      const out = join(dir, 'o.flatpack')
+      const r = await capture([join(dir, 'sw.flat'), '--preview', '--frame', '12', '-o', out])
+      expect(r.code).toBe(0)
+      expect(r.err).toMatch(/--frame 12.*"Switch".*states.*--set pos=/s)
+      // No state, or frame 0: nothing to say.
+      expect((await capture([join(dir, 'sw.flat'), '--preview', '-o', out])).err).not.toMatch(/--frame/)
+      writeFileSync(join(dir, 'bar.flat'), BAR)
+      expect((await capture([join(dir, 'bar.flat'), '--preview', '--frame', '12', '-o', out])).err).not.toMatch(/states/)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})

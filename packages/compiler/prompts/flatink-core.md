@@ -52,7 +52,7 @@ path    "M0 60 L80 40 L200 52 L320 44" smooth    // the same points joined by a 
 polyline xs ys [count "n"] [closed]              // points read from two array vars, every frame
 text    "Hi" font "sans-serif" size 24 align center line 1.2 color #fff box 200 40
 image   "logo" 80 80 at -40,-40                  // origin = top-left → center with at -w/2,-h/2
-group   "Name" at x,y pivot px,py { layer "c" { … } }   // nests its own layers
+group   "Name" at x,y pivot px,py [rotate deg] [scale s] { layer "c" { … } }   // nests its own layers; a FIXED rotate/scale, around the pivot
 instance "Symbol" as "Name" at x,y              // place a symbol from a .flat lib
 ```
 
@@ -272,6 +272,7 @@ feedback lift tilt dim shake(<expr>)                     // one-liner reactions 
 def gap = 70                                             // compile-time constant, used via $()
 repeat i from 0 to 4 { circle $(40 + i*gap) 80 6 fill #ffd98a }   // $(expr) = compile-time arithmetic
 symbol "Card"(label, tint = "#fff") { … text "$(label)" … fill $(tint) … }   // parameterized symbol
+symbol "Dot" { layer "a" { circle 0 0 10 fill #c33 } }   // a plain symbol may live in the program too: instance "Dot" as "D" at 100,100
 instance "Card"($(i+1)) as "C$(i)" at $(80 + i*90),200
 each "Key" as i { when clicked { input = input*10 + (i+1) } }    // shared behavior over instances
 match Word1, Word2 onto Good, Bad {                       // declarative drag+drop pairing
@@ -285,7 +286,7 @@ align top of "Bin" [offset dx,dy]                         // pin origin onto ano
 ## Expressions & stdlib
 
 Pure & numeric (no booleans: comparisons/logic yield `1`/`0`). Operators: `?: || && == != < > <= >=
-+ - * / % - ! . [] fn()`.
++ - * / % - ! . [] fn()`. A lookup table can be written in place and indexed at once: `[10, 20, 30][i]`.
 Built-ins: `sin cos tan asin acos atan atan2 abs sqrt pow exp log floor ceil round sign min max hypot
 clamp(x,lo,hi) lerp(a,b,t) mod(a,b) between(x,lo,hi) rad(deg) deg(rad) turns(n)`. Constants `PI TAU E`.
 Reserved: `time` (seconds, **wraps** every `durationFrames`), `clock` (seconds, **monotone**), `frame`,

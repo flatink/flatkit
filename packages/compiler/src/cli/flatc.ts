@@ -82,6 +82,9 @@ Usage:
                     units or more; add --all for the slighter ones
   --seed N          (with --play) seed of random(). A replay is always seeded (default 1): the same script
                     gives the same result twice; another N gives another draw
+  --settle N        (with --play, --render --script) simulation steps after each pointer event (default 1:
+                    a press, a move, a release each take a frame, so "every frame" sees the drag;
+                    0 = the instantaneous replay). "settle": N on a gesture sets it for that one
   --trace           (with --play) HUMAN-READABLE log per gesture: emitted sends + variable diff (debug)
   --script <f>      JSON gesture script: [{ "type": "down|move|up|cancel", "x", "y" }, { "type": "set", "name", "value" }, { "type": "wait", "frames": N }, { "type": "wheel", "dy": N }]
                     semantic (by NAME, the engine resolves coords): { "type": "drag", "source", "target" } · { "type": "tap", "target" } (or "x", "y": a point)
@@ -90,7 +93,9 @@ Usage:
                     "wait" lets the simulation run N fixed steps (60 Hz): "every frame" + playhead advance like in real playback
                     "expect" self-verifies: { "type": "expect", "sends": ["done"], "vars": { "score": 3 } } → exits ≠0 on mismatch
                     (sends = sequence of names emitted SINCE the last expect; vars = current state). Great in CI.
-  --render          render a PNG IMAGE (headless skia): see what we draw (positioning)
+  --render          render a PNG IMAGE (headless skia): see what we draw (positioning). With --script,
+                    replays the gestures first and renders the state they reach; a { "type": "shot",
+                    "name": "x" } gesture writes <out>.x.png at that point; a failed "expect" exits ≠0
   --preview         wrap ONE symbol of a <library.flat> into a playable Doc (a single centered instance on an
                     auto-sized stage) → a .flatpack to drop in the browser player, or a PNG with --render.
                     No wrapper .flatink to author by hand. Output defaults to <library>.<symbol>.flatpack/.png
@@ -324,14 +329,14 @@ function loadDoc(filePath: string, noLibs = false, explicitFlats: string[] = [])
 }
 
 /** --play: runs the file headless, replays --script, prints { sends, vars }. */
-function playOnce(filePath: string, scriptPath: string, trace: boolean, noLibs = false, explicitFlats: string[] = [], seed?: number): number {
+function playOnce(filePath: string, scriptPath: string, trace: boolean, noLibs = false, explicitFlats: string[] = [], seed?: number, settle?: number): number {
   if (!scriptPath) { process.stderr.write('flatc: --play requires --script <gestures.json>\n'); return 1 }
   if (!existsSync(scriptPath)) { process.stderr.write(`flatc: script not found: ${scriptPath}\n`); return 1 }
   let doc: Doc, gestures: Gesture[]
   try { doc = loadDoc(filePath, noLibs, explicitFlats) } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
   try { gestures = JSON.parse(readFileSync(scriptPath, 'utf8')) as Gesture[] } catch (e) { process.stderr.write(`flatc: invalid JSON script: ${(e as Error).message}\n`); return 1 }
   if (!Array.isArray(gestures)) { process.stderr.write('flatc: the script must be an array of gestures\n'); return 1 }
-  const res = playHeadless(doc, gestures, { trace, seed })
+  const res = playHeadless(doc, gestures, { trace, seed, settle })
   if (!trace) process.stdout.write(JSON.stringify(res, null, 2) + '\n')
   else // --trace: readable log (one gesture per line) → inspection / debug-player.
     for (const s of res.steps ?? []) {
@@ -384,7 +389,7 @@ async function renderDocToFile(doc: Doc, outPath: string, frame: number, vars: R
 }
 
 /** --render: renders the file to PNG (headless skia). Async (SVG decode + raster). */
-async function renderOnce(filePath: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, scaleAuto: boolean, noLibs = false, params: Record<string, string> = {}, explicitFlats: string[] = []): Promise<number> {
+async function renderOnce(filePath: string, out: string, frame: number, vars: Record<string, number>, scale: number, steps: number, scaleAuto: boolean, noLibs = false, params: Record<string, string> = {}, explicitFlats: string[] = [], scriptPath = '', settle?: number): Promise<number> {
   let doc: Doc
   // `--no-libs` was parsed and then not passed on, so `--render` still auto-discovered the neighbouring
   // .flat files -- and failed on one, advising the very flag that had been given. Same hole in `--play`.
@@ -394,7 +399,47 @@ async function renderOnce(filePath: string, out: string, frame: number, vars: Re
   const dur = doc.timeline?.durationFrames ?? 0
   if (dur > 0 && frame >= dur) process.stderr.write(`flatc: --frame ${frame} is past the timeline (durationFrames ${dur}); the playhead WRAPS, so this renders frame ${frame % dur}\n`)
   const outPath = out ? resolve(out) : join(dirname(filePath), basename(filePath, extname(filePath)) + '.png')
-  return renderDocToFile(doc, outPath, frame, vars, scaleAuto ? autoScale(doc.width, doc.height) : scale, steps, params)
+  const sc = scaleAuto ? autoScale(doc.width, doc.height) : scale
+  if (!scriptPath) return renderDocToFile(doc, outPath, frame, vars, sc, steps, params)
+  return renderAfterScript(doc, outPath, scriptPath, frame, vars, sc, steps, params, settle)
+}
+
+/**
+ * `--render --script`: replays a gesture script (as `--play` does) and writes the image of the scene it
+ * leaves. A `{"type":"shot","name":"…"}` gesture writes the image AT THAT POINT, next to the output
+ * (`out.<name>.png`, or `out.<n>.png` unnamed). The output itself is always the final state. A failed
+ * `expect` fails the run, images written all the same: they are what one wants to look at then.
+ */
+async function renderAfterScript(doc: Doc, outPath: string, scriptPath: string, frame: number, vars: Record<string, number>, scale: number, steps: number, params: Record<string, string>, settle?: number): Promise<number> {
+  if (!existsSync(scriptPath)) { process.stderr.write(`flatc: script not found: ${scriptPath}\n`); return 1 }
+  let gestures: Gesture[]
+  try { gestures = JSON.parse(readFileSync(scriptPath, 'utf8')) as Gesture[] } catch (e) { process.stderr.write(`flatc: invalid JSON script: ${(e as Error).message}\n`); return 1 }
+  if (!Array.isArray(gestures)) { process.stderr.write('flatc: the script must be an array of gestures\n'); return 1 }
+  const shotPath = (name: string) => join(dirname(outPath), `${basename(outPath, extname(outPath))}.${name.replace(/[^\w.-]/g, '_')}${extname(outPath) || '.png'}`)
+  const written: string[] = []
+  let failures: string[] = []
+  try {
+    const { createRenderer } = await import('./render')
+    const r = await createRenderer(doc, { scale, params: Object.keys(params).length ? params : undefined, interactive: true, settle })
+    try {
+      // The starting point is the one `--render` would draw: the frame, then the `--at` values.
+      await r.frame(frame, { vars: Object.keys(vars).length ? vars : undefined })
+      let shots = 0
+      for (const g of gestures) {
+        if (g.type === 'shot') { const p = shotPath(g.name || String(++shots)); writeFileSync(p, await r.capture()); written.push(basename(p)); continue }
+        failures = r.play([g]).expectFailures
+      }
+      if (steps > 0) r.play([{ type: 'wait', frames: Math.floor(steps) }])
+      writeFileSync(outPath, await r.capture())
+    } finally { r.close() }
+  } catch (e) {
+    process.stderr.write(`flatc: render failed: ${(e as Error).message}\n`)
+    return 1
+  }
+  const played = gestures.filter((g) => g.type !== 'shot').length
+  process.stdout.write(`flatc: ${basename(outPath)} ✓  ${doc.width}×${doc.height} ×${scale} · after ${played} gesture(s)${steps ? ` · ${steps} step(s)` : ''}${written.length ? ` · shots: ${written.join(', ')}` : ''}\n`)
+  for (const f of failures) process.stderr.write(`flatc: ✗ ${f}\n`)
+  return failures.length ? 1 : 0
 }
 
 const gcd = (a: number, b: number): number => { a = Math.abs(a); b = Math.abs(b); while (b) { const t = a % b; a = b; b = t } return a || 1 }
@@ -467,6 +512,17 @@ function buildPreviewDoc(flatPath: string, symbolName: string, pad: number, bbox
   // ALL symbols stay in the library (the chosen one may instance the others) — only `instance` is on stage.
   let doc: Doc = { width: 1, height: 1, layers: [layer], symbols, timeline }
 
+  // `--set param=value`: set the preview instance's exposed params (call-site values, raw literals). The
+  // renderer resolves them per the symbol's ParamDef / state machines (color → fill, number/bool → scope,
+  // state name → driven frame). A light validation warns on names the symbol does not expose.
+  const entries = Object.entries(setSpec)
+  if (entries.length) {
+    const known = new Set([...(symbol.states ?? []).map((s) => s.param), ...(symbol.params ?? []).map((p) => p.name)])
+    for (const [k, v] of entries) {
+      if (!known.has(k)) process.stderr.write(`flatc: --set ${k}: "${symbol.name}" exposes no such param (${[...known].join(', ') || 'none'})\n`)
+      else (instance.params ??= {})[k] = v
+    }
+  }
   // Auto-size & center. Default `--bbox all`: UNION over every frame of the symbol (sub-timelines NOT
   // frozen) so motion that drifts/rotates/grows is never clipped. `--bbox frame0` keeps the old frame-0
   // measure (+`--pad` to absorb motion).
@@ -479,7 +535,10 @@ function buildPreviewDoc(flatPath: string, symbolName: string, pad: number, bbox
     if (fs[fs.length - 1] !== n - 1) fs.push(n - 1)
     return fs
   }
-  const bb = bboxMode === 'all' ? containerBBoxUnion(doc, instance, sampleFrames(dur)) : containerBBox(doc, instance, 0)
+  // Measured AS DRAWN (`scoped`): the symbol's `expr` channels evaluated with its params — the declared
+  // defaults and the `--set` values, which is why they are applied first. A bar stretched by
+  // `expr scaleX "long"` used to be framed on its base shape, and came out cropped.
+  const bb = bboxMode === 'all' ? containerBBoxUnion(doc, instance, sampleFrames(dur), instance.transform, true) : containerBBox(doc, instance, 0, instance.transform, false, true)
   if (bb) {
     doc = { ...doc, width: Math.max(1, Math.ceil(bb.maxX - bb.minX) + pad * 2), height: Math.max(1, Math.ceil(bb.maxY - bb.minY) + pad * 2) }
     instance.transform = { ...IDENTITY, e: pad - bb.minX, f: pad - bb.minY }
@@ -488,17 +547,6 @@ function buildPreviewDoc(flatPath: string, symbolName: string, pad: number, bbox
     instance.transform = { ...IDENTITY, e: 256, f: 256 }
   }
 
-  // `--set param=value`: set the preview instance's exposed params (call-site values, raw literals). The
-  // renderer resolves them per the symbol's ParamDef / state machines (color → fill, number/bool → scope,
-  // state name → driven frame). A light validation warns on names the symbol does not expose.
-  const entries = Object.entries(setSpec)
-  if (entries.length) {
-    const known = new Set([...(symbol.states ?? []).map((s) => s.param), ...(symbol.params ?? []).map((p) => p.name)])
-    for (const [k, v] of entries) {
-      if (!known.has(k)) process.stderr.write(`flatc: --set ${k}: "${symbol.name}" exposes no such param (${[...known].join(', ') || 'none'})\n`)
-      else (instance.params ??= {})[k] = v
-    }
-  }
   return { doc, symbol, others: symbols.filter((s) => s !== symbol).map((s) => s.name) }
 }
 
@@ -508,6 +556,12 @@ async function previewOnce(flatPath: string, symbolName: string, out: string, fr
   try { built = buildPreviewDoc(flatPath, symbolName, pad, bboxMode, setSpec) }
   catch (e) { process.stderr.write(`flatc: ${(e as Error).message}\n`); return 1 }
   const { doc, symbol, others } = built
+  // A symbol with `states` takes its pose from the STATE, not from the playhead: `--frame` then only
+  // advances the loops nested in it, and two frames come out identical without a word.
+  if (frame > 0 && symbol.states?.length) {
+    const sm = symbol.states[0]
+    process.stderr.write(`flatc: --frame ${frame} does not move "${symbol.name}": its pose is set by its states (\`${sm.param}\`), not by the playhead. To see a state, or a point between two: --set ${sm.param}=<${sm.states.map((x) => x.name).join(' | ')} | a value, e.g. ${sm.param}=0.5>\n`)
+  }
   const stem = `${basename(flatPath, extname(flatPath))}.${symbol.name}`
   let code: number
   if (doRender) {
@@ -578,6 +632,7 @@ export function run(argv: string[]): number | Promise<number> {
   let frame = 0, scale = 2, steps = 0, pad = 24
   let scaleAuto = false
   let seed: number | undefined
+  let settle: number | undefined
   let since = ''
   let bboxMode: 'all' | 'frame0' = 'all'
   let assetMode: AssetMode = 'inline'
@@ -604,6 +659,7 @@ export function run(argv: string[]): number | Promise<number> {
     else if (a === '--since') since = args[++i] ?? ''
     else if (a === '--all') { /* read by --since */ }
     else if (a === '--seed') { const v = Number(args[++i]); if (Number.isFinite(v)) seed = v }
+    else if (a === '--settle') { const v = Number(args[++i]); if (Number.isFinite(v) && v >= 0) settle = Math.floor(v) }
     else if (a === '--steps') steps = Math.max(0, Number(args[++i] ?? '0') || 0)
     else if (a === '--scale') { const v = args[++i] ?? '2'; if (v === 'auto') scaleAuto = true; else scale = Number(v) || 2 }
     else if (a === '--at') parseVars(args[++i] ?? '', vars)
@@ -619,8 +675,8 @@ export function run(argv: string[]): number | Promise<number> {
   if (since) return sinceReport(positional.map((f) => resolve(f)), since, args.includes('--all'))
   const explicitFlats = positional.slice(1)
   if (doPreview) return previewOnce(filePath, symbolName, out, frame, vars, scale, steps, doRender, pad, bboxMode, setSpec, scaleAuto)
-  if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps, scaleAuto, noLibs, setSpec, explicitFlats)
-  if (doPlay) return playOnce(filePath, scriptPath, doTrace, noLibs, explicitFlats, seed)
+  if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps, scaleAuto, noLibs, setSpec, explicitFlats, scriptPath, settle)
+  if (doPlay) return playOnce(filePath, scriptPath, doTrace, noLibs, explicitFlats, seed, settle)
   // `--check <library>.flat`: a `.flat` first positional is an asset LIB, not a program → lint via parseFlatLib
   // (the following positionals are more `.flat` libs to merge). Every other path is unchanged.
   const action: () => number = checkOnly && filePath.endsWith('.flat')

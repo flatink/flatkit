@@ -212,7 +212,14 @@ at <x>,<y>                          // translation -- a COMMA between the two, n
 matrix(a,b,c,d,e,f)                 // full affine
 at center  ·  at center,540  ·  at 120,center        // canvas-relative anchor (resolved from `size`)
 align <point> of "Name" [offset dx,dy]               // pin this item's origin onto another item's bbox
+rotate <deg>  ·  scale <s>  ·  scaleX <s>  ·  scaleY <s>   // a FIXED rotation / scale, after `at`
 ```
+
+`rotate` and `scale` are written among the attributes that follow `at` — `group "G" at 100,100 pivot 20,0
+rotate 45 scale 2 { … }` — in the units of a `pose`: **degrees** and multipliers. They turn around the
+item's `pivot`, which stays where `at` put it, in whatever order the two are written. They are baked into
+the item's matrix: for a rotation that *changes*, bind the channel (`expr rotation "…"`, or `rotationDeg =
+…` in an `object` block). Not combinable with `align`.
 
 > **Placement & naming gotchas.** The order is fixed: **content → `as "…"` → `at …` / `matrix(…)` →
 > style attributes** (`font`/`box`/`fill`/…). So `text "…" box W H at x,y` fails — write `text "…" at x,y

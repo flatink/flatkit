@@ -21,6 +21,7 @@ type Node =
   | { t: 'call'; name: string; args: Node[] }
   | { t: 'member'; obj: string; prop: string }
   | { t: 'index'; name: string; idx: Node } // indexed array: arr[i]
+  | { t: 'pick'; items: Node[]; idx: Node } // a table written in place, indexed at once: [a, b, c][i]
 
 export type Compiled = { ok: true; node: Node } | { ok: false; error: string }
 
@@ -160,6 +161,22 @@ class Parser {
       this.eat(')')
       return e
     }
+    if (this.isOp('[')) {
+      // A table written in place. It is not a value on its own (every expression is a number): it is
+      // indexed on the spot, `[a, b, c][i]`, and only the element picked is evaluated.
+      this.next()
+      const items: Node[] = []
+      if (!this.isOp(']')) {
+        items.push(this.ternary())
+        while (this.isOp(',')) { this.next(); items.push(this.ternary()) }
+      }
+      this.eat(']')
+      if (!this.isOp('[')) throw new Error('a table written in place must be indexed at once: `[a, b, c][i]` (to keep it, declare an array: `var t = [a, b, c]`)')
+      this.next()
+      const idx = this.ternary()
+      this.eat(']')
+      return { t: 'pick', items, idx }
+    }
     if (t.k === 'id') {
       this.next()
       if (this.isOp('(')) {
@@ -279,6 +296,10 @@ function evalNode(node: Node, ctx: ExprContext, base?: ExprContext): number {
       const v = a[Math.round(evalNode(node.idx, ctx, base))]
       return typeof v === 'number' ? v : Number.NaN
     }
+    case 'pick': {
+      const it = node.items[Math.round(evalNode(node.idx, ctx, base))] // same rounding as an array variable
+      return it ? evalNode(it, ctx, base) : Number.NaN
+    }
     case 'un': {
       const x = evalNode(node.x, ctx, base)
       return node.op === '-' ? -x : num(x === 0)
@@ -388,6 +409,10 @@ function collectRefs(node: Node, ids: Set<string>, members: Set<string>, calls: 
       return
     case 'index':
       ids.add(node.name) // the array is a known variable
+      collectRefs(node.idx, ids, members, calls)
+      return
+    case 'pick':
+      for (const it of node.items) collectRefs(it, ids, members, calls)
       collectRefs(node.idx, ids, members, calls)
       return
   }

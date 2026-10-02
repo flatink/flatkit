@@ -174,6 +174,13 @@ flatc <file> --render -o out.png [--frame N] [--at k=v[,k2=v2]] [--steps N] [--s
 - `--at score=3,step=2` forces variables → capture a precise state.
 - **`--steps N`** runs N fixed simulation steps (`every frame`, 60 Hz) *before* capture, so a stateful
   act unfolds on its own — no need to force every derived ramp variable by hand.
+- **`--script gestures.json`** replays a gesture script first, exactly as `--play` does, and renders the
+  state it reaches — the third right answer, the piece dropped, level 2 — instead of a copy of the program
+  with other initial `var`s. The order is: `--frame`, `--at`, the script, `--steps`, the capture. A
+  **`{ "type": "shot", "name": "after" }`** gesture writes the image *at that point* next to the output
+  (`out.after.png`; unnamed shots are numbered), and the output is always the final state. A failed
+  `expect` makes the run exit ≠0, images written all the same. `--settle` applies as in `--play`. From
+  code: `createRenderer(doc, { interactive: true })`, then `play(gestures)` and `capture()`.
 - **Embedded fonts render too**: any `asset "id" "font.woff2" font` is registered with skia before
   capture, so text uses the authored face (matched by the font's intrinsic family name — the same name
   you put in `text … font "…"`) instead of a host fallback. `.woff2/.woff/.ttf/.otf` are all supported;
@@ -197,7 +204,12 @@ flatc --preview <library.flat> [--symbol NAME] [-o out.flatpack | --render -o ou
 - `--symbol NAME` picks the symbol (default: the first; others are listed on stderr).
 - **`--bbox all`** (default) auto-sizes to the UNION of bounds over every frame (sub-timelines unfrozen),
   so drifting/rotating/growing motion is never clipped. `--bbox frame0` is the old frame-0-only measure;
-  `--pad N` adds a margin (default 24).
+  `--pad N` adds a margin (default 24). The symbol is measured **as it is drawn**: its `expr` channels
+  are evaluated with its params — the declared defaults, or the `--set` values — so a bar stretched by
+  `expr scaleX "long"` is framed at its real length.
+- **`--frame N` does not move a symbol that has `states`**: its pose is set by the state, not by the
+  playhead (only the loops nested in it advance). `flatc` says so; to see a state, or a point between
+  two, use `--set <param>=<state name | value>` (`--set pos=0.5` is halfway).
 - **`--set p=v`** sets the symbol's exposed [params](animating-symbols.md#exposed-parameters-params): a
   `color` (`hull=#1a5`), a `number`/`bool` (`wave=1.5`), or a `state` by name (`door=open`). Baked into the
   preview (flatpack + render).
@@ -219,7 +231,7 @@ Use `external` for big media you don't want inflating the JSON; serve the folder
 Run a scene **without a canvas**, replay a gesture script, and print `{ sends, vars }` — great in CI.
 
 ```
-flatc <file> --play --script gestures.json [--trace]
+flatc <file> --play --script gestures.json [--trace] [--settle N]
 ```
 
 **Prefer semantic gestures** (by object NAME — robust, the engine resolves coordinates):
@@ -243,10 +255,19 @@ flatc <file> --play --script gestures.json [--trace]
 - Audio is off in `--play`: a `sound` action is a silent no-op, so a program is replayed as written.
 - `random()` is seeded in `--play` (seed `1`), so a replay says the same thing twice and an `expect` can
   assert on a draw. `--seed N` picks another one.
-- **`turn`** rotates a `turn`/`turnDeg` target by `angle` (degrees for `turnDeg`, radians for `turn`),
-  swept in sub-steps so a multi-turn rotation lands. It presses the object where the engine finds it, i.e.
-  on **whatever is topmost there** — two clock hands overlapping at noon give the gesture to the one on
-  top. Add **`"from": [x, y]`** to say where the finger lands and pick the other one.
+- **A pointer event takes a frame.** Each press, move and release is followed by one simulation step, as
+  a real pointer stays at least one frame on each position — so a rule written in `every frame` sees the
+  drag. `--settle N` sets that number for the whole script (`--settle 0` = the instantaneous replay of
+  before 0.38), and `"settle": N` on a gesture sets it for that one. A script that `expect`s a value which
+  decays every frame (a feedback pulse read right after the tap) needs `"settle": 0` on that tap.
+- **`turn`** turns a `turn`/`turnDeg` target **to** `angle`: the value the gesture ENDS at, wherever the
+  press was — not a rotation added to the current one. Degrees for `turnDeg`, radians for `turn`; `0` is
+  to the right of the pivot, positive is clockwise on screen. It is swept in sub-steps, so several turns
+  land (`"angle": 540`). The press goes to the object's position, then to the centre of its drawn box (a
+  hand drawn *from* its pivot has its origin on the edge of its shape). **`"from": [x, y]`** names the
+  press point — the way to pick one of two hands overlapping at noon. A press that does not grab the
+  target is an **error** that names what is grabbed there instead; it used to turn the wrong object, or
+  none, in silence.
 - `set` drives a variable from the host; `wait` runs N fixed 60 Hz steps (advances `every frame` physics).
 - **`key`** holds a key down (`keys.<name>` reads `1`) for `frames` steps — default `1` — then releases
   it: the way to test a keyboard-driven scene in CI. Use the authored name (`"ArrowRight"`, `"Space"`).

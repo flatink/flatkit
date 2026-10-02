@@ -9,7 +9,8 @@ import { pointInRegion } from './regionHit'
 import { transformPath } from './path'
 import { combineBBox, regionBBox, type BBox } from './bbox'
 import { resolveLayerAt } from './cel'
-import { frozenInstanceFrame } from './params'
+import { frozenInstanceFrame, resolveInstanceParams } from './params'
+import { childScope, type ExprContext } from './expr'
 
 /** Apply a transform to a region's path (+ the gradient box & angle). */
 export function transformRegion(t: Transform, r: Region): Region {
@@ -41,12 +42,22 @@ export function transformRegion(t: Transform, r: Region): Region {
  * roster). So we resolve each layer via `resolveLayerAt` instead of reading `items` raw — otherwise the
  * material drawn in the cels is ignored and the selection frame is off. Sub-scopes are FROZEN at frame 0
  * (consistent with the editor's `freezeNested` render); `frame` only applies to direct layers.
+ *
+ * `scoped`: measure the container AS IT IS DRAWN — channel expressions evaluated, each instance bringing
+ * its params (declared defaults, call-site values) into the scope. Off by default: the editor's selection
+ * box is the authored geometry. Without it a symbol stretched by `expr scaleX "long"` measures its base
+ * shape, and a preview framed on that box crops it.
  */
-export function containerBBox(doc: Doc, container: Group | Instance, frame = 0, base: Transform = container.transform, deep = false): BBox | null {
+export function containerBBox(doc: Doc, container: Group | Instance, frame = 0, base: Transform = container.transform, deep = false, scoped = false): BBox | null {
   const boxes: BBox[] = []
-  const walk = (layers: Layer[], t: Transform, f: number, seen: Set<string>) => {
+  const fps = doc.timeline?.fps ?? 24
+  const scopeOf = (it: Group | Instance, parent: ExprContext | undefined): ExprContext | undefined => {
+    if (!scoped || !isInstance(it)) return parent
+    return childScope(parent, resolveInstanceParams(getSymbol(doc, it.symbolId), it).numeric as ExprContext)
+  }
+  const walk = (layers: Layer[], t: Transform, f: number, seen: Set<string>, ctx: ExprContext | undefined) => {
     for (const layer of layers) {
-      for (const it of resolveLayerAt(layer, f, {})) {
+      for (const it of resolveLayerAt(layer, f, ctx ? { ctx, fps } : {})) {
         if (it.hidden) continue
         if (isContainer(it)) {
           if (isInstance(it) && seen.has(it.symbolId)) continue
@@ -55,7 +66,7 @@ export function containerBBox(doc: Doc, container: Group | Instance, frame = 0, 
           // BUT a state-driven instance freezes at its selected state's frame (static config) so the
           // selection box / position match the rendered state (door "open"); else 0.
           const frozen = isInstance(it) ? frozenInstanceFrame(getSymbol(doc, it.symbolId), it) : 0
-          walk(containerLayers(doc, it), compose(t, it.transform), deep ? f : frozen, next)
+          walk(containerLayers(doc, it), compose(t, it.transform), deep ? f : frozen, next, scopeOf(it, ctx))
         } else if (isText(it)) {
           boxes.push(boxBBox(it.transform, it.box.w, it.box.h, t))
         } else if (isImage(it)) {
@@ -72,7 +83,7 @@ export function containerBBox(doc: Doc, container: Group | Instance, frame = 0, 
   // selection box) freezes at its selected state's frame — consistent with render/hit — instead of `frame`.
   const topSym = isInstance(container) ? getSymbol(doc, container.symbolId) : undefined
   const topFrame = !deep && isInstance(container) && topSym?.states?.length ? frozenInstanceFrame(topSym, container) : frame
-  walk(containerLayers(doc, container), base, topFrame, start)
+  walk(containerLayers(doc, container), base, topFrame, start, scoped ? scopeOf(container, childScope(undefined, (doc.variables ?? {}) as ExprContext)) : undefined)
   return combineBBox(boxes)
 }
 
@@ -80,10 +91,10 @@ export function containerBBox(doc: Doc, container: Group | Instance, frame = 0, 
  * UNION of a container's bbox across `frames` (sub-timelines NOT frozen) → the box that holds the whole
  * animation, so motion that drifts/rotates/grows past frame 0 is never clipped. Used by `--preview`.
  */
-export function containerBBoxUnion(doc: Doc, container: Group | Instance, frames: number[], base: Transform = container.transform): BBox | null {
+export function containerBBoxUnion(doc: Doc, container: Group | Instance, frames: number[], base: Transform = container.transform, scoped = false): BBox | null {
   const boxes: BBox[] = []
   for (const f of frames) {
-    const b = containerBBox(doc, container, f, base, true)
+    const b = containerBBox(doc, container, f, base, true, scoped)
     if (b) boxes.push(b)
   }
   return boxes.length ? combineBBox(boxes) : null

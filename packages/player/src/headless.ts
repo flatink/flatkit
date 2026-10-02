@@ -33,12 +33,12 @@ function revealBrushFor(doc: Doc, name: string): number {
   return inter?.grid && inter.grid > 0 ? inter.grid : 24
 }
 /** The `turn`/`turnDeg` interactor on a named target: its WORLD pivot + unit (deg/rad), or null if none. */
-function turnTargetFor(doc: Doc, name: string): { pivot: { x: number; y: number }; deg: boolean } | null {
+function turnTargetFor(doc: Doc, name: string): { id: string; pivot: { x: number; y: number }; deg: boolean } | null {
   let id: string | null = null
   for (const l of doc.layers) { const it = findItemByName(l.items, name); if (it) { id = it.id; break } }
   const inter = id ? doc.interactors?.find((x) => x.targetId === id) : undefined
   if (!inter || (inter.axis !== 'turn' && inter.axis !== 'turnDeg')) return null
-  return { pivot: inter.pivot ?? { x: 0, y: 0 }, deg: inter.axis === 'turnDeg' }
+  return { id: inter.targetId, pivot: inter.pivot ?? { x: 0, y: 0 }, deg: inter.axis === 'turnDeg' }
 }
 /** Boustrophedon sweep over `b` at ~`brush` spacing (cell centers), bounded to MAX_SWEEP points. */
 function sweepPoints(b: Box, brush: number): { x: number; y: number }[] {
@@ -73,7 +73,8 @@ export type TraceStep = {
   changed: Record<string, [number | number[] | undefined, number | number[]]> // var -> [before, after]
 }
 
-type Handlers = Record<string, (e: { clientX: number; clientY: number; pointerId: number }) => void>
+/** The pointer listeners a player registered on its canvas, by event type — what a replay fires into. */
+export type Handlers = Record<string, (e: { clientX: number; clientY: number; pointerId: number }) => void>
 
 const fakeCtx = (): CanvasRenderingContext2D =>
   new Proxy({}, {
@@ -109,20 +110,30 @@ const describeGesture = (g: Gesture): string =>
   g.type === 'drag' ? `drag ${g.source}->${g.target}` : g.type === 'tap' ? `tap ${g.target ?? `(${g.x},${g.y})`}`
     : g.type === 'connect' ? `connect ${g.source}->${g.target}` : g.type === 'scratch' ? `scratch ${g.target}`
       : g.type === 'turn' ? `turn ${g.target} ${g.angle}${g.from ? ` from (${g.from[0]},${g.from[1]})` : ''}` : g.type === 'set' ? `set ${g.name}=${g.value}`
-        : g.type === 'wait' ? `wait ${g.frames}` : g.type === 'wheel' ? `wheel ${g.dy}`
+        : g.type === 'wait' ? `wait ${g.frames}` : g.type === 'wheel' ? `wheel ${g.dy}` : g.type === 'shot' ? `shot ${g.name ?? ''}`
           : g.type === 'key' ? `key ${g.name}${g.frames && g.frames !== 1 ? ` x${g.frames}` : ''}` : g.type === 'expect' ? 'expect' : `${g.type} (${g.x},${g.y})`
 
-/** Plays `doc`, replays `gestures`, returns the collected `send`s plus the final state of the variables.
- *  `trace`: adds `steps` (sends + variable diff PER gesture) -- for inspection / the debug-player.
- *  `seed`: what `random()` draws from. A replay is ALWAYS seeded (default 1), so that it says the same
- *  thing twice; pass another seed to see another draw. */
-export function playHeadless(doc: Doc, gestures: Gesture[], opts: { trace?: boolean; seed?: number } = {}): PlayResult {
-  const restore = ensureDomGlobals()
-  const handlers: Handlers = {}
-  const sends: PlayResult['sends'] = []
-  const pl = new FlatPlayer(fakeCanvas(handlers, doc.width, doc.height), doc, { input: true, padding: 0, render: false, audio: false, seed: opts.seed ?? 1, onEvent: (e) => sends.push(e) })
+/** Replays gestures on a LIVE player: `apply` one at a time, `expectFailures` filling up as `expect`
+ *  gestures are met. `handlers` are the listeners the player registered on its canvas (client coordinates
+ *  = scene coordinates), `sends` the list its `onEvent` appends to. Shared by `playHeadless` and by the
+ *  renderer, which replays a script and then draws what the scene has become. */
+export type Replayer = { apply(g: Gesture): void; readonly expectFailures: string[] }
+
+/** What a replay needs of a player — its public surface only, so a player built from another entry point
+ *  of the package is accepted. */
+export type ReplayTarget = Pick<FlatPlayer, 'stepSim' | 'setVar' | 'setKey' | 'getVar' | 'objectCenter' | 'grabTargetAt'>
+
+export function createReplayer(pl: ReplayTarget, doc: Doc, handlers: Handlers, sends: SendEvent[], opts: { settle?: number } = {}): Replayer {
   const ev = (x: number, y: number, id = 1) => ({ clientX: x, clientY: y, pointerId: id })
-  const fire = (type: string, p: { x: number; y: number }, id = 1) => { const h = handlers[`pointer${type}`]; if (h) h(ev(p.x, p.y, id)) }
+  // A pointer event TAKES A FRAME: a real pointer stays at least one frame on each position, so
+  // `every frame` runs between a press, its moves and its release. `settle` = sim steps after each event
+  // (default 1; 0 = the instantaneous replay). A gesture's own `settle` wins over the script's.
+  const settleOf = (g: { settle?: number }): number => Math.max(0, Math.floor(g.settle ?? opts.settle ?? 1))
+  const fire = (type: string, p: { x: number; y: number }, id = 1, settle = 0) => {
+    const h = handlers[`pointer${type}`]
+    if (h) h(ev(p.x, p.y, id))
+    if (settle > 0) pl.stepSim(settle)
+  }
   // GRAB: the RESOLVED position of the object (expressions included -> we touch the object exactly where it is).
   const grabPoint = (name: string): { x: number; y: number } => {
     const c = pl.objectCenter(name)
@@ -140,49 +151,59 @@ export function playHeadless(doc: Doc, gestures: Gesture[], opts: { trace?: bool
   // `expect`: self-verified assertions. `sendCursor` = window of sends SINCE the last `expect`.
   let sendCursor = 0
   const expectFailures: string[] = []
-  const applyGesture = (g: Gesture): void => {
+  const apply = (g: Gesture): void => {
     if (g.type === 'set') { pl.setVar(g.name, g.value); return }
     if (g.type === 'wait') { pl.stepSim(g.frames); return }
+    if (g.type === 'shot') return // a marker for the renderer (`flatc --render --script`): nothing to replay
     // Keyboard: no DOM event in Node (the global listeners are stubs) -> drive the held-keys set directly.
     if (g.type === 'key') { pl.setKey(g.name, true); pl.stepSim(g.frames ?? 1); pl.setKey(g.name, false); return }
     if (g.type === 'wheel') { const h = handlers['wheel']; if (h) (h as unknown as (e: { deltaY: number; deltaMode: number; preventDefault: () => void }) => void)({ deltaY: g.dy, deltaMode: 0, preventDefault: () => {} }); pl.stepSim(g.frames ?? 1); return }
-    if (g.type === 'drag') { const id = g.id ?? 1, t = dropPoint(g.target); fire('down', grabPoint(g.source), id); fire('move', t, id); fire('up', t, id); return }
+    if (g.type === 'drag') { const id = g.id ?? 1, n = settleOf(g), t = dropPoint(g.target); fire('down', grabPoint(g.source), id, n); fire('move', t, id, n); fire('up', t, id, n); return }
     if (g.type === 'tap') {
       // By NAME (the object's resolved position) or at a POINT (`x`, `y`) — a rail, an unnamed area.
-      const id = g.id ?? 1
+      const id = g.id ?? 1, n = settleOf(g)
       const at = g.target != null ? grabPoint(g.target) : typeof g.x === 'number' && typeof g.y === 'number' ? { x: g.x, y: g.y } : null
       if (!at) throw new Error('gesture: tap needs a "target" (an object name), or "x" and "y" (a point of the scene)')
-      fire('down', at, id); fire('up', at, id)
+      fire('down', at, id, n); fire('up', at, id, n)
       return
     }
-    if (g.type === 'connect') { const id = g.id ?? 1, t = grabPoint(g.target); fire('down', grabPoint(g.source), id); fire('move', t, id); fire('up', t, id); return } // pull a link wire source -> target
+    if (g.type === 'connect') { const id = g.id ?? 1, n = settleOf(g), t = grabPoint(g.target); fire('down', grabPoint(g.source), id, n); fire('move', t, id, n); fire('up', t, id, n); return } // pull a link wire source -> target
     if (g.type === 'scratch') { // sweep the reveal target's bbox so its coverage reaches ~1
-      const id = g.id ?? 1
+      const id = g.id ?? 1, n = settleOf(g)
       const b = itemBoundsByName(doc, g.target)
       if (!b) throw new Error(`gesture: object "${g.target}" not found in the scene`)
       const pts = sweepPoints(b, revealBrushFor(doc, g.target))
-      fire('down', pts[0], id)
-      for (let i = 1; i < pts.length; i++) fire('move', pts[i], id)
-      fire('up', pts[pts.length - 1], id)
+      fire('down', pts[0], id, n)
+      for (let i = 1; i < pts.length; i++) fire('move', pts[i], id, n)
+      fire('up', pts[pts.length - 1], id, n)
       return
     }
-    if (g.type === 'turn') { // rotate a turn/turnDeg target by `angle` around its WORLD pivot, swept in <=maxStep sub-moves
+    if (g.type === 'turn') { // turns a turn/turnDeg target TO `angle` around its WORLD pivot, swept in <=maxStep sub-moves
       const id = g.id ?? 1
       const ti = turnTargetFor(doc, g.target)
       if (!ti) throw new Error(`gesture: object "${g.target}" has no turn/turnDeg interactor`)
-      // A point ON the object -> starts the grab (fires `when pressed`); the angle is written on the first
-      // MOVE. `from` overrides it: two hands of a clock overlap at noon, and the engine's grab point can
-      // only ever pick the topmost — naming the press point is how a test says which one it means.
-      const start = g.from ? { x: g.from[0], y: g.from[1] } : grabPoint(g.target)
+      // WHERE the press lands. `from` names it: two hands of a clock overlap at noon, and no default can
+      // tell which one a test means. Without it, the object's resolved position, then the centre of its
+      // drawn box — a hand drawn FROM its pivot has its origin on the very edge of its shape, where a
+      // press grabs nothing. Whatever the point, it must grab THIS object: a press that lands elsewhere
+      // used to turn another object, or none, and say nothing.
+      const tries = g.from ? [{ x: g.from[0], y: g.from[1] }] : [grabPoint(g.target), boxCentre(doc, g.target)].filter((p): p is { x: number; y: number } => p != null)
+      const start = tries.find((p) => pl.grabTargetAt(p) === ti.id)
+      if (!start) {
+        const p = tries[0]
+        throw new Error(g.from
+          ? `gesture: turn — the press at (${p.x}, ${p.y}) does not grab "${g.target}" (${describeGrab(doc, pl.grabTargetAt(p))}). "from" must be a point ON its shape, where nothing covers it.`
+          : `gesture: turn — no press point found on "${g.target}" (${describeGrab(doc, pl.grabTargetAt(p))}). Name one with "from": [x, y], a point ON its shape, where nothing covers it.`)
+      }
       const piv = ti.pivot
       const R = Math.max(24, Math.hypot(start.x - piv.x, start.y - piv.y)) // radius to place the rotating pointer (only the ANGLE matters, not R)
       const at = (v: number) => { const rad = ti.deg ? (v * Math.PI) / 180 : v; return { x: piv.x + R * Math.cos(rad), y: piv.y + R * Math.sin(rad) } } // target value (deg/rad) -> pointer position
       const maxStep = ti.deg ? 60 : Math.PI / 3 // <= per sub-move: keeps each delta small (under the atan2 wrap / typical author jump-guards) so multi-turn works
       const N = Math.max(2, Math.ceil(Math.abs(g.angle) / maxStep))
-      const settle = g.settle ?? 1
-      fire('down', start, id)
-      for (let k = 1; k <= N; k++) { fire('move', at((g.angle * k) / N), id); if (settle > 0) pl.stepSim(settle) } // sweep; advance the sim so a delta-accumulating `every frame` integrates each sub-step
-      fire('up', at(g.angle), id)
+      const n = settleOf(g)
+      fire('down', start, id, n)
+      for (let k = 1; k <= N; k++) fire('move', at((g.angle * k) / N), id, n) // sweep; the sim advances so a delta-accumulating `every frame` integrates each sub-step
+      fire('up', at(g.angle), id, n)
       return
     }
     if (g.type === 'expect') {
@@ -192,8 +213,42 @@ export function playHeadless(doc: Doc, gestures: Gesture[], opts: { trace?: bool
       if (g.vars) for (const [k, v] of Object.entries(g.vars)) { const cur = pl.getVar(k); if (JSON.stringify(cur) !== JSON.stringify(v)) expectFailures.push(`expect: ${k} expected ${JSON.stringify(v)}, got ${JSON.stringify(cur)}`) }
       return
     }
-    fire(g.type, { x: g.x, y: g.y }, g.id) // low-level (down/move/up/cancel)
+    fire(g.type, { x: g.x, y: g.y }, g.id, settleOf(g)) // low-level (down/move/up/cancel)
   }
+  return { apply, expectFailures }
+}
+
+/** Centre of an object's drawn box (static), or null when it has none. */
+function boxCentre(doc: Doc, name: string): { x: number; y: number } | null {
+  const b = itemBoundsByName(doc, name)
+  return b ? { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 } : null
+}
+const describeGrab = (doc: Doc, id: string | null): string => {
+  if (!id) return 'nothing is grabbed there'
+  let name: string | null = null
+  for (const l of doc.layers) { name = nameOfId(l.items, id); if (name) break }
+  return `"${name ?? id}" is grabbed there instead`
+}
+/** Name of the item with this id (walks groups), for a message. */
+function nameOfId(items: Item[], id: string): string | null {
+  for (const it of items) {
+    if (it.id === id) return 'name' in it && it.name ? it.name : id
+    if (isGroup(it)) for (const l of it.layers) { const r = nameOfId(l.items, id); if (r) return r }
+  }
+  return null
+}
+
+/** Plays `doc`, replays `gestures`, returns the collected `send`s plus the final state of the variables.
+ *  `trace`: adds `steps` (sends + variable diff PER gesture) -- for inspection / the debug-player.
+ *  `seed`: what `random()` draws from. A replay is ALWAYS seeded (default 1), so that it says the same
+ *  thing twice; pass another seed to see another draw.
+ *  `settle`: sim steps after each pointer event (default 1 — a pointer event takes a frame; 0 = none). */
+export function playHeadless(doc: Doc, gestures: Gesture[], opts: { trace?: boolean; seed?: number; settle?: number } = {}): PlayResult {
+  const restore = ensureDomGlobals()
+  const handlers: Handlers = {}
+  const sends: PlayResult['sends'] = []
+  const pl = new FlatPlayer(fakeCanvas(handlers, doc.width, doc.height), doc, { input: true, padding: 0, render: false, audio: false, seed: opts.seed ?? 1, onEvent: (e) => sends.push(e) })
+  const { apply: applyGesture, expectFailures } = createReplayer(pl, doc, handlers, sends, { settle: opts.settle })
   try {
     const steps: TraceStep[] = []
     for (const g of gestures) {

@@ -6,14 +6,18 @@
 //  and SVG as the browser. skia-canvas is loaded through a DYNAMIC import with a NON-LITERAL specifier,
 //  so it is never part of the public build graph -- install it on demand only when `--render` is used.
 // -----------------------------------------------------------------------------
-import { FlatPlayer } from '@flatkit/player'
+import { FlatPlayer, type SendEvent } from '@flatkit/player'
+import { createReplayer, type Gesture, type Handlers, type Replayer } from '@flatkit/player/debug'
 import type { Doc, Item } from '@flatkit/types'
 import { isGroup, isInstance } from '@flatkit/engine/layers'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-export type RenderOpts = { frame?: number; vars?: Record<string, number>; scale?: number; steps?: number; params?: Record<string, string> }
+export type RenderOpts = { frame?: number; vars?: Record<string, number>; scale?: number; steps?: number; params?: Record<string, string>; script?: Gesture[]; settle?: number }
+
+/** What a replayed script reports: the `send`s it emitted, and the `expect` gestures that did not hold. */
+export type PlayReport = { sends: SendEvent[]; expectFailures: string[] }
 
 /** Cap on `--steps` (anti-DoS: an untrusted doc must not freeze the render host). One step = 1/60 s of sim. */
 const MAX_RENDER_STEPS = 10_000
@@ -76,8 +80,15 @@ function registerFonts(doc: Doc, FontLibrary: SkiaCanvas['FontLibrary']): { dir:
  * shims — including that `document` must exist or every `filter` and `tint` is dropped in SILENCE.
  */
 export type Renderer = {
-  /** PNG of one frame. `vars` overrides state for this frame; `steps` runs N sim steps before capture. */
-  frame(frame: number, opts?: { vars?: Record<string, number>; steps?: number }): Promise<Uint8Array>
+  /** PNG of one frame. `vars` overrides state for this frame; `script` replays gestures after the seek
+   *  (an `interactive` renderer only); `steps` then runs N sim steps before capture. */
+  frame(frame: number, opts?: { vars?: Record<string, number>; steps?: number; script?: Gesture[] }): Promise<Uint8Array>
+  /** Replays gestures on the live scene, as `flatc --play` does, and leaves it in the state they reach.
+   *  Successive calls continue the same session (one state, one `expect` window). Needs
+   *  `createRenderer(doc, { interactive: true })`. */
+  play(gestures: Gesture[]): PlayReport
+  /** PNG of the scene AS IT IS NOW — after a `play`, without seeking. */
+  capture(): Promise<Uint8Array>
   /** The document's pixel size at the renderer's scale. */
   readonly width: number
   readonly height: number
@@ -91,7 +102,7 @@ export type Renderer = {
  * per process. `params` sets a SYMBOL's exposed params (a state name or a number) before the first
  * frame — the reason a consumer had to write its own harness to preview anything with a state.
  */
-export async function createRenderer(doc: Doc, opts: { scale?: number; params?: Record<string, string> } = {}): Promise<Renderer> {
+export async function createRenderer(doc: Doc, opts: { scale?: number; params?: Record<string, string>; interactive?: boolean; settle?: number } = {}): Promise<Renderer> {
   // Non-literal specifier: tsc does not resolve it, so skia-canvas is not a build dependency.
   const skiaPkg: string = 'skia-canvas'
   let skia: SkiaCanvas
@@ -137,14 +148,29 @@ export async function createRenderer(doc: Doc, opts: { scale?: number; params?: 
 
   const pxW = Math.max(1, Math.round(W * scale))
   const pxH = Math.max(1, Math.round(H * scale))
+  const handlers: Handlers = {}
   const canvas = new Canvas(pxW, pxH)
   const el = canvas as unknown as HTMLCanvasElement & { toBuffer(fmt: string): Promise<Uint8Array> }
   Object.assign(el, {
     getBoundingClientRect: () => ({ width: W, height: H, left: 0, top: 0, right: W, bottom: H }),
-    addEventListener: () => {}, removeEventListener: () => {}, style: {},
+    // The listeners the player registers are KEPT: a replayed script fires into them (`play`).
+    addEventListener: (type: string, fn: Handlers[string]) => { handlers[type] = fn },
+    removeEventListener: (type: string) => { delete handlers[type] },
+    setPointerCapture: () => {}, releasePointerCapture: () => {}, style: {},
   })
 
-  let player: FlatPlayer | null = new FlatPlayer(el, withParams, { input: false, audio: false, padding: 0, seed: 1, image: (id) => images.get(id) ?? null })
+  // `interactive`: the player listens to its canvas, so gestures can be replayed on it. Off by default —
+  // a renderer that only draws frames registers nothing.
+  const sends: SendEvent[] = []
+  let player: FlatPlayer | null = new FlatPlayer(el, withParams, { input: !!opts.interactive, audio: false, padding: 0, seed: 1, image: (id) => images.get(id) ?? null, onEvent: (e) => sends.push(e) })
+  let replayer: Replayer | null = null
+  const play = (gestures: Gesture[]): PlayReport => {
+    if (!player) throw new Error('renderer is closed')
+    if (!opts.interactive) throw new Error('this renderer cannot replay gestures: open it with createRenderer(doc, { interactive: true })')
+    replayer ??= createReplayer(player, withParams, handlers, sends, { settle: opts.settle })
+    for (const g of gestures) replayer.apply(g)
+    return { sends: [...sends], expectFailures: [...replayer.expectFailures] }
+  }
 
   return {
     width: pxW,
@@ -153,12 +179,20 @@ export async function createRenderer(doc: Doc, opts: { scale?: number; params?: 
       if (!player) throw new Error('renderer is closed')
       if (frameOpts.vars) for (const [k, v] of Object.entries(frameOpts.vars)) player.setVar(k, v)
       player.seek(frame) // applies frame + state
+      if (frameOpts.script?.length) play(frameOpts.script)
       const steps = frameOpts.steps ?? 0
       if (steps > 0) {
         const n = Math.min(Math.floor(steps), MAX_RENDER_STEPS)
         if (steps > MAX_RENDER_STEPS) process.stderr.write(`flatc: steps clamped to ${MAX_RENDER_STEPS} (was ${steps})\n`)
         player.stepSim(n) // run N fixed sim steps (onEnterFrame) so a stateful act unfolds before capture
       }
+      player.render() // a gesture or a step paints only what it changed: draw the frame that is asked for
+      return el.toBuffer('png')
+    },
+    play,
+    async capture() {
+      if (!player) throw new Error('renderer is closed')
+      player.render()
       return el.toBuffer('png')
     },
     close() {
@@ -216,9 +250,9 @@ function applyParams(doc: Doc, params: Record<string, string>): Doc {
 /** Render `doc` to a PNG (Buffer). `frame` = target image; `vars` = state override; `scale` = x-px (default 2).
  *  A one-shot convenience over `createRenderer` — reach for the renderer itself as soon as you want two. */
 export async function renderDocToPng(doc: Doc, opts: RenderOpts = {}): Promise<Uint8Array> {
-  const renderer = await createRenderer(doc, { scale: opts.scale, params: opts.params })
+  const renderer = await createRenderer(doc, { scale: opts.scale, params: opts.params, interactive: !!opts.script?.length, settle: opts.settle })
   try {
-    return await renderer.frame(opts.frame ?? 0, { vars: opts.vars, steps: opts.steps })
+    return await renderer.frame(opts.frame ?? 0, { vars: opts.vars, steps: opts.steps, script: opts.script })
   } finally {
     renderer.close()
   }

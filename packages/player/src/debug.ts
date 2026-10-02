@@ -5,5 +5,5 @@
 //  `@flatkit/player` entry so a third-party page embedding the player never ships this. The live
 //  gesture-recording API stays on `FlatPlayer` itself (startRecording/stopRecording).
 // -----------------------------------------------------------------------------
-export { playHeadless, type PlayResult, type TraceStep } from './headless'
+export { playHeadless, createReplayer, type PlayResult, type TraceStep, type Replayer, type ReplayTarget, type Handlers } from './headless'
 export type { Gesture } from './player'
