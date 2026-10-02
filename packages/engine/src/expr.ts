@@ -242,7 +242,7 @@ const resolveName = (ctx: ExprContext, name: string, base?: ExprContext): unknow
  *  before `Object.prototype`, so nothing an object inherits by default is ever reachable. An ordinary
  *  (unchained) context costs one extra `getPrototypeOf` on a miss. */
 const OBJECT_PROTO: unknown = Object.prototype
-function resolveInChain(scope: ExprContext, name: string): unknown {
+export function resolveInChain(scope: ExprContext, name: string): unknown {
   let o: ExprContext | null = scope
   do {
     if (Object.hasOwn(o, name)) return o[name]

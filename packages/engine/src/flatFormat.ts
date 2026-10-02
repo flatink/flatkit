@@ -135,7 +135,9 @@ const q = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').repl
 type Ctx = { symName: (id: string) => string; inlineExpr: boolean; folderPath?: (id: string) => string }
 
 function printRegion(r: Region, d: string): string {
-  let s = `path "${d}"`
+  let s = r.poly
+    ? `polyline ${r.poly.xs} ${r.poly.ys}${r.poly.count !== undefined ? ` count ${/^-?[\d.]+$/.test(r.poly.count) ? r.poly.count : q(r.poly.count)}` : ''}${r.poly.closed ? ' closed' : ''}`
+    : `path "${d}"`
   if (r.name) s += ` as ${q(r.name)}` // stable name (addressable, e.g. `text … along "<id>"`)
   if (r.noFill) s += ' nofill'
   else if (r.fillParam) s += ` fill ${r.fillParam}` // fill bound to a symbol color param
@@ -1229,6 +1231,9 @@ function expandHoldCels(cels: Cel[]): void {
   }
 }
 
+/** Words that end the two names of a `polyline` (they start its options or its paint). */
+const POLY_WORDS = new Set(['count', 'closed', 'as', 'fill', 'nofill', 'stroke', 'draw', 'opacity', 'nohit', 'filter'])
+
 /** Options that belong to a `stroke`, not to the item carrying it — see the ordering error in `eat`. */
 const STROKE_OPTIONS = new Set(['cap', 'join', 'miter', 'dash'])
 
@@ -1486,7 +1491,7 @@ class FlatParser {
     this.eat('{')
     const id = uid('L')
     const items: Item[] = []
-    while (this.is('path') || this.is('circle') || this.is('ellipse') || this.is('rect') || this.is('group') || this.is('instance') || this.is('text') || this.is('image')) items.push(this.item())
+    while (this.is('path') || this.is('polyline') || this.is('circle') || this.is('ellipse') || this.is('rect') || this.is('group') || this.is('instance') || this.is('text') || this.is('image')) items.push(this.item())
     const cels: Cel[] = []
     while (this.is('cel')) cels.push(this.cel())
     expandHoldCels(cels) // `cel … hold {}` → carry the previous cel's poses for unmentioned containers
@@ -1573,7 +1578,7 @@ class FlatParser {
     return this.next().v as Easing
   }
   private item(): Item {
-    if (this.is('path') || this.is('circle') || this.is('ellipse') || this.is('rect')) return this.region()
+    if (this.is('path') || this.is('polyline') || this.is('circle') || this.is('ellipse') || this.is('rect')) return this.region()
     if (this.is('group')) return this.group()
     if (this.is('instance')) return this.instance()
     if (this.is('text')) return this.text()
@@ -1594,8 +1599,23 @@ class FlatParser {
     }
     this.eat('path'); return parsePathData(this.str())
   }
+  /** `polyline <xs> <ys> [count <n|"expr">] [closed]`: a shape whose points are two array variables. */
+  private polyline(): NonNullable<Region['poly']> {
+    this.eat('polyline')
+    const names: string[] = []
+    while (names.length < 2 && this.peek()?.k === 'id' && !POLY_WORDS.has(this.peek()!.v)) names.push(this.next().v)
+    if (names.length < 2) this.fail('`polyline` takes two array variables, the xs then the ys: `polyline tx ty [count "n"] [closed] nofill stroke #cc3333 2`')
+    const poly: NonNullable<Region['poly']> = { xs: names[0], ys: names[1] }
+    for (;;) {
+      if (this.is('count')) { this.next(); poly.count = this.next().v } // a number or a quoted expression: kept as source either way
+      else if (this.is('closed')) { this.next(); poly.closed = true }
+      else break
+    }
+    return poly
+  }
   private region(): Region {
-    const path = this.shapePath()
+    const poly = this.is('polyline') ? this.polyline() : undefined
+    const path = poly ? { subpaths: [] } : this.shapePath()
     // optional `as "<id>"`: a STABLE name making the shape addressable (e.g. `text … along "<id>"`).
     let name: string | undefined
     if (this.is('as')) {
@@ -1651,6 +1671,7 @@ class FlatParser {
       else break
     }
     const r: Region = { id: uid('r'), color, path }
+    if (poly) r.poly = poly
     if (name) r.name = name
     if (paint && paint.type !== 'solid') r.paint = paint
     if (fillParam) r.fillParam = fillParam

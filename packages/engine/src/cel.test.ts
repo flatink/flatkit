@@ -645,3 +645,39 @@ describe('cel — pose patch semantics + rotate/scale sugar (degrees, around piv
     expect(decompose((resolveLayerAt(l, 5)[0] as Group).transform).rotation).toBeCloseTo(0, 5) // midpoint, not ±180
   })
 })
+
+describe('resolveLayerAt — a `polyline` takes its points from the variables (flatink/flatink#25)', () => {
+  const layerOf = (poly: Region['poly']): Layer => ({ id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: [{ id: 'p', color: '#000', path: { subpaths: [] }, noFill: true, poly } as Region] })
+  const points = (poly: Region['poly'], ctx: Record<string, unknown>) => {
+    const r = resolveLayerAt(layerOf(poly), 0, { ctx: ctx as never })[0] as Region
+    return r.path.subpaths.map((sp) => ({ closed: sp.closed, pts: sp.segments.map((s) => [s.anchor.x, s.anchor.y]) }))
+  }
+  const xs = [10, 20, 30, 40], ys = [1, 2, 3, 4]
+  it('one open subpath through the points, in order', () => {
+    expect(points({ xs: 'xs', ys: 'ys' }, { xs, ys })).toEqual([{ closed: false, pts: [[10, 1], [20, 2], [30, 3], [40, 4]] }])
+  })
+  it('`count` keeps the first n points: the line grows as the program fills the arrays', () => {
+    expect(points({ xs: 'xs', ys: 'ys', count: 'n' }, { xs, ys, n: 2 })[0].pts).toEqual([[10, 1], [20, 2]])
+    expect(points({ xs: 'xs', ys: 'ys', count: 'n + 1' }, { xs, ys, n: 2 })[0].pts).toHaveLength(3)
+    expect(points({ xs: 'xs', ys: 'ys', count: '99' }, { xs, ys })[0].pts).toHaveLength(4) // never past the arrays
+  })
+  it('fewer than two points draw nothing', () => {
+    expect(points({ xs: 'xs', ys: 'ys', count: 'n' }, { xs, ys, n: 1 })).toEqual([])
+    expect(points({ xs: 'xs', ys: 'ys', count: 'n' }, { xs, ys, n: 0 })).toEqual([])
+  })
+  it('`closed` closes it', () => {
+    expect(points({ xs: 'xs', ys: 'ys', closed: true }, { xs, ys })[0].closed).toBe(true)
+  })
+  it('the segments are STRAIGHT: every point carries its own handles, so nothing is smoothed', () => {
+    const r = resolveLayerAt(layerOf({ xs: 'xs', ys: 'ys' }), 0, { ctx: { xs, ys } as never })[0] as Region
+    for (const s of r.path.subpaths[0].segments) expect([s.inHandle, s.outHandle]).toEqual([s.anchor, s.anchor])
+  })
+  it('an array that does not exist, or is not one, gives an empty shape instead of throwing', () => {
+    expect(points({ xs: 'nope', ys: 'ys' }, { ys })).toEqual([])
+    expect(points({ xs: 'xs', ys: 'ys' }, { xs: 3, ys })).toEqual([])
+  })
+  it('arrays reached through an instance scope are found', () => {
+    const scope = Object.assign(Object.create({ xs, ys }), { p: 1 })
+    expect(points({ xs: 'xs', ys: 'ys' }, scope)[0].pts).toHaveLength(4)
+  })
+})

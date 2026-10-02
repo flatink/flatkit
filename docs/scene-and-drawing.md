@@ -35,6 +35,37 @@ path "…" nofill stroke #888 2                                   # outline only
 rect 0 0 40 40 fill #00aaff opacity 0.5                         # 0..1 (8-digit hex alpha also works)
 ```
 
+### A shape computed while the scene runs (`polyline`)
+
+`polyline` is a shape whose points are **two array variables**, read every frame — a trajectory, a curve as
+it is being computed, a polygon the learner deforms:
+
+```
+var tx = fill(200, 0)
+var ty = fill(200, 0)
+var n = 0
+scene {
+  layer "c" {
+    polyline tx ty count "n" nofill stroke #cc3333 3 cap round    # the first n points, as a line
+    polyline px py closed fill #3366cc                             # all the points, as a filled polygon
+  }
+}
+every frame {
+  if n < 200 {
+    tx[n] = 20 + n * 2
+    ty[n] = 90 - 60 * sin(n / 10)
+    n = n + 1
+  }
+}
+```
+
+- `polyline <xs> <ys>` takes the **names** of the two arrays. `count <n>` or `count "<expr>"` keeps the
+  first points only (never past the arrays); `closed` joins the last point to the first.
+- The segments are **straight**. Fill, stroke, `opacity`, `draw` and `nohit` are those of any shape.
+- The arrays are the truth: write them from `every frame` or a handler, and the line follows. A scene that
+  stops writing them stops being repainted. `flatc --check` reports a name that is not a declared array.
+- Fewer than two points draw nothing.
+
 ### Drawing a stroke progressively (`draw`)
 
 `draw` sets **how much of an outline is stroked**, as a fraction of its **arc length** — ink that appears

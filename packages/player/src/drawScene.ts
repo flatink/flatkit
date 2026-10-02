@@ -260,7 +260,7 @@ function layersStatic(doc: Doc, layers: Layer[], seen: Set<string>): boolean {
 export function isRenderStatic(doc: Doc, it: Item, seen: Set<string> = new Set()): boolean {
   const memo = staticMemo.get(it)
   if (memo !== undefined) return memo // structural result (stable as long as the doc does not change)
-  if ((isText(it) && (it.bind || it.textPath?.startExpr || it.textPath?.spacingExpr)) || (isRegion(it) && (it.drawExpr || it.drawFromExpr)) || hasExpr(it) || hasMod(it)) { staticMemo.set(it, false); return false }
+  if ((isText(it) && (it.bind || it.textPath?.startExpr || it.textPath?.spacingExpr)) || (isRegion(it) && (it.drawExpr || it.drawFromExpr || it.poly)) || hasExpr(it) || hasMod(it)) { staticMemo.set(it, false); return false }
   let result = true
   if (isInstance(it)) {
     if (seen.has(it.symbolId)) return true // cycle: DO NOT memoize (depends on `seen`)

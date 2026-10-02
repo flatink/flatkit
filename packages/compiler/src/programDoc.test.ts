@@ -1096,3 +1096,18 @@ describe('programDoc — the params and states given to an instance', () => {
     expect(ws[0]).toMatch(/no instance named "Rr".*did you mean "R"/)
   })
 })
+
+// flatink/flatink#25 — a `polyline` names two array variables.
+describe('programDoc — the arrays of a `polyline`', () => {
+  const prog = (header: string, line: string) => `size 200 200\n${header}\nscene {\n  layer "c" {\n    ${line}\n  }\n}\n`
+  const msgs = (src: string) => lintDoc(compileFlatpack(src), src).map((d) => d.diag.message)
+  it('arrays read only by a polyline are used', () => {
+    expect(msgs(prog('var tx = fill(8, 0)\nvar ty = fill(8, 0)\nvar n = 0', 'polyline tx ty count "n" nofill stroke #cc3333 2'))).toEqual([])
+  })
+  it('a name that is not a declared array is reported, with what it is', () => {
+    const ws = msgs(prog('var tx = fill(8, 0)\nvar ty = 3', 'polyline tx ty nofill stroke #cc3333 2'))
+    expect(ws.some((m) => /polyline.*"ty".*not an array/.test(m))).toBe(true)
+    const none = msgs(prog('var tx = fill(8, 0)', 'polyline tx tz nofill stroke #cc3333 2'))
+    expect(none.some((m) => /polyline.*"tz".*not declared/.test(m))).toBe(true)
+  })
+})

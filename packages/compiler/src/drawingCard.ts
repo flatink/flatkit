@@ -25,6 +25,7 @@ ellipse <cx> <cy> <rx> <ry>
 rect    <x> <y> <w> <h> [<r>]              // r = rounded corners (or <rx> <ry> for distinct)
 path    "M0 0 C40 -20 80 20 120 0 Z"       // raw SVG path data — total freedom
 circle 100 100 40 as "Ring"                // name it (right after the geometry) → addressable
+polyline <xs> <ys> [count "<expr>"] [closed] // points = two ARRAY variables, read every frame (a trajectory, a computed curve)
 
 ## Paint
 fill #rrggbb | #rrggbbaa · nofill

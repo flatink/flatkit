@@ -307,6 +307,23 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
       if (by) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `parameter "${p}" of fn ${f.name} is hidden by ${by} — the body reads that, never the argument. Rename it` } })
     }
   }
+  // (b quinquies) A `polyline` names two ARRAY variables. Anything else resolves to an empty shape: nothing
+  //     is drawn, and nothing says why.
+  const polyNames = new Set<string>()
+  const scanPoly = (items: Item[]): void => {
+    for (const it of items) {
+      if (isRegion(it) && it.poly) { polyNames.add(it.poly.xs); polyNames.add(it.poly.ys) }
+      if (isGroup(it)) for (const l of it.layers) { scanPoly(l.items); for (const c of l.cels ?? []) scanPoly(c.matter ?? []) }
+    }
+  }
+  for (const l of [...doc.layers, ...(doc.symbols ?? []).flatMap((sy) => sy.layers)]) { scanPoly(l.items); for (const c of l.cels ?? []) scanPoly(c.matter ?? []) }
+  for (const name of polyNames) {
+    const v = doc.variables?.[name]
+    if (Array.isArray(v)) continue
+    out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: v === undefined
+      ? `polyline: "${name}" is not declared — it takes two array variables (\`var ${name} = fill(<n>, 0)\`); nothing is drawn`
+      : `polyline: "${name}" is a number, not an array (\`var ${name} = fill(<n>, 0)\`); nothing is drawn` } })
+  }
   // (b quater) What an instance is GIVEN — at its call site (`instance "X" { p = v }`) and by assignment
   //     (`Inst.p = v`): a param the symbol does not declare, a value of the wrong type, a number out of its
   //     range, a state that does not exist. None of it failed anywhere: the scene just drew wrong.

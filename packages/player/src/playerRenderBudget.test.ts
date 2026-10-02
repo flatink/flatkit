@@ -212,3 +212,17 @@ describe('FlatPlayer — a pointer that cannot be captured still presses', () =>
     expect(pl.getVar('n')).toBe(1)
   })
 })
+
+describe('FlatPlayer — a `polyline` is repainted when its points move (flatink/flatink#25)', () => {
+  const trail = (behavior: string) => parseProgramFull(`size 200 100\nvar tx = fill(50, 0)\nvar ty = fill(50, 0)\nvar n = 0\nvar go = 0\nscene {\n  layer "c" {\n    polyline tx ty count "n" nofill stroke #cc3333 2\n  }\n}\n${behavior}\n`) as unknown as Doc
+  it('growing the line paints; a line that no longer changes does not', () => {
+    const pl = new FlatPlayer(canvasOf(), trail('every frame {\n  if go == 1 {\n    if n < 50 {\n      tx[n] = n * 3\n      ty[n] = 50 + sin(n) * 20\n      n = n + 1\n    }\n  }\n}'), { audio: false, input: false })
+    expect(paintsOver(pl, 20)).toBe(0) // nothing written yet
+    pl.setVar('go', 1)
+    paints = 0; frames(20)
+    expect(paints).toBeGreaterThanOrEqual(18)
+    frames(60) // the 50 points are in
+    paints = 0; frames(20)
+    expect(paints).toBe(0)
+  })
+})

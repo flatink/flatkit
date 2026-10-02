@@ -310,6 +310,9 @@ export type Region = {
   name?: string // optional stable name set via `<shape> as "<id>"` — addressable (e.g. `text … along "<id>"`); absent = anonymous
   color: string // representative color (solid fallback / compat)
   path: Path // Bezier path (migrated material = closed subpaths without handles)
+  // `polyline <xs> <ys> [count <n|"expr">] [closed]`: the points are two ARRAY VARIABLES, read each frame
+  // (a trajectory, a curve as it is computed). `path` is then empty in the document; the resolver fills it.
+  poly?: { xs: string; ys: string; count?: string; closed?: boolean }
   paint?: Paint // optional rich paint (gradient); absent = solid `color`
   fillParam?: string // fill bound to a symbol COLOR param (`fill <paramName>`); resolved per instance at render
   stroke?: Stroke // stroke; absent = none

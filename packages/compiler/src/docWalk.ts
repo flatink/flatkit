@@ -72,6 +72,8 @@ export function forEachLeafExpression(it: Item, fn: (expr: string) => void): voi
   if (isRegion(it)) {
     if (it.drawExpr) fn(it.drawExpr)
     if (it.drawFromExpr) fn(it.drawFromExpr)
+    // A `polyline` READS its two arrays (bare names) and its `count`.
+    if (it.poly) { fn(it.poly.xs); fn(it.poly.ys); if (it.poly.count !== undefined) fn(it.poly.count) }
   }
 }
 

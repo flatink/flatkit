@@ -1846,3 +1846,28 @@ describe('`.flat` — a `text` param', () => {
     expect((parseProgram(printProgram(p)).layers[0].items[0] as Instance).params).toEqual(inst.params)
   })
 })
+
+// flatink/flatink#25 — nothing could be drawn from what the program computes: a trajectory was hundreds
+// of small groups shown one by one. `polyline` is a shape whose points are two array variables.
+describe('`polyline <xs> <ys>` — a shape built from arrays at runtime', () => {
+  const scene = (line: string) => `size 200 200\nvar tx = fill(4, 0)\nvar ty = fill(4, 0)\nvar n = 0\nscene {\n  layer "c" {\n    ${line}\n  }\n}\n`
+  const shape = (line: string) => parseProgram(scene(line)).layers[0].items[0] as Region
+  it('names its two arrays; the geometry is empty until it is resolved against the variables', () => {
+    const r = shape('polyline tx ty nofill stroke #cc3333 2')
+    expect(r.poly).toEqual({ xs: 'tx', ys: 'ty' })
+    expect(r.path.subpaths).toEqual([])
+    expect([r.noFill, r.stroke?.width]).toEqual([true, 2])
+  })
+  it('`count` (a number or an expression) and `closed`', () => {
+    expect(shape('polyline tx ty count "n" nofill stroke #cc3333 2').poly).toEqual({ xs: 'tx', ys: 'ty', count: 'n' })
+    expect(shape('polyline tx ty count 3 closed fill #cc3333').poly).toEqual({ xs: 'tx', ys: 'ty', count: '3', closed: true })
+  })
+  it('round-trips', () => {
+    const once = printProgram(parseProgram(scene('polyline tx ty count "n" closed nofill stroke #cc3333 2 cap round')))
+    expect(once).toContain('polyline tx ty count "n" closed nofill stroke #cc3333 2 cap round')
+    expect(printProgram(parseProgram(once))).toBe(once)
+  })
+  it('two names are required', () => {
+    expect(() => parseProgram(scene('polyline tx nofill stroke #cc3333 2'))).toThrow(/polyline.*two array/)
+  })
+})

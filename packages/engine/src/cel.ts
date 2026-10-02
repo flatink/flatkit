@@ -19,7 +19,7 @@ import { lerpFilters, type Filter } from './filters'
 import { lerpColor } from './color'
 import { samplePathAt, projectToPath, lerpPath, type Path } from './path'
 import { applyEasing, rotDelta, EXPR_CHANNELS, OFFSET_CHANNELS, type ExprChannel, type BindChannel } from './timeline'
-import { compileCached, evalExpr, exprScope } from './expr'
+import { compileCached, evalExpr, exprScope, resolveInChain } from './expr'
 import { isPoseable, isRegion, isText } from './layers'
 import type { Point, Region, Item, Layer, Pose, Cel, ResolveOpts, TextPath, ChannelModifier } from '@flatkit/types'
 export type { Pose, Cel, ResolveOpts } from '@flatkit/types'
@@ -305,7 +305,7 @@ function resolveBoundText(t: { content: string; bind?: string; decimals?: number
  *  (`start "<expr>"` / `spacing "<expr>"`), or a region's animated stroke extent (`draw "<expr>"`). */
 const isDynamicLeaf = (it: Item): boolean =>
   (isText(it) && (!!it.bind || (!!it.textPath && (!!it.textPath.startExpr || !!it.textPath.spacingExpr)))) ||
-  (isRegion(it) && (!!it.drawExpr || !!it.drawFromExpr))
+  (isRegion(it) && (!!it.drawExpr || !!it.drawFromExpr || !!it.poly))
 
 /** Resolve a leaf's per-frame dynamic content in one place: a text's `bind` → `content` and its animated
  *  textPath channels → numeric `start`/`spacing`; a region's `draw "<expr>"` → a numeric `draw`/`drawFrom`.
@@ -313,6 +313,7 @@ const isDynamicLeaf = (it: Item): boolean =>
  *  same in a static and an animated (cel) layer — and the renderer stays purely numeric. */
 function resolveDynamicLeaf(it: Item, frame: number, opts: ResolveOpts): Item {
   if (isRegion(it)) {
+    if (it.poly) it = { ...it, path: polylinePath(it.poly, frame, opts) }
     if (!it.drawExpr && !it.drawFromExpr) return it
     const ev = evalNumberAt(frame, opts)
     return {
@@ -326,6 +327,27 @@ function resolveDynamicLeaf(it: Item, frame: number, opts: ResolveOpts): Item {
   if (out.bind) out = { ...out, content: resolveBoundText(out, frame, opts) }
   if (out.textPath && (out.textPath.startExpr || out.textPath.spacingExpr)) out = { ...out, textPath: resolveTextPathChannels(out.textPath, frame, opts) }
   return out
+}
+
+/**
+ * The path of a `polyline` for this frame: one subpath through (`xs[i]`, `ys[i]`), `i` below `count` (all
+ * the points when it has none). Each point carries its own handles, so the segments are STRAIGHT — a
+ * handle-less vertex would be smoothed like free-hand material, and a trajectory is not that. Fewer than
+ * two points, or a name that is not an array, give an empty path: nothing is drawn, nothing throws.
+ */
+function polylinePath(poly: NonNullable<Region['poly']>, frame: number, opts: ResolveOpts): Path {
+  const xs = opts.ctx ? resolveInChain(opts.ctx, poly.xs) : undefined
+  const ys = opts.ctx ? resolveInChain(opts.ctx, poly.ys) : undefined
+  if (!Array.isArray(xs) || !Array.isArray(ys)) return { subpaths: [] }
+  const max = Math.min(xs.length, ys.length)
+  const n = poly.count === undefined ? max : Math.max(0, Math.min(max, Math.floor(evalNumberAt(frame, opts)(poly.count, max))))
+  if (n < 2) return { subpaths: [] }
+  const segments: Path['subpaths'][number]['segments'] = []
+  for (let i = 0; i < n; i++) {
+    const anchor = { x: Number(xs[i]) || 0, y: Number(ys[i]) || 0 }
+    segments.push({ anchor, inHandle: anchor, outHandle: anchor })
+  }
+  return { subpaths: [{ closed: !!poly.closed, segments }] }
 }
 
 /** Evaluator of a leaf's per-frame expression: an invalid/non-finite result keeps the static value (the
