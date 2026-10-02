@@ -234,8 +234,30 @@ const num = (b: boolean) => (b ? 1 : 0)
 const resolveName = (ctx: ExprContext, name: string, base?: ExprContext): unknown =>
   Object.hasOwn(MATH_CTX, name) ? MATH_CTX[name]
     : Object.hasOwn(ctx, name) ? ctx[name]
-    : base !== undefined && Object.hasOwn(base, name) ? base[name]
+    : base !== undefined ? resolveInChain(base, name)
     : undefined
+
+/** `base` may be a CHAIN of scopes linked by prototype (`childScope`): an instance's params, over its
+ *  parent's scope, over the scene. Each level is consulted for its OWN properties only, and the walk stops
+ *  before `Object.prototype`, so nothing an object inherits by default is ever reachable. An ordinary
+ *  (unchained) context costs one extra `getPrototypeOf` on a miss. */
+const OBJECT_PROTO: unknown = Object.prototype
+function resolveInChain(scope: ExprContext, name: string): unknown {
+  let o: ExprContext | null = scope
+  do {
+    if (Object.hasOwn(o, name)) return o[name]
+    o = Object.getPrototypeOf(o) as ExprContext | null
+  } while (o !== null && o !== OBJECT_PROTO)
+  return undefined
+}
+
+/** A scope that ADDS `own` to `parent` without copying it: names not in `own` resolve through `parent`
+ *  (see `resolveInChain`). Entering an instance used to copy the whole scene context — every variable and
+ *  every named object — to add a handful of params; this makes it cost the params alone. Valid as the
+ *  `base` of `evalExpr`; do not spread it (a spread keeps own properties only). */
+export function childScope(parent: ExprContext | undefined, own: ExprContext): ExprContext {
+  return Object.assign(Object.create(parent ?? null) as ExprContext, own)
+}
 
 function evalNode(node: Node, ctx: ExprContext, base?: ExprContext): number {
   switch (node.t) {

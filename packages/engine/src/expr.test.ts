@@ -163,3 +163,22 @@ describe('expr — scientific notation', () => {
     expect(compileExpr('2 * e1').ok).toBe(true) // `e1` is an identifier, not an exponent
   })
 })
+
+// flatink/flatink#49 — `base` may be a CHAIN of scopes (an instance's params over its parent's scope over
+// the scene), linked by prototype so that entering an instance costs its own params and nothing more.
+describe('expr — a chained base', () => {
+  const v = (src: string, ctx: ExprContext, base: ExprContext) => { const c = compileExpr(src); if (!c.ok) throw new Error(c.error); return evalExpr(c.node, ctx, -1, base) }
+  const scene: ExprContext = { k: 100, Hero: { x: 7 }, shared: 1 }
+  const outer = Object.assign(Object.create(scene), { b: 10, shared: 2 }) as ExprContext
+  const inner = Object.assign(Object.create(outer), { a: 1, shared: 3 }) as ExprContext
+  it('resolves a name at any level, the nearest scope winning', () => {
+    expect(v('a + b + k + Hero.x', {}, inner)).toBe(118)
+    expect(v('shared', {}, inner)).toBe(3)
+    expect(v('shared', {}, outer)).toBe(2)
+    expect(v('shared', { shared: 9 }, inner)).toBe(9) // the overlay still comes first
+  })
+  it('never reaches what objects inherit by default', () => {
+    for (const name of ['constructor', 'toString', 'hasOwnProperty', 'valueOf']) expect(v(name, {}, inner)).toBe(-1)
+    expect(v('constructor', {}, scene)).toBe(-1)
+  })
+})

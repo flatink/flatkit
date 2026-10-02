@@ -30,6 +30,19 @@ const player = new FlatPlayer(canvas, doc, {
 | `render` | `true` | `false` = headless (logic + `send`s only, no Canvas API needed) |
 | `resolveAsset` | embedded only | maps an asset to a URL. Default: embedded `data:` URIs only — see [Security](#security) |
 | `onEvent` | — | called on every `send` |
+| `maxPixelRatio` | none | upper bound on the device pixel ratio the canvas is sized with. The backing store grows with the square of the ratio; on a 3x phone, `2` trades a little sharpness for a much cheaper frame |
+
+### When the player paints
+
+While it plays, the player repaints a frame **only when the picture can have changed**: a variable an
+expression reads was written, a param or a state moved, a spring is still settling, the pointer or a key
+changed, an image or a font finished loading. A scene at rest costs no paint at all. A scene whose
+expressions read `time`, `clock`, `frame` or `random()`, or whose keyframes play with the playhead, is
+repainted every frame as before.
+
+Everything the player exposes paints on its own (`setVar`, `setKey`, `seek`, `load`…). If the host changes
+what is drawn behind the player's back — it mutates the document it handed over, say — it calls
+`player.render()`.
 
 ## Receiving events (`send` → `onEvent`)
 

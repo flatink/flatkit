@@ -67,6 +67,10 @@ export type PlayerOptions = {
   // the HOST picks the origin, the (untrusted) document only supplies a relative key, so the security contract holds.
   resolveAsset?: (asset: Asset) => string | null
   onEvent?: (event: SendEvent) => void // DSL `send` channel -> the embedding host
+  // Upper bound on the device pixel ratio the canvas is sized with (default: none). The backing store grows
+  // with the SQUARE of the ratio, and on a 3x phone filling it is what a real-time scene spends its frame
+  // on: capping at 2 costs a little sharpness and can double the frame rate.
+  maxPixelRatio?: number
 }
 
 type View = { tx: number; ty: number; scale: number }
@@ -139,6 +143,59 @@ export function lerpVars(prev: Map<string, number | number[]>, cur: Map<string, 
   }
   return out
 }
+
+/** Document keys that hold LOGIC or raw data, never something the renderer evaluates. */
+const NOT_PICTURE = new Set(['interactions', 'functions', 'variables', 'assets', 'imports', 'onLoad', 'onEnterFrame', 'frameActions', 'labels', 'sounds'])
+const TIME_NAMES = ['time', 'frame', 'clock', 'random']
+/**
+ * Every identifier the PICTURE can read: the words of every string of the document outside its logic
+ * (channel expressions, modifier targets, bound texts, `draw` progress, interactor slots…), followed
+ * through the value functions they call. Over-approximated on purpose, like `docInputUse`: a word in a
+ * label counts as a name. The error that costs is the other one — a name missed here is a variable whose
+ * changes would not be painted — and a scan of every string cannot miss an expression field added later.
+ */
+function pictureReads(doc: Doc): Set<string> {
+  const out = new Set<string>()
+  const words = (src: string): void => { for (const m of src.matchAll(/[A-Za-z_]\w*/g)) out.add(m[0]) }
+  const visit = (v: unknown): void => {
+    if (typeof v === 'string') words(v)
+    else if (Array.isArray(v)) for (const x of v) visit(x)
+    else if (v && typeof v === 'object') for (const k in v) if (!NOT_PICTURE.has(k)) visit((v as Record<string, unknown>)[k])
+  }
+  visit(doc)
+  const fns = [...importedFunctions(doc.imports), ...(doc.functions ?? [])]
+  const followed = new Set<string>()
+  for (let grew = true; grew;) {
+    grew = false
+    for (const f of fns) {
+      const bare = f.name.slice(f.name.lastIndexOf('.') + 1)
+      if (f.kind !== 'value' || followed.has(f.name) || !out.has(bare)) continue
+      followed.add(f.name); words(f.expr); grew = true
+    }
+  }
+  return out
+}
+/**
+ * Do keyframes PLAY somewhere the scene can reach — a layer with several cels whose scope follows a
+ * clock? A symbol with a state machine is the exception: its pose is pinned by the state param, so its
+ * own cels move only when that param does. Anything nested below gets the benefit of the doubt (true).
+ */
+function keyframesPlay(doc: Doc): boolean {
+  const seen = new Set<string>()
+  const inLayers = (layers: Layer[], playing: boolean): boolean => layers.some((l) => {
+    if (playing && (l.cels?.length ?? 0) > 1) return true
+    return l.items.some((it) => {
+      if (isGroup(it)) return inLayers(it.layers, playing || !!it.timeline)
+      if (!isInstance(it) || seen.has(it.symbolId)) return false
+      seen.add(it.symbolId)
+      const sym = getSymbol(doc, it.symbolId)
+      return !!sym && inLayers(sym.layers, !sym.states?.length)
+    })
+  })
+  return inLayers(doc.layers, true)
+}
+/** Smallest change of a modifier-driven channel worth a repaint (px, radians, scale or opacity units). */
+const MOD_EPSILON = 1e-4
 
 const SIM_HZ = 60
 const SIM_STEP = 1 / SIM_HZ // seconds per simulation step
@@ -345,11 +402,28 @@ export class FlatPlayer {
   private handlerIndex?: Map<string, Map<ItemEvent, Interaction[]>>
   private interactorIndex?: Map<string, Interactor[]>
   private transRaf = 0 // lightweight rAF driving transitions while the playhead is NOT playing
+  // -- Painting on demand --
+  // The playback loop paints a frame only when the picture can differ from the one on the canvas. A scene
+  // at rest (the learner is reading the instructions) used to be redrawn in full sixty times a second.
+  private dirty = true // something the picture reads changed since the last paint
+  private moving = false // …and it changed during the last sim steps: the interpolation between them is still running
+  private timeDriven = true // the picture changes with time alone (clock/frame in an expression, keyframes playing) → paint every frame
+  private reads: Set<string> = new Set() // names the picture can read (see `pictureReads`)
+  private readonly drawnMods = new Map<string, number>() // modifier-driven channels: the value last painted
+  private actionDepth = 0 // > 0 while actions run: whoever ran them paints once they are done
+  private readonly maxDpr: number
   private longPressTimer: ReturnType<typeof setTimeout> | null = null
   private lastFrameInt = -1
   private readonly onResize = () => {
     this.measure()
     this.render()
+  }
+  /** A face finished loading: any text painted so far used its fallback. The loop no longer repaints a
+   *  still scene on its own, so this is what brings the authored face in for a host that did not await
+   *  `loadEmbeddedFonts` (or loads a web font of its own). */
+  private readonly onFontsLoaded = () => this.render()
+  private fontSet(): { addEventListener?: (t: string, f: () => void) => void; removeEventListener?: (t: string, f: () => void) => void } | undefined {
+    return typeof document === 'undefined' ? undefined : (document as unknown as { fonts?: ReturnType<FlatPlayer['fontSet']> }).fonts
   }
   /** Re-reads which input devices the current document uses (see `docInputUse`). Load-time only. */
   private applyInputUse(): void {
@@ -362,6 +436,19 @@ export class FlatPlayer {
   private bustNamed(): void {
     this.namedFrame = Number.NaN
     this.ctxCache = null // its baked-in named channels are now stale
+    this.dirty = true // an input changed: the picture may read it
+  }
+  /** Re-reads what the picture depends on (see `pictureReads`, `keyframesPlay`). Load-time only. */
+  private analysePicture(): void {
+    this.reads = pictureReads(this.doc)
+    this.timeDriven = TIME_NAMES.some((n) => this.reads.has(n)) || keyframesPlay(this.doc)
+    this.drawnMods.clear()
+    this.dirty = true
+  }
+  /** Runs actions on behalf of a caller that PAINTS when they are done (a handler, a sim step, a tick). */
+  private run(actions: Action[]): void {
+    this.actionDepth++
+    try { runActions(actions, this.host) } finally { this.actionDepth-- }
   }
   private readonly onKeyDown = (e: KeyboardEvent) => {
     if (isEditableTarget(e.target)) return // the user is typing in a field of the host page — not for us
@@ -719,7 +806,7 @@ export class FlatPlayer {
       if (!d.over) continue
       const t = d.atPointer ? pointer : center
       const b = dropZoneBounds(this.doc, d.over)
-      if (b && t.x >= b.minX && t.x <= b.maxX && t.y >= b.minY && t.y <= b.maxY) runActions(d.actions, this.host)
+      if (b && t.x >= b.minX && t.x <= b.maxX && t.y >= b.minY && t.y <= b.maxY) this.run(d.actions)
     }
   }
   private fireEvent(id: string, event: ItemEvent): void {
@@ -735,7 +822,7 @@ export class FlatPlayer {
     const placed = objectPlacementById(this.doc, id, this.frame, ctx, this.fps) // ONE scene walk for both
     this.selfChannels = placed?.channels ?? null
     this.selfParent = placed?.parent ?? IDENTITY
-    for (const x of matched) runActions(x.actions, this.host)
+    for (const x of matched) this.run(x.actions)
     this.selfChannels = prevSelf
     this.selfParent = prevParent
   }
@@ -759,7 +846,9 @@ export class FlatPlayer {
     }
     if (this.doc.interactions?.length || this.doc.interactors?.length) {
       const chains = hitChains(this.doc, this.frame, this.exprCtx(), p, this.grabZones)
-      this.hoverIds = new Set(chains[0] ?? []) // topmost stack under the pointer → drives self.hovered feedback
+      const top = chains[0] ?? []
+      if (top.length !== this.hoverIds.size || top.some((id) => !this.hoverIds.has(id))) this.dirty = true // `self.hovered` changed for something
+      this.hoverIds = new Set(top) // topmost stack under the pointer → drives self.hovered feedback
       this.canvas.style.cursor = (this.pickTarget(chains, GRAB_EVENTS) ?? this.pickInteractor(chains)) ? 'grab' : this.pickTarget(chains, CLICK_EVENTS) ? 'pointer' : 'default'
       const hov = this.pickTarget(chains, HOVER_EVENTS)
       if (hov !== this.hovered) {
@@ -869,7 +958,12 @@ export class FlatPlayer {
     seek: (f) => this.seek(f),
     labelFrame: (name) => this.doc.timeline?.labels?.find((l) => l.name === name)?.frame,
     setVar: (name, v) => { this.setVarLive(name, v) },
-    setIndex: (name, i, v) => { const a = this.vars.get(name); if (Array.isArray(a) && i >= 0 && i < a.length) a[i] = v }, // in-place: ctx shares the array ref
+    setIndex: (name, i, v) => { // in-place: ctx shares the array ref
+      const a = this.vars.get(name)
+      if (!Array.isArray(a) || i < 0 || i >= a.length || a[i] === v) return
+      a[i] = v
+      if (this.reads.has(name)) { this.dirty = true; this.moving = true }
+    },
     fillVar: (name, count, value) => this.setVarLive(name, new Array<number>(Math.max(0, Math.min(MAX_FILL, Math.floor(count)))).fill(value)),
     setParam: (target, param, value) => this.setParam(target, param, value),
     callProc: (name, args) => this.callProc(name, args),
@@ -889,6 +983,8 @@ export class FlatPlayer {
     this.ctx = ctx
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
     this.applyInputUse()
+    this.analysePicture()
+    this.maxDpr = opts.maxPixelRatio && opts.maxPixelRatio > 0 ? opts.maxPixelRatio : Infinity
     this.hasModifiers = docHasModifiers(this.doc)
     this.hasSymbolTimelines = this.doc.symbols.some((s) => !!s.timeline)
     this.buildGrabZones()
@@ -908,6 +1004,7 @@ export class FlatPlayer {
     this.render()
     this.fireLoad()
     window.addEventListener('resize', this.onResize)
+    this.fontSet()?.addEventListener?.('loadingdone', this.onFontsLoaded)
     if (opts.input ?? true) { // false (gallery preview): plays the anim but does not attach the inputs
       globalThis.addEventListener('keydown', this.onKeyDown)
       globalThis.addEventListener('keyup', this.onKeyUp)
@@ -961,12 +1058,12 @@ export class FlatPlayer {
   private fireLoad(): void {
     let changed = false
     if (this.doc.timeline?.onLoad?.length) {
-      runActions(this.doc.timeline.onLoad, this.host)
+      this.run(this.doc.timeline.onLoad)
       changed = true
     }
     for (const s of this.activeSymbolTimelines(0)) {
       if (s.tl.onLoad?.length) {
-        runActions(s.tl.onLoad, this.host)
+        this.run(s.tl.onLoad)
         changed = true
       }
     }
@@ -990,6 +1087,7 @@ export class FlatPlayer {
    *  re-copy every variable on each eval. Reserved names (time/frame/clock/value) and function names are
    *  never overwritten in the ctx. */
   private setVarLive(name: string, value: number | number[]): void {
+    if (this.vars.get(name) !== value && this.reads.has(name)) { this.dirty = true; this.moving = true }
     this.vars.set(name, value)
     if (this.ctxCache && !this.funcNames.has(name) && !RESERVED.has(name)) this.ctxCache[name] = value
     // A continuous `trace` keeps its progress across grabs, so the ONLY way to restart the exercise is the
@@ -1038,7 +1136,7 @@ export class FlatPlayer {
     const saved = f.params.map((p) => [p, this.vars.get(p)] as const)
     f.params.forEach((p, i) => this.setVarLive(p, args[i] ?? 0))
     this.funcDepth++
-    runActions(f.body, this.host)
+    this.run(f.body)
     this.funcDepth--
     for (const [p, v] of saved) {
       if (v === undefined) { this.vars.delete(p); if (this.ctxCache) delete this.ctxCache[p] }
@@ -1271,6 +1369,7 @@ export class FlatPlayer {
   load(doc: Doc): void {
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
     this.applyInputUse()
+    this.analysePicture()
     this.vars = cloneVars(doc.variables)
     this.namedCache = null // new document -> named-objects cache stale
     this.ctxCache = null // new document -> cached expr context stale (vars Map replaced just above)
@@ -1291,6 +1390,7 @@ export class FlatPlayer {
     this.reseedDerivedState() // …then the seeded variables put the derived state back (trace progress, scratched grid)
     this.paramRt.clear() // new document -> per-instance param transitions reset
     this.channelState.clear() // new document -> modifier integrator state resets
+    this.drawnMods.clear()
     this.velocityState.clear()
     this.modAcc = 0
     this.hasModifiers = docHasModifiers(this.doc)
@@ -1305,7 +1405,7 @@ export class FlatPlayer {
 
   private measure(): void {
     const r = this.canvas.getBoundingClientRect()
-    this.dpr = window.devicePixelRatio || 1
+    this.dpr = Math.min(window.devicePixelRatio || 1, this.maxDpr)
     this.cssW = r.width
     this.cssH = r.height
     this.canvas.width = Math.max(1, Math.round(r.width * this.dpr))
@@ -1316,6 +1416,7 @@ export class FlatPlayer {
   /** Draws the current frame (pure, without advancing time). */
   render(): void {
     if (!this.renderOn) return // headless: no painting (no Canvas API required)
+    this.dirty = false
     const { ctx, doc, view, dpr } = this
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, this.cssW, this.cssH)
@@ -1372,7 +1473,12 @@ export class FlatPlayer {
     for (const t of collectModifierTargets(this.doc, this.frame, rctx, velocityFor)) {
       const k = t.key + '|' + t.ch
       const cur = this.channelState.get(k) ?? restState(t.target)
-      this.channelState.set(k, advanceModifier(t.mod, cur, t.target, steps))
+      const next = advanceModifier(t.mod, cur, t.target, steps)
+      this.channelState.set(k, next)
+      // Repaint once the channel has drifted from the value last PAINTED (not from the previous step: a
+      // slow settle would add up unseen). A spring at rest stops costing a paint.
+      const drawn = this.drawnMods.get(k)
+      if (drawn === undefined || Math.abs(next.pos - drawn) > MOD_EPSILON) { this.drawnMods.set(k, next.pos); this.dirty = true }
     }
   }
 
@@ -1416,9 +1522,13 @@ export class FlatPlayer {
     const cur = params.get(param)?.value ?? (sm ? initialStateValue(sm) : 0)
     const dur = Math.max(0, sm?.transition ?? 0)
     params.set(param, { value: dur > 0 ? cur : targetVal, from: cur, target: targetVal, elapsed: 0, dur, ease: sm?.ease })
-    this.bustNamed()
+    this.dirty = true
     this.ensureTransitions()
-    this.render()
+    // No paint here: a param is written from actions, and whoever runs actions paints when they are done
+    // (the tick, a sim step, a pointer handler). Painting per write made N writes cost N full renders — a
+    // scene driving twenty components each frame drew itself twenty-one times. Nor is the named-objects
+    // cache dropped: it resolves the scene without the instances' runtime params, so a write cannot change it.
+    if (this.actionDepth === 0) this.render()
   }
 
   /** Current values of an instance's params (for drawScene → drives the local frame + the subtree scope). */
@@ -1437,6 +1547,7 @@ export class FlatPlayer {
     for (const params of this.paramRt.values()) {
       for (const st of params.values()) {
         if (st.elapsed >= st.dur) { st.value = st.target; continue }
+        this.dirty = true // a transition moved (its last step included, which lands on the target)
         st.elapsed = Math.min(st.dur, st.elapsed + Math.max(0, deltaFrames))
         const p = st.dur > 0 ? st.elapsed / st.dur : 1
         st.value = st.from + (st.target - st.from) * applyEasing(p, st.ease)
@@ -1500,6 +1611,7 @@ export class FlatPlayer {
     this.frame = Math.max(0, Math.min(this.duration, frame))
     this.lastFrameInt = Math.floor(this.frame) // a seek does not trigger the frame-actions (anti-loop)
     this.channelState.clear() // random access: modifiers re-init at rest on their target (snap, no transient)
+    this.drawnMods.clear()
     this.velocityState.clear() // velocity() re-inits → 0 (no spurious jolt from a stale delta)
     this.modAcc = 0
     // While PLAYING, `mono` free-runs across loop wraps (kept monotone by the sim/rAF) → an `independent`
@@ -1526,8 +1638,8 @@ export class FlatPlayer {
       this.frame = f
       this.advanceParams(SIM_STEP * this.fps) // P3: advance per-instance state transitions in lockstep with the sim
       const symSims = this.activeSymbolTimelines(f).filter((s) => s.tl.onEnterFrame?.length)
-      if (rootSim?.length) runActions(rootSim, this.host)
-      for (const s of symSims) runActions(s.tl.onEnterFrame!, this.host)
+      if (rootSim?.length) this.run(rootSim)
+      for (const s of symSims) this.run(s.tl.onEnterFrame!)
       this.mouse.dx = 0 // movement consumed by this step (same contract as the real tick)
       this.mouse.dy = 0
       this.mouse.wheel = 0
@@ -1590,13 +1702,14 @@ export class FlatPlayer {
     if (fi === this.lastFrameInt) return
     this.lastFrameInt = fi
     const fa = this.doc.timeline?.frameActions
-    if (fa) for (const e of fa) if (e.frame === fi) runActions(e.actions, this.host)
+    if (fa) for (const e of fa) if (e.frame === fi) this.run(e.actions)
   }
 
   play(): void {
     if (this.playing) return
     if (this.transRaf) { cancelAnimationFrame(this.transRaf); this.transRaf = 0 } // the main tick becomes the sole transition driver
     this.playing = true
+    this.dirty = true
     this.last = performance.now()
     this.simAcc = 0
     this.prevSimVars = null; this.simAlpha = 1; this.simActive = false // restart from a clean interpolation state
@@ -1626,14 +1739,18 @@ export class FlatPlayer {
       const symTLs = this.activeSymbolTimelines(f)
       const rootSim = this.doc.timeline?.onEnterFrame
       const symSims = symTLs.filter((s) => s.tl.onEnterFrame?.length)
+      // What the picture reads may have moved during the LAST steps: it is then drawn interpolated between
+      // them, so it keeps changing until a step has run that moves nothing — and once more to land.
+      const wasMoving = this.moving
       if (rootSim?.length || symSims.length) {
         this.simActive = true
         const { steps, acc } = simSteps(this.simAcc, dt, SIM_STEP, SIM_MAX_STEPS)
         this.simAcc = acc
+        if (steps > 0) this.moving = false
         for (let i = 0; i < steps && this.playing; i++) { // an action can pause -> we stop
           this.prevSimVars = cloneVarMap(this.vars) // state BEFORE the step -> interpolation target
-          if (rootSim?.length) runActions(rootSim, this.host) // root
-          for (const s of symSims) runActions(s.tl.onEnterFrame!, this.host) // active symbols
+          if (rootSim?.length) this.run(rootSim) // root
+          for (const s of symSims) this.run(s.tl.onEnterFrame!) // active symbols
         }
         // Remaining step fraction -> we draw between `prevSimVars` and the current state (0..1).
         this.simAlpha = Math.min(1, this.simAcc / SIM_STEP)
@@ -1641,6 +1758,7 @@ export class FlatPlayer {
         this.simAcc = 0 // "pure tween" demo: no simulation, we do not hoard backlog
         this.simActive = false
         this.prevSimVars = null
+        this.moving = false // nothing to interpolate between
       }
       // 2b) stateful channel modifiers (smooth/spring): advance at the SAME fixed step but UNGATED by
       // onEnterFrame (its own accumulator) -> an asset's "feel" animates even with zero scene behavior.
@@ -1653,9 +1771,9 @@ export class FlatPlayer {
       this.mouse.dy = 0
       this.mouse.wheel = 0
 
-      // 3) frame-actions (on the current frame) + single render.
+      // 3) frame-actions (on the current frame) + single render — when there is something new to show.
       this.fireFrameActions() // can change frame/playing (gotoFrame, pause...)
-      this.render()
+      if (this.timeDriven || this.dirty || wasMoving || this.moving) this.render()
       if (this.playing) this.raf = requestAnimationFrame(tick)
     }
     this.raf = requestAnimationFrame(tick)
@@ -1704,6 +1822,7 @@ export class FlatPlayer {
     this.cancelHitWarm()
     if (this.transRaf) { cancelAnimationFrame(this.transRaf); this.transRaf = 0 } // stop the transition driver on a torn-down player
     window.removeEventListener('resize', this.onResize)
+    this.fontSet()?.removeEventListener?.('loadingdone', this.onFontsLoaded)
     globalThis.removeEventListener('keydown', this.onKeyDown)
     globalThis.removeEventListener('keyup', this.onKeyUp)
     globalThis.removeEventListener('blur', this.onBlur)

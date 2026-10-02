@@ -20,7 +20,7 @@ import { pathToBezier, transformPath, makePathSampler, pathBBox, trimPath, type 
 import { type BaseOf } from '@flatkit/engine/timeline'
 import { resolveInstanceParams, instanceFrames } from '@flatkit/engine/params'
 import { resolveLayerAt } from '@flatkit/engine/cel'
-import type { ExprContext } from '@flatkit/engine/expr'
+import { childScope, type ExprContext } from '@flatkit/engine/expr'
 import { apply, compose, invert, IDENTITY, type Transform } from '@flatkit/engine/transform'
 
 /**
@@ -668,7 +668,11 @@ function instanceScope(doc: Doc, it: Instance, rctx: RenderCtx): { sym: SymbolDe
   const resolved = resolveInstanceParams(sym, it)
   const runtime = rctx.paramsFor?.(it.id)
   const numeric = runtime ? { ...resolved.numeric, ...runtime } : resolved.numeric
-  const expr = Object.keys(numeric).length ? { ...rctx.expr, ...numeric } : rctx.expr
+  // CHAINED to the parent scope, not merged into a copy of it: the scene context holds every variable and
+  // every named object, and copying it for each instance on each walk was most of the cost of drawing one.
+  let any = false
+  for (const _ in numeric) { any = true; break }
+  const expr = any ? childScope(rctx.expr, numeric) : rctx.expr
   return { sym, expr, color: resolved.color }
 }
 
@@ -758,13 +762,23 @@ export function collectModifierTargets(doc: Doc, frame: number, rctx: RenderCtx,
   return out
 }
 
-/** Does the document declare ANY stateful channel modifier (scene layers OR symbol definitions)? Lets the
- *  player skip the whole advance pass for the common case (no modifiers → zero overhead). */
+/** Does the SCENE reach any stateful channel modifier — on its own items, or inside a symbol it
+ *  instantiates (directly, through a group, or through another symbol)? Lets the player skip the whole
+ *  advance pass for the common case (no modifiers → zero overhead). A symbol that merely sits in a linked
+ *  library does not count: asking the document instead switched the pass on for every scene compiled with
+ *  a library that had one spring in it. */
 export function docHasModifiers(doc: Doc): boolean {
-  const inItems = (items: Item[]): boolean => items.some((it) =>
-    (isPoseable(it) && !!it.modifiers && Object.keys(it.modifiers).length > 0) ||
-    (isGroup(it) && it.layers.some((l) => inItems(l.items))))
-  return doc.layers.some((l) => inItems(l.items)) || (doc.symbols ?? []).some((s) => s.layers.some((l) => inItems(l.items)))
+  const seen = new Set<string>()
+  const inItems = (items: Item[]): boolean => items.some((it) => {
+    if (isPoseable(it) && !!it.modifiers && Object.keys(it.modifiers).length > 0) return true
+    if (isGroup(it)) return it.layers.some((l) => inItems(l.items))
+    if (isInstance(it) && !seen.has(it.symbolId)) {
+      seen.add(it.symbolId)
+      return (getSymbol(doc, it.symbolId)?.layers ?? []).some((l) => inItems(l.items))
+    }
+    return false
+  })
+  return doc.layers.some((l) => inItems(l.items))
 }
 
 /**

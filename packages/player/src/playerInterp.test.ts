@@ -50,7 +50,8 @@ describe('FlatPlayer -- anti-judder interpolation (inter-step render)', () => {
   it('at mid-step, the render context sees the interpolated value (not the jumped value)', async () => {
     const { FlatPlayer } = await import('./player')
     const doc = {
-      width: 100, height: 100, symbols: [], layers: [{ id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: [] }],
+      // Something on screen READS `px`: a variable the picture never reads costs no paint at all.
+      width: 100, height: 100, symbols: [], layers: [{ id: 'L', name: 'c', visible: true, locked: false, opacity: 1, items: [{ id: 'g', kind: 'group', name: 'G', transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, layers: [], expressions: { x: 'px' } }] }],
       variables: { px: 0 },
       timeline: { fps: 24, durationFrames: 10000, tracks: [], onEnterFrame: [{ do: 'setVar', name: 'px', value: 'px + 10' }] },
     } as unknown as import('@flatkit/types').Doc

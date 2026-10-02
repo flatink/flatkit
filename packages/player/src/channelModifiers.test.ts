@@ -30,6 +30,55 @@ describe('drawScene — collectModifierTargets: per-instance state keys (v2)', (
   })
 })
 
+// flatink/flatink#49 — an instance's params used to be merged into a COPY of the whole scene context
+// (every variable, every named object), per instance, per walk. The scope is now chained to its parent's.
+describe('drawScene — an instance scope sees its params, its parents\' and the scene, without copying any', () => {
+  const inner: SymbolDef = { id: 'in', name: 'Inner', params: [{ name: 'a', type: 'number', default: '1' }], layers: [layer([springGroup('g', 'a + b + k')])] }
+  const outer: SymbolDef = { id: 'out', name: 'Outer', params: [{ name: 'b', type: 'number', default: '10' }], layers: [layer([{ id: 'i', kind: 'instance', name: 'i', transform: IDENTITY, symbolId: 'in', params: { a: '2' } } as Instance])] }
+  const doc: Doc = { width: 100, height: 100, symbols: [inner, outer], layers: [layer([{ id: 'o', kind: 'instance', name: 'o', transform: IDENTITY, symbolId: 'out' } as Instance])], variables: {} }
+  it('own param, the enclosing instance\'s param and a scene variable all resolve', () => {
+    const [t] = collectModifierTargets(doc, 0, { fps: 24, statePath: '', expr: { k: 100 } })
+    expect(t.target).toBe(112)
+  })
+  it('a param hides a scene variable of the same name, as it always did', () => {
+    const [t] = collectModifierTargets(doc, 0, { fps: 24, statePath: '', expr: { k: 100, b: 5000 } })
+    expect(t.target).toBe(112)
+  })
+  it('the scene context is handed down by reference: its keys are not copied into the scope', () => {
+    const scene: Record<string, unknown> = { k: 100 }
+    let reads = 0
+    for (let i = 0; i < 400; i++) Object.defineProperty(scene, `D${i}`, { enumerable: true, get: () => { reads++; return 0 } })
+    collectModifierTargets(doc, 0, { fps: 24, statePath: '', expr: scene as never })
+    expect(reads).toBe(0) // a spread reads every enumerable key of what it copies
+  })
+})
+
+// flatink/flatink#48 — the gate asked "does the DOCUMENT declare a modifier", symbols the scene never
+// instantiates included: linking a library that has one spring switched the whole advance pass on.
+describe('drawScene — docHasModifiers looks at what the scene can reach', () => {
+  const springSym: SymbolDef = { id: 'sp', name: 'Jauge', layers: [layer([springGroup('aiguille', '1')])] }
+  const plainSym: SymbolDef = { id: 'pl', name: 'Dot', layers: [layer([])] }
+  const inst = (symbolId: string): Instance => ({ id: `i_${symbolId}`, kind: 'instance', name: symbolId, transform: IDENTITY, symbolId })
+  const docOf = (symbols: SymbolDef[], items: Layer['items']): Doc => ({ width: 100, height: 100, symbols, layers: [layer(items)], variables: {} })
+  it('a symbol with a spring that nothing instantiates does not count', () => {
+    expect(docHasModifiers(docOf([springSym, plainSym], [inst('pl')]))).toBe(false)
+  })
+  it('instantiated in the scene: it counts', () => {
+    expect(docHasModifiers(docOf([springSym], [inst('sp')]))).toBe(true)
+  })
+  it('reached through another symbol, or from inside a group: it counts', () => {
+    const wrapper: SymbolDef = { id: 'wr', name: 'Wrapper', layers: [layer([inst('sp')])] }
+    expect(docHasModifiers(docOf([springSym, wrapper], [inst('wr')]))).toBe(true)
+    const grp: Group = { id: 'g', kind: 'group', name: 'g', transform: IDENTITY, layers: [layer([inst('sp')])] }
+    expect(docHasModifiers(docOf([springSym], [grp]))).toBe(true)
+  })
+  it('symbols that instantiate each other in a cycle do not hang', () => {
+    const a: SymbolDef = { id: 'a', name: 'A', layers: [layer([inst('b')])] }
+    const b: SymbolDef = { id: 'b', name: 'B', layers: [layer([inst('a')])] }
+    expect(docHasModifiers(docOf([a, b], [inst('a')]))).toBe(false)
+  })
+})
+
 describe('drawScene — docHasModifiers', () => {
   it('true when a symbol (or scene) declares a modifier, false otherwise', () => {
     const withMod: Doc = { width: 1, height: 1, symbols: [{ id: 's', name: 'S', layers: [layer([springGroup('g', '1')])] }], layers: [layer([{ id: 'i', kind: 'instance', name: 'i', transform: IDENTITY, symbolId: 's' }])], variables: {} }

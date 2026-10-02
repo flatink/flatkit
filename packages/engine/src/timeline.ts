@@ -212,7 +212,10 @@ function applyExpressions(
     opacity: kf?.opacity ?? base?.opacity ?? 1,
   }
   const time = fps > 0 ? frame / fps : frame
-  const withSelf = { ...extraCtx, self: ch, ...spaceConversions(IDENTITY) } // self + conversions (legacy tracks model = root)
+  // self + conversions (legacy tracks model = root). `extraCtx` rides along as the by-reference `base`: it
+  // may be a chained scope (which a spread would truncate), and it was copied once per channel anyway.
+  const overlay = { self: ch, ...spaceConversions(IDENTITY) }
+  const clock = typeof extraCtx?.clock === 'number' ? extraCtx.clock : undefined
   let touchedT = false
 
   for (const c of EXPR_CHANNELS) {
@@ -220,7 +223,7 @@ function applyExpressions(
     if (!src) continue
     const compiled = compileCached(src)
     if (!compiled.ok) continue // invalid expression → ignored (the UI reports the error)
-    ch[c] = evalExpr(compiled.node, exprScope(withSelf, time, frame, ch[c]), ch[c])
+    ch[c] = evalExpr(compiled.node, exprScope(overlay, time, frame, ch[c], clock), ch[c], extraCtx)
     if (c !== 'opacity') touchedT = true
   }
 
