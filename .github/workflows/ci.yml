@@ -3,10 +3,21 @@ name: CI
 # Branches and PRs run THE GATE (gate.yml). `main` is owned by release.yml (which runs the same gate before
 # publishing), and `changeset-release/main` is a staging branch already gated when the change hit main — both
 # are excluded here so the gate never runs twice for the same change.
+#
+# The "Version Packages" PR must not match at all. It is opened with GITHUB_TOKEN, and GitHub creates the
+# `pull_request` runs of such a PR in an approval-required state: no job starts, the run sits there, and it
+# turns into a FAILURE the second the PR is merged — a red cross on every release, for a workflow that never
+# ran. A filter on the HEAD branch does not exist for `pull_request`, so the PR is recognised by what it
+# touches: changesets consumed, CHANGELOGs written, versions bumped, and nothing else. A PR that touches
+# ONLY those files triggers no run; a branch of this repository still gets the gate from its `push`.
 on:
   push:
     branches-ignore: [main, changeset-release/main]
   pull_request:
+    paths-ignore:
+      - ".changeset/**"
+      - "**/CHANGELOG.md"
+      - "packages/*/package.json"
 
 # Cancel superseded runs on the same branch/PR.
 concurrency:
