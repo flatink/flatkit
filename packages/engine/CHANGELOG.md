@@ -1,5 +1,18 @@
 # @flatkit/engine
 
+## 0.36.1
+
+### Patch Changes
+
+- [`9ba1877`](https://github.com/flatink/flatkit/commit/9ba187778ca41d14aae99bfc2055dc4badb2cd39) Thanks [@kaelhem](https://github.com/kaelhem)! - The `--check` warning about a path that "looks like free-hand material" and does not say `smooth` only
+  fires when rounding the path would visibly move its outline. 0.36.0 fired it on any long run of points
+  with gentle turns: 4431 times on a corpus of 546 slides of vectorised artwork, where the two renderings
+  differed by a fraction of a percent of the pixels. It now measures how far the smoothed outline would
+  stand from the straight segments (across each segment, and relative to the size of the shape), and stays
+  quiet for points in a row and for curves already sampled finely. Same corpus: 14 warnings.
+- Updated dependencies []:
+  - @flatkit/types@0.36.1
+
 ## 0.36.0
 
 ### Minor Changes
