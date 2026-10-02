@@ -1,5 +1,12 @@
 # @flatkit/mcp
 
+## 0.3.6
+
+### Patch Changes
+
+- Updated dependencies [[`59bd47f`](https://github.com/flatink/flatkit/commit/59bd47f16d049874f9973dd0abd5e0ae86440729)]:
+  - @flatkit/compiler@0.38.0
+
 ## 0.3.5
 
 ### Patch Changes
