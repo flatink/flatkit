@@ -1,5 +1,15 @@
 # @flatkit/compiler
 
+## 0.39.1
+
+### Patch Changes
+
+- [`0110e0a`](https://github.com/flatink/flatkit/commit/0110e0a0dc1d71fc37c58efe6eeb46af170d82e9) Thanks [@kaelhem](https://github.com/kaelhem)! - `flatc --render` and `renderDocToPng` draw a plain frame once again. Since 0.38.0 the renderer drew it twice before capturing, and a second draw goes through the filter cache: scenes with `filter blur`, masks or `blend` came out one to three levels in 255 away from 0.37.1. Invisible, but found by a pixel comparison on a consumer's slides (2 in 61). A frame rendered after a gesture script is still drawn again, so that what the script changed is in the picture.
+- Updated dependencies []:
+  - @flatkit/engine@0.39.1
+  - @flatkit/player@0.39.1
+  - @flatkit/types@0.39.1
+
 ## 0.39.0
 
 ### Minor Changes
