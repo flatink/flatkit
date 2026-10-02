@@ -73,6 +73,8 @@ Usage:
                     folder, where a neighbouring scratch file is not a dependency)
   --watch           recompile on every change in the folder (agent → player loop)
   --play            run the file WITHOUT a canvas, replay --script and print { sends, vars } (JSON)
+  --seed N          (with --play) seed of random(). A replay is always seeded (default 1): the same script
+                    gives the same result twice; another N gives another draw
   --trace           (with --play) HUMAN-READABLE log per gesture: emitted sends + variable diff (debug)
   --script <f>      JSON gesture script: [{ "type": "down|move|up|cancel", "x", "y" }, { "type": "set", "name", "value" }, { "type": "wait", "frames": N }, { "type": "wheel", "dy": N }]
                     semantic (by NAME, the engine resolves coords): { "type": "drag", "source", "target" } · { "type": "tap", "target" } (or "x", "y": a point)
@@ -315,14 +317,14 @@ function loadDoc(filePath: string, noLibs = false, explicitFlats: string[] = [])
 }
 
 /** --play: runs the file headless, replays --script, prints { sends, vars }. */
-function playOnce(filePath: string, scriptPath: string, trace: boolean, noLibs = false, explicitFlats: string[] = []): number {
+function playOnce(filePath: string, scriptPath: string, trace: boolean, noLibs = false, explicitFlats: string[] = [], seed?: number): number {
   if (!scriptPath) { process.stderr.write('flatc: --play requires --script <gestures.json>\n'); return 1 }
   if (!existsSync(scriptPath)) { process.stderr.write(`flatc: script not found: ${scriptPath}\n`); return 1 }
   let doc: Doc, gestures: Gesture[]
   try { doc = loadDoc(filePath, noLibs, explicitFlats) } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
   try { gestures = JSON.parse(readFileSync(scriptPath, 'utf8')) as Gesture[] } catch (e) { process.stderr.write(`flatc: invalid JSON script: ${(e as Error).message}\n`); return 1 }
   if (!Array.isArray(gestures)) { process.stderr.write('flatc: the script must be an array of gestures\n'); return 1 }
-  const res = playHeadless(doc, gestures, { trace })
+  const res = playHeadless(doc, gestures, { trace, seed })
   if (!trace) process.stdout.write(JSON.stringify(res, null, 2) + '\n')
   else // --trace: readable log (one gesture per line) → inspection / debug-player.
     for (const s of res.steps ?? []) {
@@ -521,6 +523,7 @@ export function run(argv: string[]): number | Promise<number> {
   let checkOnly = false, doFix = false, doWatch = false, doPlay = false, doRender = false, doTrace = false, doPreview = false, noLibs = false
   let frame = 0, scale = 2, steps = 0, pad = 24
   let scaleAuto = false
+  let seed: number | undefined
   let bboxMode: 'all' | 'frame0' = 'all'
   let assetMode: AssetMode = 'inline'
   const vars: Record<string, number> = {}
@@ -543,6 +546,7 @@ export function run(argv: string[]): number | Promise<number> {
     else if (a === '--pad') pad = Math.max(0, Number(args[++i] ?? '24') || 0)
     else if (a === '--bbox') bboxMode = args[++i] === 'frame0' ? 'frame0' : 'all'
     else if (a === '--frame') frame = Number(args[++i] ?? '0') || 0
+    else if (a === '--seed') { const v = Number(args[++i]); if (Number.isFinite(v)) seed = v }
     else if (a === '--steps') steps = Math.max(0, Number(args[++i] ?? '0') || 0)
     else if (a === '--scale') { const v = args[++i] ?? '2'; if (v === 'auto') scaleAuto = true; else scale = Number(v) || 2 }
     else if (a === '--at') parseVars(args[++i] ?? '', vars)
@@ -558,7 +562,7 @@ export function run(argv: string[]): number | Promise<number> {
   const explicitFlats = positional.slice(1)
   if (doPreview) return previewOnce(filePath, symbolName, out, frame, vars, scale, steps, doRender, pad, bboxMode, setSpec, scaleAuto)
   if (doRender) return renderOnce(filePath, out, frame, vars, scale, steps, scaleAuto, noLibs, setSpec, explicitFlats)
-  if (doPlay) return playOnce(filePath, scriptPath, doTrace, noLibs, explicitFlats)
+  if (doPlay) return playOnce(filePath, scriptPath, doTrace, noLibs, explicitFlats, seed)
   // `--check <library>.flat`: a `.flat` first positional is an asset LIB, not a program → lint via parseFlatLib
   // (the following positionals are more `.flat` libs to merge). Every other path is unchanged.
   const action: () => number = checkOnly && filePath.endsWith('.flat')

@@ -236,6 +236,8 @@ flatc <file> --play --script gestures.json [--trace]
   `tap` also takes a point instead of a name — `{ "type": "tap", "x": 120, "y": 80 }` — for a rail or
   an area that has no name.
 - Audio is off in `--play`: a `sound` action is a silent no-op, so a program is replayed as written.
+- `random()` is seeded in `--play` (seed `1`), so a replay says the same thing twice and an `expect` can
+  assert on a draw. `--seed N` picks another one.
 - **`turn`** rotates a `turn`/`turnDeg` target by `angle` (degrees for `turnDeg`, radians for `turn`),
   swept in sub-steps so a multi-turn rotation lands. It presses the object where the engine finds it, i.e.
   on **whatever is topmost there** — two clock hands overlapping at noon give the gesture to the one on

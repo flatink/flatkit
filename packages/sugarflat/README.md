@@ -123,6 +123,11 @@ learner makes a mistake and the activity stops responding, at the exact moment t
 | `compose <name> { prompt "…"  total <n>  chip <v> at x,y }` | tap values until they add up; overshooting resets |
 | `steps <name> { prompt "…"  step "…" at x,y }` | a gated sequence; out-of-order taps do nothing |
 
+Any of the three takes a **`shuffle`** line: the elements the learner picks from (items, chips, step
+cards) swap places when the activity loads, so playing it again is a new attempt. Targets stay put, and so
+does the order of a `steps` sequence. The draw comes from `random()`: pass the player a `seed` to get the
+same layout again (`flatc --play` always does). `meta[].shuffle` says a block asked for it.
+
 Each emits `send "correct" / "incorrect" / "step" / "completed"` with a record payload naming the index
 (`{ item = 2 }`), so a host reads which one without depending on what the theme drew. `desugar()` returns
 the labels behind those indices, and the prompt, in `meta` — the host displays them, the gesture never

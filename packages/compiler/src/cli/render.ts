@@ -144,7 +144,7 @@ export async function createRenderer(doc: Doc, opts: { scale?: number; params?: 
     addEventListener: () => {}, removeEventListener: () => {}, style: {},
   })
 
-  let player: FlatPlayer | null = new FlatPlayer(el, withParams, { input: false, audio: false, padding: 0, image: (id) => images.get(id) ?? null })
+  let player: FlatPlayer | null = new FlatPlayer(el, withParams, { input: false, audio: false, padding: 0, seed: 1, image: (id) => images.get(id) ?? null })
 
   return {
     width: pxW,

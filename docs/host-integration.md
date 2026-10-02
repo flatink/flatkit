@@ -30,6 +30,7 @@ const player = new FlatPlayer(canvas, doc, {
 | `render` | `true` | `false` = headless (logic + `send`s only, no Canvas API needed) |
 | `resolveAsset` | embedded only | maps an asset to a URL. Default: embedded `data:` URIs only — see [Security](#security) |
 | `onEvent` | — | called on every `send` |
+| `seed` | none | seed of `random()`: the scene then draws the same numbers on every run. Absent, it draws from `Math.random` |
 | `maxPixelRatio` | none | upper bound on the device pixel ratio the canvas is sized with. The backing store grows with the square of the ratio; on a 3x phone, `2` trades a little sharpness for a much cheaper frame |
 
 ### When the player paints

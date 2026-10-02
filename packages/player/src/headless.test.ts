@@ -800,3 +800,29 @@ describe('headless -- `hitbox` is where an object is touched', () => {
     expect(playHeadless(doc, [{ type: 'down', x: 250, y: 100 }, { type: 'move', x: 135, y: 125 }, { type: 'up', x: 135, y: 125 }]).vars.m).toBe(1)
   })
 })
+
+// flatink/flatink#24 — `random()` existed but drew from `Math.random`: a replay could not assert anything
+// about an activity that draws at random. The player takes a `seed`; a headless replay always has one.
+describe('headless -- random() is reproducible', () => {
+  const draws = () => parseProgramFull('size 100 100\nvar a = 0\nvar b = 0\nscene {\n  layer "c" {\n  }\n}\nwhen loaded {\n  a = random()\n  b = random()\n}\n')
+  const run = (seed?: number) => playHeadless(draws(), [], seed === undefined ? {} : { seed }).vars
+  it('two replays draw the same numbers', () => {
+    expect(run()).toEqual(run())
+    expect(run(7)).toEqual(run(7))
+  })
+  it('another seed draws other numbers', () => {
+    expect(run(7)).not.toEqual(run(8))
+  })
+  it('the numbers are in [0, 1[ and differ from one draw to the next', () => {
+    const v = run(3) as { a: number; b: number }
+    for (const x of [v.a, v.b]) { expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThan(1) }
+    expect(v.a).not.toBe(v.b)
+  })
+})
+
+describe('headless -- a gesture by NAME aims at where the object stands NOW', () => {
+  it('an object moved by `when loaded` through an array is tapped where it went, not where the file put it', () => {
+    const doc = parseProgramFull('size 300 100\nvar n = 0\nvar xs = [50, 250]\nscene {\n  layer "c" {\n    group "B" at 0,50 {\n      layer "a" {\n        circle 0 0 20 fill #3366cc\n      }\n    }\n  }\n}\nwhen loaded {\n  xs[0] = 250\n}\nobject "B" {\n  x = xs[0]\n  when clicked {\n    n = n + 1\n  }\n}\n')
+    expect(playHeadless(doc, [{ type: 'tap', target: 'B' }]).vars.n).toBe(1)
+  })
+})

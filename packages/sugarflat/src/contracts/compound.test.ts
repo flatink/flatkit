@@ -97,3 +97,66 @@ describe('a document holding two blocks', () => {
     expect(correct.map((s) => (s.fields as Record<string, number>).block)).toEqual([0, 1])
   })
 })
+
+// flatink/flatink#59 — the elements always stood where the author wrote them, so playing an activity
+// again was not a new attempt. `shuffle` swaps their places when the activity loads, drawing from
+// `random()`: reproducible under a seed (a replayed test), different from one learner's run to the next.
+describe('shuffle — the things the learner picks from swap places at load', () => {
+  const place = (shuffle: boolean) => `place p {\n  prompt "x"\n${shuffle ? '  shuffle\n' : ''}  target A at 150,470\n  target B at 450,470\n  item a -> A at 100,150\n  item b -> B at 300,150\n  item c -> A at 500,150\n  item d -> B at 700,150\n}\n`
+  const ITEMS = ['p_Ia', 'p_Ib', 'p_Ic', 'p_Id']
+  const docOf = (src: string) => { const c = checkProgram(desugar(src).flatink); expect(c.errors).toBe(0); return c.doc! }
+  const layout = (src: string, ids: string[], seed: number, x = (id: string) => `${id}X`) => { const v = playHeadless(docOf(src), [], { seed }).vars; return ids.map((id) => v[x(id)] as number) }
+
+  it('place: the items end up on the declared spots, in another order', () => {
+    const seen = new Set<string>()
+    for (let seed = 1; seed <= 8; seed++) {
+      const xs = layout(place(true), ITEMS, seed)
+      expect([...xs].sort((a, b) => a - b)).toEqual([100, 300, 500, 700])
+      seen.add(xs.join(','))
+    }
+    expect(seen.size).toBeGreaterThan(1)
+  })
+  it('the same seed lays them out the same way', () => {
+    expect(layout(place(true), ITEMS, 5)).toEqual(layout(place(true), ITEMS, 5))
+  })
+  it('without `shuffle` nothing moves and the program draws nothing at random', () => {
+    expect(layout(place(false), ITEMS, 5)).toEqual([100, 300, 500, 700])
+    expect(desugar(place(false)).flatink).not.toContain('random')
+    expect(desugar(place(false)).meta[0].shuffle).toBeUndefined()
+    expect(desugar(place(true)).meta[0].shuffle).toBe(true)
+  })
+  it('the activity still plays: each item goes from where it now stands to its target', () => {
+    const res = playHeadless(docOf(place(true)), [
+      { type: 'drag', source: 'p_Ia', target: 'p_TA' }, { type: 'drag', source: 'p_Ib', target: 'p_TB' },
+      { type: 'drag', source: 'p_Ic', target: 'p_TA' }, { type: 'drag', source: 'p_Id', target: 'p_TB' },
+      { type: 'wait', frames: 3 },
+    ], { seed: 3 })
+    expect(res.sends.map((s) => s.name)).toEqual(['correct', 'correct', 'correct', 'correct', 'part', 'completed'])
+  })
+  it('a wrong drop sends the item back to the spot the shuffle gave it', () => {
+    const doc = docOf(place(true))
+    const home = playHeadless(doc, [], { seed: 3 }).vars
+    const after = playHeadless(doc, [{ type: 'drag', source: 'p_Ia', target: 'p_TB' }], { seed: 3 })
+    expect(after.sends.map((s) => s.name)).toEqual(['incorrect'])
+    expect([after.vars.p_IaX, after.vars.p_IaY]).toEqual([home.p_IaX, home.p_IaY])
+  })
+  it('steps: the cards swap places, the ORDER of the sequence does not', () => {
+    const src = 'steps s {\n  shuffle\n  step "one" at 100,300\n  step "two" at 300,300\n  step "three" at 500,300\n}\n'
+    const seen = new Set<string>()
+    for (let seed = 1; seed <= 8; seed++) {
+      const v = playHeadless(docOf(src), [], { seed }).vars
+      const xs = v.s_sx as number[]
+      expect([...xs].sort((a, b) => a - b)).toEqual([100, 300, 500])
+      seen.add(xs.join(','))
+    }
+    expect(seen.size).toBeGreaterThan(1)
+    const res = playHeadless(docOf(src), [{ type: 'tap', target: 's_S0' }, { type: 'tap', target: 's_S1' }, { type: 'tap', target: 's_S2' }, { type: 'wait', frames: 3 }], { seed: 2 })
+    expect(res.sends.map((s) => s.name)).toEqual(['step', 'step', 'step', 'part', 'completed'])
+  })
+  it('compose: the chips swap places and still add up', () => {
+    const src = 'compose c {\n  shuffle\n  total 30\n  chip 10 at 100,300\n  chip 20 at 300,300\n  chip 5 at 500,300\n}\n'
+    const res = playHeadless(docOf(src), [{ type: 'tap', target: 'c_C0' }, { type: 'tap', target: 'c_C1' }, { type: 'wait', frames: 3 }], { seed: 4 })
+    expect(res.sends.map((s) => s.name)).toEqual(['correct', 'correct', 'part', 'completed'])
+    expect([...(res.vars.c_sx as number[])].sort((a, b) => a - b)).toEqual([100, 300, 500])
+  })
+})

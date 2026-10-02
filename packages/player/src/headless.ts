@@ -113,12 +113,14 @@ const describeGesture = (g: Gesture): string =>
           : g.type === 'key' ? `key ${g.name}${g.frames && g.frames !== 1 ? ` x${g.frames}` : ''}` : g.type === 'expect' ? 'expect' : `${g.type} (${g.x},${g.y})`
 
 /** Plays `doc`, replays `gestures`, returns the collected `send`s plus the final state of the variables.
- *  `trace`: adds `steps` (sends + variable diff PER gesture) -- for inspection / the debug-player. */
-export function playHeadless(doc: Doc, gestures: Gesture[], opts: { trace?: boolean } = {}): PlayResult {
+ *  `trace`: adds `steps` (sends + variable diff PER gesture) -- for inspection / the debug-player.
+ *  `seed`: what `random()` draws from. A replay is ALWAYS seeded (default 1), so that it says the same
+ *  thing twice; pass another seed to see another draw. */
+export function playHeadless(doc: Doc, gestures: Gesture[], opts: { trace?: boolean; seed?: number } = {}): PlayResult {
   const restore = ensureDomGlobals()
   const handlers: Handlers = {}
   const sends: PlayResult['sends'] = []
-  const pl = new FlatPlayer(fakeCanvas(handlers, doc.width, doc.height), doc, { input: true, padding: 0, render: false, audio: false, onEvent: (e) => sends.push(e) })
+  const pl = new FlatPlayer(fakeCanvas(handlers, doc.width, doc.height), doc, { input: true, padding: 0, render: false, audio: false, seed: opts.seed ?? 1, onEvent: (e) => sends.push(e) })
   const ev = (x: number, y: number, id = 1) => ({ clientX: x, clientY: y, pointerId: id })
   const fire = (type: string, p: { x: number; y: number }, id = 1) => { const h = handlers[`pointer${type}`]; if (h) h(ev(p.x, p.y, id)) }
   // GRAB: the RESOLVED position of the object (expressions included -> we touch the object exactly where it is).

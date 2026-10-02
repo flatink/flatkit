@@ -71,6 +71,9 @@ export type PlayerOptions = {
   // with the SQUARE of the ratio, and on a 3x phone filling it is what a real-time scene spends its frame
   // on: capping at 2 costs a little sharpness and can double the frame rate.
   maxPixelRatio?: number
+  // Seed of `random()`. Given, the scene draws the same numbers on every run (a replayed test, a level
+  // the host wants to hand out again); absent, it draws from `Math.random`.
+  seed?: number
 }
 
 type View = { tx: number; ty: number; scale: number }
@@ -196,6 +199,18 @@ function keyframesPlay(doc: Doc): boolean {
 }
 /** Smallest change of a modifier-driven channel worth a repaint (px, radians, scale or opacity units). */
 const MOD_EPSILON = 1e-4
+
+/** A small seeded generator (mulberry32): the same seed gives the same sequence on every engine. */
+function seededRandom(seed: number): () => number {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0
+    let t = a
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
 
 const SIM_HZ = 60
 const SIM_STEP = 1 / SIM_HZ // seconds per simulation step
@@ -430,6 +445,8 @@ export class FlatPlayer {
   private readonly drawnMods = new Map<string, number>() // modifier-driven channels: the value last painted
   private actionDepth = 0 // > 0 while actions run: whoever ran them paints once they are done
   private readonly maxDpr: number
+  private readonly seed: number | undefined
+  private rand: () => number = () => Math.random() // what `random()` draws from (see `PlayerOptions.seed`)
   private longPressTimer: ReturnType<typeof setTimeout> | null = null
   // -- Several pointers --
   // The fields above (`grabbed`, `grabStart`, `pendingClick`, `dragActive`, `longPressTimer`) describe ONE
@@ -1062,6 +1079,8 @@ export class FlatPlayer {
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
     this.applyInputUse()
     this.analysePicture()
+    this.seed = opts.seed
+    if (this.seed !== undefined) this.rand = seededRandom(this.seed)
     this.maxDpr = opts.maxPixelRatio && opts.maxPixelRatio > 0 ? opts.maxPixelRatio : Infinity
     this.hasModifiers = docHasModifiers(this.doc)
     this.hasSymbolTimelines = this.doc.symbols.some((s) => !!s.timeline)
@@ -1237,7 +1256,7 @@ export class FlatPlayer {
     // `time`/`frame`/`clock` baked in (per-frame constants) so `evalNumber` can evaluate against this ctx
     // DIRECTLY — no `exprScope` copy per statement (object construction dominated the sim profile). They are
     // reserved (never shadowed by a same-named variable), so the var loops skip them.
-    const ctx: ExprContext = { mouse: this.mouse, keys: this.keyProxy, random: () => Math.random(), clock: this.mono / this.fps, time: this.frame / this.fps, frame: this.frame }
+    const ctx: ExprContext = { mouse: this.mouse, keys: this.keyProxy, random: this.rand, clock: this.mono / this.fps, time: this.frame / this.fps, frame: this.frame }
     for (const [k, v] of vars) if (!RESERVED.has(k)) ctx[k] = v
     for (const vf of this.valueFuncs) { // fn name(p) = expr -> closure (the body sees globals + math + time + params)
       ctx[vf.name] = (...args: number[]) => {
@@ -1418,7 +1437,10 @@ export class FlatPlayer {
   /** Center (RESOLVED origin, expressions included) of a named object, in world coords -- for the
    *  semantic gestures `drag`/`tap` by name. `null` if the object does not exist. */
   objectCenter(name: string): Point | null {
-    this.exprCtx() // (re)computes the named-objects cache for the current frame
+    // Fresh, not the per-frame snapshot: a gesture asks where the object is NOW, and what moved it may
+    // have run since the snapshot was taken without the frame advancing (a `when loaded`, a handler).
+    this.bustNamed()
+    this.exprCtx()
     const ch = this.namedCache?.[name]
     return ch ? { x: ch.x, y: ch.y } : null
   }
@@ -1461,6 +1483,7 @@ export class FlatPlayer {
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
     this.applyInputUse()
     this.analysePicture()
+    if (this.seed !== undefined) this.rand = seededRandom(this.seed) // a new document starts the sequence again
     this.vars = cloneVars(doc.variables)
     this.namedCache = null // new document -> named-objects cache stale
     this.ctxCache = null // new document -> cached expr context stale (vars Map replaced just above)

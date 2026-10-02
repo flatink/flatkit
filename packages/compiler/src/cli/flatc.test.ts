@@ -412,3 +412,23 @@ describe('flatc — `.flat` libraries passed as arguments reach --play and --ren
     }
   })
 })
+
+// flatink/flatink#24 — a replay is reproducible by default, and `--seed` picks another draw.
+describe('flatc --play — random() and --seed', () => {
+  const play = (extra: string[]) => {
+    const dir = mkdtempSync(join(tmpdir(), 'flatc-seed-'))
+    writeFileSync(join(dir, 'p.flatink'), 'size 100 100\nvar r = 0\nscene {\n  layer "c" {\n  }\n}\nwhen loaded {\n  r = random()\n}\n')
+    writeFileSync(join(dir, 's.json'), '[]')
+    const outs: string[] = []
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation((s: string | Uint8Array) => { outs.push(String(s)); return true })
+    try {
+      expect(run(['node', 'flatc', join(dir, 'p.flatink'), '--play', '--script', join(dir, 's.json'), '--no-libs', ...extra])).toBe(0)
+      return JSON.parse(outs.join('')).vars.r as number
+    } finally { spy.mockRestore(); rmSync(dir, { recursive: true, force: true }) }
+  }
+  it('the same draw from one run to the next', () => { expect(play([])).toBe(play([])) })
+  it('--seed N changes it, reproducibly', () => {
+    expect(play(['--seed', '5'])).toBe(play(['--seed', '5']))
+    expect(play(['--seed', '5'])).not.toBe(play([]))
+  })
+})

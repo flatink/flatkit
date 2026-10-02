@@ -46,6 +46,8 @@ export type GestureMeta = {
   objects: string[]
   /** The variable that turns 1 when this block is finished. */
   doneVar: string
+  /** `true` when the block asked for `shuffle`: its elements do not stand where the source put them. */
+  shuffle?: boolean
 }
 
 /** Where a block sits in the document. Names are prefixed so two blocks never collide. */

@@ -166,3 +166,18 @@ describe('FlatPlayer -- sound action', () => {
     expect(() => play([{ do: 'sound', assetId: 'pop' }], { audio: false })).not.toThrow()
   })
 })
+
+describe('FlatPlayer -- random() and the `seed` option (flatink/flatink#24)', () => {
+  const draw: Action[] = [{ do: 'setVar', name: 'r', value: 'random()' }]
+  it('the same seed gives the same draw; reloading the document starts the sequence again', () => {
+    const a = play(draw, { seed: 42 }), b = play(draw, { seed: 42 })
+    expect(a.getVar('r')).toBe(b.getVar('r'))
+    const first = a.getVar('r')
+    a.load(makeDoc(draw))
+    expect(a.getVar('r')).toBe(first)
+  })
+  it('without a seed it draws from Math.random, as before', () => {
+    const spy = vi.spyOn(Math, 'random').mockReturnValue(0.25)
+    try { expect(play(draw, {}).getVar('r')).toBe(0.25) } finally { spy.mockRestore() }
+  })
+})

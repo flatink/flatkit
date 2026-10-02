@@ -28,6 +28,30 @@ function container(name: string, x: string, y: string, art: string[], hitbox?: {
   return [`    group "${name}" at ${x},${y} pivot 0,0${box} {`, '      layer "art" {', ...art.map((l) => `        ${l}`), '      }', '    }']
 }
 
+/**
+ * `shuffle`: the spots the author declared, handed out in another order when the activity loads. The
+ * spots live in two arrays (`<p>sx`, `<p>sy`) that a `when loaded` shuffles in place (Fisher-Yates over
+ * `random()` — reproducible under a seed, see the player's `seed` option); element `i` then stands at
+ * `<p>sx[i]`, `<p>sy[i]`. Fewer than two spots: nothing to shuffle, and nothing is emitted.
+ */
+function shuffler(p: string, spots: { x: string; y: string }[]): { vars: string[]; load: string[]; x: (i: number) => string; y: (i: number) => string } | null {
+  const n = spots.length
+  if (n < 2) return null
+  const sx = `${p}sx`, sy = `${p}sy`, j = `${p}sj`, t = `${p}st`, k = `${p}sk`
+  return {
+    vars: [`var ${sx} = [${spots.map((s) => s.x).join(', ')}]`, `var ${sy} = [${spots.map((s) => s.y).join(', ')}]`, `var ${j} = 0`, `var ${t} = 0`],
+    load: [
+      `  repeat ${k} from 0 to ${n - 2} {`,
+      `    ${j} = ${k} + floor(random() * (${n} - ${k}))`,
+      `    ${t} = ${sx}[${k}]`, `    ${sx}[${k}] = ${sx}[${j}]`, `    ${sx}[${j}] = ${t}`,
+      `    ${t} = ${sy}[${k}]`, `    ${sy}[${k}] = ${sy}[${j}]`, `    ${sy}[${j}] = ${t}`,
+      '  }',
+    ],
+    x: (i) => `${sx}[${i}]`,
+    y: (i) => `${sy}[${i}]`,
+  }
+}
+
 /** A line holding two statements: one keyword, then another after a run of spaces. */
 const RUNON = /^(?:prompt|target|item|total|chip|step)\b.*\s{2,}(?:prompt|target|item|total|chip|step)\b/
 
@@ -52,12 +76,13 @@ function lines(kind: string, name: string, body: string): string[] {
 
 type PlaceModel = {
   prompt: string
+  shuffle: boolean
   targets: { id: string; label: string; x: string; y: string }[]
   items: { id: string; label: string; target: string; x: string; y: string }[]
 }
 
 function parsePlace(name: string, body: string, p: string): PlaceModel {
-  const m: PlaceModel = { prompt: '', targets: [], items: [] }
+  const m: PlaceModel = { prompt: '', shuffle: false, targets: [], items: [] }
   // An object is named after its label, and `ident` keeps letters and digits only: `-1` and `+1` fold to
   // the same name, `< 1`, `= 1` and `> 1` too. The first keeps the plain name (so nothing moves for
   // labels that never collided — a skin addresses these objects by name); the next ones take `_2`, `_3`…
@@ -72,6 +97,7 @@ function parsePlace(name: string, body: string, p: string): PlaceModel {
   for (const line of lines('place', name, body)) {
     let x: RegExpMatchArray | null
     if ((x = line.match(/^prompt\s+"(.*)"$/))) m.prompt = x[1]
+    else if (line === 'shuffle') m.shuffle = true
     else if ((x = line.match(/^target\s+(?:"([^"]+)"|(\S+))\s+at\s+(-?[\d.]+),(-?[\d.]+)$/))) {
       const label = x[1] ?? x[2]
       if (targetOf.has(label)) throw new Error(`place "${name}": two targets are labelled "${label}" — an item pointing at it could mean either`)
@@ -103,6 +129,8 @@ function expandPlace(name: string, body: string, theme: Theme, ctx: GestureConte
   const n = m.items.length
   const vars = [`// ${p}— place "${q(name)}"`, ...(m.prompt ? [`// prompt: ${q(m.prompt)}`] : []), `var ${p}progress = 0`, `var ${doneVar} = 0`]
   for (const it of m.items) vars.push(`var ${it.id}X = ${it.x}`, `var ${it.id}Y = ${it.y}`, `var ${it.id}Placed = 0`)
+  const sh = m.shuffle ? shuffler(p, m.items) : null
+  if (sh) vars.push(...sh.vars)
 
   const layers = [`  layer "${p}targets" {`]
   for (const t of m.targets) layers.push(...container(t.id, t.x, t.y, theme.draw('target', t.label), theme.size('target')))
@@ -111,6 +139,7 @@ function expandPlace(name: string, body: string, theme: Theme, ctx: GestureConte
   layers.push('  }')
 
   const behavior: string[] = []
+  if (sh) behavior.push('when loaded {', ...sh.load, ...m.items.flatMap((it, i) => [`  ${it.id}X = ${sh.x(i)}`, `  ${it.id}Y = ${sh.y(i)}`]), '}', '')
   m.items.forEach((it, i) => {
     behavior.push(`object "${it.id}" {`)
     behavior.push(`  drag ${it.id}X, ${it.id}Y { enabled ${it.id}Placed == 0 }`)
@@ -126,7 +155,7 @@ function expandPlace(name: string, body: string, theme: Theme, ctx: GestureConte
     for (const t of m.targets) {
       if (t.id === it.target) continue
       behavior.push(`  when dropped on ${t.id} at pointer {`)
-      behavior.push(`    ${it.id}X = ${it.x}`, `    ${it.id}Y = ${it.y}`) // back where it started
+      behavior.push(`    ${it.id}X = ${sh ? sh.x(i) : it.x}`, `    ${it.id}Y = ${sh ? sh.y(i) : it.y}`) // back where it started
       behavior.push(`    send "incorrect", { block = ${b}, item = ${i} }`)
       behavior.push('  }')
     }
@@ -136,7 +165,7 @@ function expandPlace(name: string, body: string, theme: Theme, ctx: GestureConte
     vars,
     layers,
     behavior,
-    meta: { keyword: 'place', name, prompt: m.prompt, items: m.items.map((i) => i.label), targets: m.targets.map((t) => t.label), objects: [...m.targets, ...m.items].map((o) => o.id), doneVar },
+    meta: { keyword: 'place', name, prompt: m.prompt, items: m.items.map((i) => i.label), targets: m.targets.map((t) => t.label), objects: [...m.targets, ...m.items].map((o) => o.id), doneVar, ...(sh ? { shuffle: true } : {}) },
   }
 }
 
@@ -149,9 +178,11 @@ function expandCompose(name: string, body: string, theme: Theme, ctx: GestureCon
   let target = 0
   const chips: { value: string; x: string; y: string }[] = []
   let prompt = ''
+  let shuffle = false
   for (const line of lines('compose', name, body)) {
     let x: RegExpMatchArray | null
     if ((x = line.match(/^prompt\s+"(.*)"$/))) prompt = x[1]
+    else if (line === 'shuffle') shuffle = true
     else if ((x = line.match(/^total\s+(\d+)$/))) target = Number(x[1])
     else if ((x = line.match(/^chip\s+(\d+)\s+at\s+(-?[\d.]+),(-?[\d.]+)$/))) chips.push({ value: x[1], x: x[2], y: x[3] })
     else throw new Error(`compose "${name}": unrecognised line: ${line}`)
@@ -164,9 +195,12 @@ function expandCompose(name: string, body: string, theme: Theme, ctx: GestureCon
   chips.forEach((c, i) => layers.push(...container(`${p}C${i}`, c.x, c.y, theme.draw('chip', c.value), theme.size('chip'))))
   layers.push('  }')
 
+  const sh = shuffle ? shuffler(p, chips) : null
+  if (sh) vars.push(...sh.vars)
   const behavior: string[] = []
+  if (sh) behavior.push('when loaded {', ...sh.load, '}', '')
   chips.forEach((c, i) => {
-    behavior.push(`object "${p}C${i}" {`, '  when clicked {', `    if ${doneVar} < 0.5 {`)
+    behavior.push(`object "${p}C${i}" {`, ...(sh ? [`  x = ${sh.x(i)}`, `  y = ${sh.y(i)}`] : []), '  when clicked {', `    if ${doneVar} < 0.5 {`)
     behavior.push(`      if ${p}total + ${c.value} > ${target} {`)
     behavior.push(`        ${p}total = 0`, `        send "incorrect", { block = ${b}, item = ${i} }`)
     behavior.push('      } else {')
@@ -178,7 +212,7 @@ function expandCompose(name: string, body: string, theme: Theme, ctx: GestureCon
     vars,
     layers,
     behavior,
-    meta: { keyword: 'compose', name, prompt, items: chips.map((c) => c.value), targets: [], objects: chips.map((_c, i) => `${p}C${i}`), doneVar },
+    meta: { keyword: 'compose', name, prompt, items: chips.map((c) => c.value), targets: [], objects: chips.map((_c, i) => `${p}C${i}`), doneVar, ...(sh ? { shuffle: true } : {}) },
   }
 }
 
@@ -189,10 +223,12 @@ function expandCompose(name: string, body: string, theme: Theme, ctx: GestureCon
 function expandSteps(name: string, body: string, theme: Theme, ctx: GestureContext): Expansion {
   const { prefix: p, index: b, doneVar } = ctx
   let prompt = ''
+  let shuffle = false
   const steps: { label: string; x: string; y: string }[] = []
   for (const line of lines('steps', name, body)) {
     let x: RegExpMatchArray | null
     if ((x = line.match(/^prompt\s+"(.*)"$/))) prompt = x[1]
+    else if (line === 'shuffle') shuffle = true
     else if ((x = line.match(/^step\s+"(.*)"\s+at\s+(-?[\d.]+),(-?[\d.]+)$/))) steps.push({ label: x[1], x: x[2], y: x[3] })
     else throw new Error(`steps "${name}": unrecognised line: ${line}`)
   }
@@ -203,9 +239,13 @@ function expandSteps(name: string, body: string, theme: Theme, ctx: GestureConte
   steps.forEach((s, i) => layers.push(...container(`${p}S${i}`, s.x, s.y, theme.draw('card', s.label), theme.size('card'))))
   layers.push('  }')
 
+  // `shuffle` moves the CARDS; the order of the sequence stays the declared one.
+  const sh = shuffle ? shuffler(p, steps) : null
+  if (sh) vars.push(...sh.vars)
   const behavior: string[] = []
+  if (sh) behavior.push('when loaded {', ...sh.load, '}', '')
   steps.forEach((_s, i) => {
-    behavior.push(`object "${p}S${i}" {`, '  when clicked {', `    if ${p}step == ${i} {`, `      ${p}step = ${p}step + 1`, `      send "step", { block = ${b}, item = ${i} }`)
+    behavior.push(`object "${p}S${i}" {`, ...(sh ? [`  x = ${sh.x(i)}`, `  y = ${sh.y(i)}`] : []), '  when clicked {', `    if ${p}step == ${i} {`, `      ${p}step = ${p}step + 1`, `      send "step", { block = ${b}, item = ${i} }`)
     if (i === steps.length - 1) behavior.push(`      ${doneVar} = 1`, `      send "part", { block = ${b} }`)
     behavior.push('    }', '  }')
     // The only thing the gesture says about looks: a step that is not current is dimmed, because
@@ -216,7 +256,7 @@ function expandSteps(name: string, body: string, theme: Theme, ctx: GestureConte
     vars,
     layers,
     behavior,
-    meta: { keyword: 'steps', name, prompt, items: steps.map((s) => s.label), targets: [], objects: steps.map((_s, i) => `${p}S${i}`), doneVar },
+    meta: { keyword: 'steps', name, prompt, items: steps.map((s) => s.label), targets: [], objects: steps.map((_s, i) => `${p}S${i}`), doneVar, ...(sh ? { shuffle: true } : {}) },
   }
 }
 
@@ -239,17 +279,17 @@ export function gestures(opts: GestureOptions = {}): Gesture[] {
   return [
     {
       keyword: 'place',
-      summary: `place <name> { prompt "…"  target <T> at x,y  item <i> -> <T> at x,y }  — drag items onto where they belong. Footprints: target ${footprint(theme, 'target')}, item ${footprint(theme, 'item')}; keep centres at least one footprint apart or the drop is ambiguous`,
+      summary: `place <name> { prompt "…"  [shuffle]  target <T> at x,y  item <i> -> <T> at x,y }  — drag items onto where they belong. Footprints: target ${footprint(theme, 'target')}, item ${footprint(theme, 'item')}; keep centres at least one footprint apart or the drop is ambiguous`,
       expand: (name, body, _doc, ctx) => expandPlace(name, body, theme, ctx),
     },
     {
       keyword: 'compose',
-      summary: `compose <name> { prompt "…"  total <n>  chip <v> at x,y }  — tap values until they add up; overshooting resets. Footprint: chip ${footprint(theme, 'chip')}`,
+      summary: `compose <name> { prompt "…"  [shuffle]  total <n>  chip <v> at x,y }  — tap values until they add up; overshooting resets. Footprint: chip ${footprint(theme, 'chip')}`,
       expand: (name, body, _doc, ctx) => expandCompose(name, body, theme, ctx),
     },
     {
       keyword: 'steps',
-      summary: `steps <name> { prompt "…"  step "…" at x,y }  — a gated sequence; out-of-order taps do nothing. Footprint: card ${footprint(theme, 'card')}`,
+      summary: `steps <name> { prompt "…"  [shuffle]  step "…" at x,y }  — a gated sequence; out-of-order taps do nothing. Footprint: card ${footprint(theme, 'card')}`,
       expand: (name, body, _doc, ctx) => expandSteps(name, body, theme, ctx),
     },
   ]
