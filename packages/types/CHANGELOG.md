@@ -1,5 +1,71 @@
 # @flatkit/types
 
+## 0.36.0
+
+### Minor Changes
+
+- [`357137e`](https://github.com/flatink/flatkit/commit/357137ea70e9064d6ecea56e93be827351ef2e03) Thanks [@kaelhem](https://github.com/kaelhem)! - `polyline <xs> <ys> [count <n|"expr">] [closed]`: a shape whose points are two array variables, read every
+  frame. A trajectory, a curve as it is computed, a polygon the learner deforms -- what used to take hundreds
+  of small groups shown one by one. The segments are straight; fill, stroke, `opacity`, `draw` and `nohit`
+  are those of any shape. The arrays stay the truth (replayable, restorable), and a line that no longer
+  changes is no longer repainted. `flatc --check` reports a name that is not a declared array.
+
+- [`b29bb4e`](https://github.com/flatink/flatkit/commit/b29bb4e482be3ffbb1242c68081e067278ff9e94) Thanks [@kaelhem](https://github.com/kaelhem)! - Keyboard access is built in: `focusable` objects are reached with Tab, clicked with Enter or Space, and
+  ringed by the player.
+  
+  - **`focusable [order <n>] [noring]`** in an `object` block. Tab and Shift+Tab walk the focusable objects
+    (ranked ones first, then document order; an object that is not shown is skipped), Enter and Space fire
+    the focused object's `when clicked`, and `self.focused` is 1 on it.
+  - **The player draws the focus ring** (around the object's `hitbox` when it has one). `noring` on an
+    object, or the `focusRing: false` option, leave the drawing to the scene.
+  - **A stop, not a trap.** The canvas joins the page's tab order (`tabindex="0"` when the scene has
+    focusable objects); Tab is handled only while the canvas has the page's focus, and past either end it is
+    left to the page. Using the pointer drops the keyboard focus.
+  - **Host API**: `player.focused`, `player.focusNext(1 | -1)`, and the `focusRing` option.
+  - **Testable**: under `flatc --play`, a `key` gesture named `Tab` moves the focus and `Enter` clicks.
+  - **sugarflat**: every element of `place`, `compose` and `steps` is focusable. `place` gains a second way
+    in besides dragging: pick an item (Enter, or a tap), then pick its target. A picked item is scaled up
+    a little; `<block>_sel` holds its 1-based index.
+
+- [`e6eca55`](https://github.com/flatink/flatkit/commit/e6eca55c5bc56a1506aabd6cd9c0849cff152548) Thanks [@kaelhem](https://github.com/kaelhem)! - Symbol params: a `text` type, colors and texts written at runtime, and `--check` reads what an instance
+  is given.
+  
+  - **`text` params.** `params { text libelle = "OK" }`, drawn inside the symbol with `text libelle at ...`
+    (the bare name instead of a quoted string). A reusable button carries its own label, set per instance
+    with `{ libelle = "Valider" }`.
+  - **Colors and texts change at runtime.** `Inst.fond = #33aa33` and `Inst.libelle = "Bravo"` repaint the
+    instance. The right-hand side is a literal (a color, a quoted text); a color assignment used to
+    compile and do nothing.
+  - **`--check` checks instance params and states.** A param the symbol does not declare (with the name it
+    probably meant), a value of the wrong type, a number outside its `range`, a state that does not exist,
+    at the call site and in an assignment; and an assignment whose target is no instance of the scene.
+
+- [`aac2a80`](https://github.com/flatink/flatkit/commit/aac2a809e926333168426538646227f4af6e2cd9) Thanks [@kaelhem](https://github.com/kaelhem)! - Touch and input: an object is touched where it is drawn, by as many fingers as there are, and the
+  keyboard has names for its physical keys.
+  
+  - **An instance is touched where it is drawn.** The hit test entered an instance with its parent's scope:
+    an inner group moved by `expr x "pos"` was touched where it stands with `pos` unset, and a state-driven
+    symbol where its initial state puts it. It now enters with the instance's params (declared, given at
+    the instance, written at runtime), like the renderer.
+  - **`hitbox` is also where an object is touched** -- clicked, pressed, dragged, hovered -- whenever
+    nothing drawn inside it is hit first. A stroke-only ring is clicked in its middle, a small handle gets
+    a finger-sized target, an empty group becomes a touch area. The rectangle follows the object, and what
+    is drawn above it keeps the pointer. BEHAVIOR CHANGE: an object with handlers and a `hitbox` larger
+    than its drawing now reacts in the whole rectangle. `hitbox` is kept on an `instance` too (it used to
+    be parsed and dropped), for touch and for drops.
+  - **Each pointer has its own gesture.** Two fingers can press, hold and drag two objects at once. With a
+    single gesture for everyone, lifting one finger released what the other was holding, and that one's
+    own release was lost.
+  - **`keys.<Code>`: the physical key.** A key answers to its `KeyboardEvent.code` as well as its `key`:
+    `keys.ShiftLeft` / `keys.ShiftRight` are two keys, the digit row is `keys.Digit1`, the keypad
+    `keys.Numpad1`. A `key` name is released with the key that set it, even if the character changed
+    meanwhile (Shift let go first used to leave "A" held).
+  - **The first `sound` is heard, and on time.** Sound assets are decoded when the document loads (through
+    an OfflineAudioContext, so no AudioContext is opened before a gesture) instead of in the frame that
+    first plays them. A sound asked for while its asset is still decoding plays when it lands; a timeline
+    clip in the same case starts then, not on the next loop.
+  - A pointer the browser refuses to capture (a synthetic event) no longer swallows the press.
+
 ## 0.35.3
 
 ## 0.35.2

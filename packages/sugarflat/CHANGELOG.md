@@ -1,5 +1,78 @@
 # @flatkit/sugarflat
 
+## 0.4.0
+
+### Minor Changes
+
+- [`b29bb4e`](https://github.com/flatink/flatkit/commit/b29bb4e482be3ffbb1242c68081e067278ff9e94) Thanks [@kaelhem](https://github.com/kaelhem)! - Keyboard access is built in: `focusable` objects are reached with Tab, clicked with Enter or Space, and
+  ringed by the player.
+  
+  - **`focusable [order <n>] [noring]`** in an `object` block. Tab and Shift+Tab walk the focusable objects
+    (ranked ones first, then document order; an object that is not shown is skipped), Enter and Space fire
+    the focused object's `when clicked`, and `self.focused` is 1 on it.
+  - **The player draws the focus ring** (around the object's `hitbox` when it has one). `noring` on an
+    object, or the `focusRing: false` option, leave the drawing to the scene.
+  - **A stop, not a trap.** The canvas joins the page's tab order (`tabindex="0"` when the scene has
+    focusable objects); Tab is handled only while the canvas has the page's focus, and past either end it is
+    left to the page. Using the pointer drops the keyboard focus.
+  - **Host API**: `player.focused`, `player.focusNext(1 | -1)`, and the `focusRing` option.
+  - **Testable**: under `flatc --play`, a `key` gesture named `Tab` moves the focus and `Enter` clicks.
+  - **sugarflat**: every element of `place`, `compose` and `steps` is focusable. `place` gains a second way
+    in besides dragging: pick an item (Enter, or a tap), then pick its target. A picked item is scaled up
+    a little; `<block>_sel` holds its 1-based index.
+
+- [`8bf60de`](https://github.com/flatink/flatkit/commit/8bf60dedcefc3332d280c5147543346a3dd8f3cd) Thanks [@kaelhem](https://github.com/kaelhem)! - `random()` can be reproduced, and sugar gestures can shuffle.
+  
+  - **`seed` option of the player.** `random()` (in `[0, 1[`, now documented) draws from a seeded generator
+    when the host passes `seed`, and from `Math.random` otherwise. `load()` starts the sequence again.
+  - **A headless replay is always seeded.** `flatc --play` and `playHeadless` use seed `1`, so the same
+    script gives the same result twice and an `expect` can assert on a draw; `--seed N` picks another.
+    `flatc --render --steps` is seeded too.
+  - **sugarflat: `shuffle`.** A `shuffle` line in a `place`, `compose` or `steps` block swaps the places of
+    the elements the learner picks from when the activity loads. Targets stay put, and the order of a
+    `steps` sequence is unchanged. `meta[].shuffle` reports it.
+  - A semantic gesture by name (`tap`, `drag`) aims at where the object stands now: it used to read a
+    per-frame snapshot that a `when loaded` could have made stale.
+
+### Patch Changes
+
+- [`ecd419e`](https://github.com/flatink/flatkit/commit/ecd419e136906bbcd28c8740169adf71db9a8934) Thanks [@kaelhem](https://github.com/kaelhem)! - Fifteen reports from a team writing real activities, most of one family: the program compiled, `--check`
+  passed, and the behavior was simply not there.
+  
+  **Language**
+  - Several `every frame` (or `when loaded`) blocks all run, in source order. Only the last one used to.
+  - `var z = 10 / 3` is evaluated like a `def` (a constant expression). It used to keep the `10` and drop the
+    rest of the line. An initialiser that is not a constant is now an error.
+  - `size` is read anywhere in the header. After an `asset` line it was skipped and the scene stayed 800x600.
+  - Scientific notation (`1.5e2`, `2.7e-06`) is accepted in an expression, as it already was in a `var`.
+  - In a `.flat`, `expr rotationDeg "a"` is the degree twin of `expr rotation`, and an unknown channel name is
+    a compile error. It used to compile and animate nothing.
+  
+  **Checks**
+  - New warning: a variable (or a function parameter) hidden by a math function, a constant, a reserved name
+    or a value function of the same name -- `var angle = 40` read 0 under `use "gesture"`.
+  - A variable read only inside a value function (`fn f() = G + 1`) is no longer reported "never used".
+  - "overlapping hitboxes" fires only when both zones are drop targets.
+  
+  **Player**
+  - Writing a state it is already heading to no longer restarts its transition. Mirroring a variable into a
+    state from `every frame` froze an `easeInOut` transition at its origin.
+  - A zero-length stroked subpath draws its cap (a disc for `round`, a square for `square`), as SVG does.
+    Current Chrome follows the Canvas spec and drew nothing, so the "dot" idiom vanished.
+  - Word-wrap never breaks at a no-break space (U+00A0, U+202F, U+2007).
+  - A `sound` action is a silent no-op where there is no WebAudio, instead of a crash.
+  
+  **flatc**
+  - `--play` and `--render` take the `.flat` libraries passed as arguments, like `--check` and the compile.
+  - `--play`: audio is off, and `tap` accepts a point (`"x"`, `"y"`) as well as a `"target"`.
+  
+  **sugarflat**
+  - `place`: labels that fold to the same identifier (`-1` / `+1`, `< 1` / `= 1` / `> 1`) each get their own
+    object -- the first keeps the plain name, the next ones take `_2`, `_3`. Two targets with the SAME label
+    are an error.
+- Updated dependencies [[`357137e`](https://github.com/flatink/flatkit/commit/357137ea70e9064d6ecea56e93be827351ef2e03), [`b29bb4e`](https://github.com/flatink/flatkit/commit/b29bb4e482be3ffbb1242c68081e067278ff9e94), [`a6a462c`](https://github.com/flatink/flatkit/commit/a6a462c101c710147c279f2ea2424ebf35aa0e34), [`e6eca55`](https://github.com/flatink/flatkit/commit/e6eca55c5bc56a1506aabd6cd9c0849cff152548), [`ecd419e`](https://github.com/flatink/flatkit/commit/ecd419e136906bbcd28c8740169adf71db9a8934), [`8bf60de`](https://github.com/flatink/flatkit/commit/8bf60dedcefc3332d280c5147543346a3dd8f3cd), [`aac2a80`](https://github.com/flatink/flatkit/commit/aac2a809e926333168426538646227f4af6e2cd9)]:
+  - @flatkit/compiler@0.36.0
+
 ## 0.3.21
 
 ### Patch Changes

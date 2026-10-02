@@ -1,5 +1,140 @@
 # @flatkit/compiler
 
+## 0.36.0
+
+### Minor Changes
+
+- [`357137e`](https://github.com/flatink/flatkit/commit/357137ea70e9064d6ecea56e93be827351ef2e03) Thanks [@kaelhem](https://github.com/kaelhem)! - `polyline <xs> <ys> [count <n|"expr">] [closed]`: a shape whose points are two array variables, read every
+  frame. A trajectory, a curve as it is computed, a polygon the learner deforms -- what used to take hundreds
+  of small groups shown one by one. The segments are straight; fill, stroke, `opacity`, `draw` and `nohit`
+  are those of any shape. The arrays stay the truth (replayable, restorable), and a line that no longer
+  changes is no longer repainted. `flatc --check` reports a name that is not a declared array.
+
+- [`b29bb4e`](https://github.com/flatink/flatkit/commit/b29bb4e482be3ffbb1242c68081e067278ff9e94) Thanks [@kaelhem](https://github.com/kaelhem)! - Keyboard access is built in: `focusable` objects are reached with Tab, clicked with Enter or Space, and
+  ringed by the player.
+  
+  - **`focusable [order <n>] [noring]`** in an `object` block. Tab and Shift+Tab walk the focusable objects
+    (ranked ones first, then document order; an object that is not shown is skipped), Enter and Space fire
+    the focused object's `when clicked`, and `self.focused` is 1 on it.
+  - **The player draws the focus ring** (around the object's `hitbox` when it has one). `noring` on an
+    object, or the `focusRing: false` option, leave the drawing to the scene.
+  - **A stop, not a trap.** The canvas joins the page's tab order (`tabindex="0"` when the scene has
+    focusable objects); Tab is handled only while the canvas has the page's focus, and past either end it is
+    left to the page. Using the pointer drops the keyboard focus.
+  - **Host API**: `player.focused`, `player.focusNext(1 | -1)`, and the `focusRing` option.
+  - **Testable**: under `flatc --play`, a `key` gesture named `Tab` moves the focus and `Enter` clicks.
+  - **sugarflat**: every element of `place`, `compose` and `steps` is focusable. `place` gains a second way
+    in besides dragging: pick an item (Enter, or a tap), then pick its target. A picked item is scaled up
+    a little; `<block>_sel` holds its 1-based index.
+
+- [`a6a462c`](https://github.com/flatink/flatkit/commit/a6a462c101c710147c279f2ea2424ebf35aa0e34) Thanks [@kaelhem](https://github.com/kaelhem)! - In a `path`, a line is a line -- and `smooth` says when it is not.
+  
+  A path made only of `L` / `H` / `V` used to be read as free-hand material: every vertex turning by less
+  than 60 degrees was rounded, so a hexagon or an octagon written by hand came out soft. It is now drawn
+  with straight sides, as its data says.
+  
+  - **`path "..." smooth`** (right after the path data) reads the path as free-hand material instead: what
+    the editor's brush produces, and what a curve sampled as many small `L` steps wants. The export writes
+    the word by itself for material, so nothing changes for a document drawn in the editor.
+  - **BEHAVIOR CHANGE** for a text source recompiled: a path of lines with gentle turns loses its rounding
+    unless it says `smooth`. Compiled `.flatpack` documents are not affected (the rule is the parser's).
+  - **`flatc --check`** points at a long run of points (12 or more, mostly gentle turns, no curve) that
+    does not say `smooth`: very likely material or a sampled curve written before the word existed.
+  - `parsePathData(d, { smooth: true })` is the same switch for a caller of the engine.
+
+- [`e6eca55`](https://github.com/flatink/flatkit/commit/e6eca55c5bc56a1506aabd6cd9c0849cff152548) Thanks [@kaelhem](https://github.com/kaelhem)! - Symbol params: a `text` type, colors and texts written at runtime, and `--check` reads what an instance
+  is given.
+  
+  - **`text` params.** `params { text libelle = "OK" }`, drawn inside the symbol with `text libelle at ...`
+    (the bare name instead of a quoted string). A reusable button carries its own label, set per instance
+    with `{ libelle = "Valider" }`.
+  - **Colors and texts change at runtime.** `Inst.fond = #33aa33` and `Inst.libelle = "Bravo"` repaint the
+    instance. The right-hand side is a literal (a color, a quoted text); a color assignment used to
+    compile and do nothing.
+  - **`--check` checks instance params and states.** A param the symbol does not declare (with the name it
+    probably meant), a value of the wrong type, a number outside its `range`, a state that does not exist,
+    at the call site and in an assignment; and an assignment whose target is no instance of the scene.
+
+- [`8bf60de`](https://github.com/flatink/flatkit/commit/8bf60dedcefc3332d280c5147543346a3dd8f3cd) Thanks [@kaelhem](https://github.com/kaelhem)! - `random()` can be reproduced, and sugar gestures can shuffle.
+  
+  - **`seed` option of the player.** `random()` (in `[0, 1[`, now documented) draws from a seeded generator
+    when the host passes `seed`, and from `Math.random` otherwise. `load()` starts the sequence again.
+  - **A headless replay is always seeded.** `flatc --play` and `playHeadless` use seed `1`, so the same
+    script gives the same result twice and an `expect` can assert on a draw; `--seed N` picks another.
+    `flatc --render --steps` is seeded too.
+  - **sugarflat: `shuffle`.** A `shuffle` line in a `place`, `compose` or `steps` block swaps the places of
+    the elements the learner picks from when the activity loads. Targets stay put, and the order of a
+    `steps` sequence is unchanged. `meta[].shuffle` reports it.
+  - A semantic gesture by name (`tap`, `drag`) aims at where the object stands now: it used to read a
+    per-frame snapshot that a `when loaded` could have made stale.
+
+- [`aac2a80`](https://github.com/flatink/flatkit/commit/aac2a809e926333168426538646227f4af6e2cd9) Thanks [@kaelhem](https://github.com/kaelhem)! - Touch and input: an object is touched where it is drawn, by as many fingers as there are, and the
+  keyboard has names for its physical keys.
+  
+  - **An instance is touched where it is drawn.** The hit test entered an instance with its parent's scope:
+    an inner group moved by `expr x "pos"` was touched where it stands with `pos` unset, and a state-driven
+    symbol where its initial state puts it. It now enters with the instance's params (declared, given at
+    the instance, written at runtime), like the renderer.
+  - **`hitbox` is also where an object is touched** -- clicked, pressed, dragged, hovered -- whenever
+    nothing drawn inside it is hit first. A stroke-only ring is clicked in its middle, a small handle gets
+    a finger-sized target, an empty group becomes a touch area. The rectangle follows the object, and what
+    is drawn above it keeps the pointer. BEHAVIOR CHANGE: an object with handlers and a `hitbox` larger
+    than its drawing now reacts in the whole rectangle. `hitbox` is kept on an `instance` too (it used to
+    be parsed and dropped), for touch and for drops.
+  - **Each pointer has its own gesture.** Two fingers can press, hold and drag two objects at once. With a
+    single gesture for everyone, lifting one finger released what the other was holding, and that one's
+    own release was lost.
+  - **`keys.<Code>`: the physical key.** A key answers to its `KeyboardEvent.code` as well as its `key`:
+    `keys.ShiftLeft` / `keys.ShiftRight` are two keys, the digit row is `keys.Digit1`, the keypad
+    `keys.Numpad1`. A `key` name is released with the key that set it, even if the character changed
+    meanwhile (Shift let go first used to leave "A" held).
+  - **The first `sound` is heard, and on time.** Sound assets are decoded when the document loads (through
+    an OfflineAudioContext, so no AudioContext is opened before a gesture) instead of in the frame that
+    first plays them. A sound asked for while its asset is still decoding plays when it lands; a timeline
+    clip in the same case starts then, not on the next loop.
+  - A pointer the browser refuses to capture (a synthetic event) no longer swallows the press.
+
+### Patch Changes
+
+- [`ecd419e`](https://github.com/flatink/flatkit/commit/ecd419e136906bbcd28c8740169adf71db9a8934) Thanks [@kaelhem](https://github.com/kaelhem)! - Fifteen reports from a team writing real activities, most of one family: the program compiled, `--check`
+  passed, and the behavior was simply not there.
+  
+  **Language**
+  - Several `every frame` (or `when loaded`) blocks all run, in source order. Only the last one used to.
+  - `var z = 10 / 3` is evaluated like a `def` (a constant expression). It used to keep the `10` and drop the
+    rest of the line. An initialiser that is not a constant is now an error.
+  - `size` is read anywhere in the header. After an `asset` line it was skipped and the scene stayed 800x600.
+  - Scientific notation (`1.5e2`, `2.7e-06`) is accepted in an expression, as it already was in a `var`.
+  - In a `.flat`, `expr rotationDeg "a"` is the degree twin of `expr rotation`, and an unknown channel name is
+    a compile error. It used to compile and animate nothing.
+  
+  **Checks**
+  - New warning: a variable (or a function parameter) hidden by a math function, a constant, a reserved name
+    or a value function of the same name -- `var angle = 40` read 0 under `use "gesture"`.
+  - A variable read only inside a value function (`fn f() = G + 1`) is no longer reported "never used".
+  - "overlapping hitboxes" fires only when both zones are drop targets.
+  
+  **Player**
+  - Writing a state it is already heading to no longer restarts its transition. Mirroring a variable into a
+    state from `every frame` froze an `easeInOut` transition at its origin.
+  - A zero-length stroked subpath draws its cap (a disc for `round`, a square for `square`), as SVG does.
+    Current Chrome follows the Canvas spec and drew nothing, so the "dot" idiom vanished.
+  - Word-wrap never breaks at a no-break space (U+00A0, U+202F, U+2007).
+  - A `sound` action is a silent no-op where there is no WebAudio, instead of a crash.
+  
+  **flatc**
+  - `--play` and `--render` take the `.flat` libraries passed as arguments, like `--check` and the compile.
+  - `--play`: audio is off, and `tap` accepts a point (`"x"`, `"y"`) as well as a `"target"`.
+  
+  **sugarflat**
+  - `place`: labels that fold to the same identifier (`-1` / `+1`, `< 1` / `= 1` / `> 1`) each get their own
+    object -- the first keeps the plain name, the next ones take `_2`, `_3`. Two targets with the SAME label
+    are an error.
+- Updated dependencies [[`357137e`](https://github.com/flatink/flatkit/commit/357137ea70e9064d6ecea56e93be827351ef2e03), [`b29bb4e`](https://github.com/flatink/flatkit/commit/b29bb4e482be3ffbb1242c68081e067278ff9e94), [`a6a462c`](https://github.com/flatink/flatkit/commit/a6a462c101c710147c279f2ea2424ebf35aa0e34), [`1acff0c`](https://github.com/flatink/flatkit/commit/1acff0c61cdd644f500eddb68b9ea97830daefa1), [`e6eca55`](https://github.com/flatink/flatkit/commit/e6eca55c5bc56a1506aabd6cd9c0849cff152548), [`ecd419e`](https://github.com/flatink/flatkit/commit/ecd419e136906bbcd28c8740169adf71db9a8934), [`8bf60de`](https://github.com/flatink/flatkit/commit/8bf60dedcefc3332d280c5147543346a3dd8f3cd), [`f958ce8`](https://github.com/flatink/flatkit/commit/f958ce8f6aecb1deb5750609f2d5fecb53a54e12), [`aac2a80`](https://github.com/flatink/flatkit/commit/aac2a809e926333168426538646227f4af6e2cd9)]:
+  - @flatkit/types@0.36.0
+  - @flatkit/engine@0.36.0
+  - @flatkit/player@0.36.0
+
 ## 0.35.3
 
 ### Patch Changes
