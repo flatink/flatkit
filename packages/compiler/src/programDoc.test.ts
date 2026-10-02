@@ -1115,16 +1115,29 @@ describe('programDoc — the arrays of a `polyline`', () => {
 // flatink/flatink#8 — a long run of points with soft turns and no curve is very likely material, or a
 // sampled curve: written before `smooth` existed, it used to be rounded and is now drawn as straight segments.
 describe('programDoc — a path that looks like material and does not say `smooth`', () => {
-  const spiral = Array.from({ length: 40 }, (_, i) => `${i === 0 ? 'M' : 'L'}${(100 + (20 + i) * Math.cos(i / 3)).toFixed(1)} ${(100 + (20 + i) * Math.sin(i / 3)).toFixed(1)}`).join(' ')
+  // `step` = the angle between two points of the spiral: coarse (0.8 rad) leaves visible facets, fine
+  // (0.05 rad) is a curve already — rounding it would not move a pixel.
+  const spiral = (n: number, step: number) => Array.from({ length: n }, (_, i) => `${i === 0 ? 'M' : 'L'}${(100 + (30 + i * step * 3) * Math.cos(i * step)).toFixed(2)} ${(100 + (30 + i * step * 3) * Math.sin(i * step)).toFixed(2)}`).join(' ')
   const prog = (line: string) => `size 200 200\nscene {\n  layer "c" {\n    ${line}\n  }\n}\n`
   const msgs = (src: string) => lintDoc(compileFlatpack(src), src).map((d) => d.diag.message).filter((m) => /smooth/.test(m))
-  it('is pointed out, with the word to add', () => {
-    const ws = msgs(prog(`path "${spiral}" nofill stroke #333333 2`))
+  it('is pointed out when the facets show, with the word to add', () => {
+    const ws = msgs(prog(`path "${spiral(40, 0.8)}" nofill stroke #333333 2`))
     expect(ws).toHaveLength(1)
     expect(ws[0]).toMatch(/40 points.*straight.*`smooth`/)
   })
+  // Measured on a real corpus (546 slides of vectorised artwork): 4431 of these warnings, on outlines
+  // sampled every 2 px, where the two renderings differed by a fraction of a percent of the pixels.
+  it('says nothing when the points are dense enough that rounding would change nothing visible', () => {
+    expect(msgs(prog(`path "${spiral(400, 0.05)}" nofill stroke #333333 2`))).toEqual([])
+  })
+  // The same corpus: polygons whose every corner was padded with points half a unit apart, to keep the
+  // sides straight under the old smoothing. Points in a row do not bend, however unevenly they are spaced.
+  it('says nothing for straight runs padded with close points — a workaround for the old smoothing', () => {
+    const side = (x0: number, y: number) => Array.from({ length: 8 }, (_, k) => `L${x0 + k * 30 - 0.5} ${y} L${x0 + k * 30} ${y} L${x0 + k * 30 + 0.5} ${y}`).join(' ')
+    expect(msgs(prog(`path "M10 10 ${side(20, 10)} L260 10 L260 10.5 L260 60 L259.5 60 ${side(20, 60).split(' L').reverse().join(' L').replace(/^/, 'L').replace('LL', 'L')} L10 60 Z" fill #333333`))).toEqual([])
+  })
   it('says nothing once it does, nor for a small polygon or a path with curves', () => {
-    expect(msgs(prog(`path "${spiral}" smooth nofill stroke #333333 2`))).toEqual([])
+    expect(msgs(prog(`path "${spiral(40, 0.8)}" smooth nofill stroke #333333 2`))).toEqual([])
     expect(msgs(prog('path "M20 100 L60 40 L160 40 L200 100 Z" fill #333333'))).toEqual([])
     expect(msgs(prog('rect 10 10 100 60 20 fill #333333'))).toEqual([])
   })

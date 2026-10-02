@@ -467,6 +467,29 @@ export function softVertexCount(sub: Subpath): number {
   for (let i = 0; i < n; i++) if (!isCorner(sub, i, CORNER_COS)) k++
   return k
 }
+/** How far smoothing a subpath as free-hand material would move its outline away from the straight
+ *  segments, at most (in the path's own units) — measured at the middle of each segment, from the same
+ *  tangents `pathToBezier` would derive. A curve sampled every couple of pixels scores a fraction of a
+ *  pixel: rounding it changes nothing one can see. Handles are ignored: the anchors alone decide. */
+export function smoothingDeviation(sub: Subpath): number {
+  const seg = sub.segments, n = seg.length
+  if (n < 3) return 0
+  const at = (i: number): Point => seg[sub.closed ? ((i % n) + n) % n : Math.max(0, Math.min(n - 1, i))].anchor
+  let max = 0
+  for (let i = 0, edges = sub.closed ? n : n - 1; i < edges; i++) {
+    const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2)
+    // offsets of the two controls from the chord's thirds: zero at a corner (the segment stays straight)
+    const a = isCorner(sub, i, CORNER_COS) ? { x: (p2.x - p1.x) / 3, y: (p2.y - p1.y) / 3 } : { x: (p2.x - p0.x) / 6, y: (p2.y - p0.y) / 6 }
+    const j = sub.closed ? (i + 1) % n : i + 1
+    const b = isCorner(sub, j, CORNER_COS) ? { x: (p1.x - p2.x) / 3, y: (p1.y - p2.y) / 3 } : { x: -(p3.x - p1.x) / 6, y: -(p3.y - p1.y) / 6 }
+    // B(1/2) - chord middle = 3/8 (c1 + c2 - p1 - p2). Only its part ACROSS the chord moves the outline:
+    // points in a row, however unevenly spaced, slide along their line and bend nothing.
+    const dx = a.x + b.x, dy = a.y + b.y
+    const cx = p2.x - p1.x, cy = p2.y - p1.y, len = Math.hypot(cx, cy)
+    max = Math.max(max, 0.375 * (len > 0 ? Math.abs(dx * cy - dy * cx) / len : Math.hypot(dx, dy)))
+  }
+  return max
+}
 const hasHandles = (sub: Subpath): boolean => sub.segments.some((s) => s.inHandle !== undefined || s.outHandle !== undefined)
 
 /** Is a subpath free-hand MATERIAL that the renderer rounds somewhere: no handle at all, and at least one

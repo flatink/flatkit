@@ -20,7 +20,7 @@ import { objectNames } from '@flatkit/engine/sceneRefs'
 import { behaviorRegions } from '@flatkit/engine/flatFormat'
 import { itemBBox, itemBoundsById, dropZoneBounds, transformBBox, revealGrid } from '@flatkit/engine/groups'
 import { IDENTITY, apply, compose } from '@flatkit/engine/transform'
-import { makePathSampler, softVertexCount } from '@flatkit/engine/path'
+import { makePathSampler, softVertexCount, smoothingDeviation } from '@flatkit/engine/path'
 import { bboxIntersects } from '@flatkit/engine/bbox'
 import { lint, localVariables, type LintContext } from './lint'
 import { forEachAction, forEachExpression } from './docWalk'
@@ -316,7 +316,13 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
       // literal BY THE MARKER only: every handle sits on its anchor (a real curve has handles elsewhere)
       const handles = sp.segments.flatMap((sg) => [[sg.inHandle, sg.anchor], [sg.outHandle, sg.anchor]] as const).filter(([h]) => h !== undefined)
       if (!handles.length || handles.some(([h, a]) => h!.x !== a.x || h!.y !== a.y)) continue
-      if (softVertexCount(sp) >= n * 0.75) return n
+      // …and only when rounding it would SHOW: an outline sampled every couple of pixels is a curve already,
+      // and a warning that changes nothing on screen is one nobody believes the next time.
+      // "Show" = at least one unit, and a visible fraction of the shape (artwork drawn in a large space
+      // and scaled down by its container would otherwise pass the first test on sub-pixel differences).
+      const xs = sp.segments.map((sg) => sg.anchor.x), ys = sp.segments.map((sg) => sg.anchor.y)
+      const size = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys))
+      if (softVertexCount(sp) >= n * 0.75 && smoothingDeviation(sp) >= Math.max(1, size * 0.004)) return n
     }
     return 0
   }
