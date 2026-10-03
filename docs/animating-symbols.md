@@ -224,7 +224,9 @@ group "Aiguille" smooth rotationDeg "valeur * 270" k 0.18 { … }               
 - `spring <channel> "<target>" stiffness <0..1> damping <0..1>` — 2nd-order spring: overshoots then settles.
   Lower `damping` = more bounce. (Both params are per fixed 60 Hz step; out-of-range values are clamped.)
 - `<target>` is an ordinary expression (params, `time`, `self.x`, …) — the resting value the channel chases.
-  Authoring sugar like `expr`: `rotate` = `rotation`; `rotationDeg` reads degrees (wraps the target in `rad()`).
+  The channel is `rotation` (radians) or `rotationDeg` (degrees: the target is wrapped in `rad()`). Not
+  `rotate`: on a declaration line `rotate <n>` is a fixed rotation in degrees, so `rotate` as a channel there
+  is an error since 0.39.2 (it meant radians, next to a `rotate` that meant degrees).
 - A modifier **wins** over a plain `expr` / keyframes on the same channel.
 
 **React to MOVEMENT, not value — `velocity(expr)`.** Inside a modifier target (only there), `velocity(x)` is

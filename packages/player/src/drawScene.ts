@@ -1047,8 +1047,12 @@ function renderOneItem(
         return acc
       }
       // `text <param>`: the instance's value of that param (declared default, call site, or written at runtime).
-      const said = it.contentParam ? rctx.textParams?.[it.contentParam] : undefined
-      const shown = said !== undefined && said !== it.content ? { ...it, content: said } : it
+      // OWN entries only, and strings only: a document is untrusted, and `contentParam: "constructor"`
+      // read off a plain object is a function, not a text.
+      const tp = rctx.textParams
+      const said = it.contentParam && tp && Object.hasOwn(tp, it.contentParam) ? tp[it.contentParam] : undefined
+      const content = typeof said === 'string' ? said : typeof it.content === 'string' ? it.content : String(it.content ?? '')
+      const shown = content !== it.content ? { ...it, content } : it
       paintLeafCached(ctx, rctx, doc, it, it.filters, opacity, devBBox, (c) => paintText(c, shown))
     } else if (isImage(it)) {
       const src = rctx.image?.(it.assetId) ?? null

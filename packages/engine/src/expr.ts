@@ -235,11 +235,19 @@ export function compileExpr(src: string): Compiled {
  *  hundreds of expressions per frame); the cache turns those re-parses into a map lookup. The key set is
  *  bounded by the doc's distinct expression sources. */
 const exprCache = new Map<string, Compiled>()
+/** A ceiling, in case something hands in sources that are not the document's (a host's values): past it the
+ *  cache starts over rather than growing for the whole session. */
+const EXPR_CACHE_MAX = 20_000
 export function compileCached(src: string): Compiled {
   let c = exprCache.get(src)
-  if (!c) { c = compileExpr(src); exprCache.set(src, c) }
+  if (!c) {
+    if (exprCache.size >= EXPR_CACHE_MAX) exprCache.clear()
+    c = compileExpr(src); exprCache.set(src, c)
+  }
   return c
 }
+/** How many expression sources are cached (diagnostics, tests). */
+export const exprCacheSize = (): number => exprCache.size
 
 // ── Evaluation ───────────────────────────────────────────────────────────────
 const num = (b: boolean) => (b ? 1 : 0)

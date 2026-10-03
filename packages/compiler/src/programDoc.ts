@@ -21,7 +21,7 @@ import { behaviorRegions } from '@flatkit/engine/flatFormat'
 import { itemBBox, itemBoundsById, dropZoneBounds, transformBBox, revealGrid } from '@flatkit/engine/groups'
 import { IDENTITY, apply, compose } from '@flatkit/engine/transform'
 import { makePathSampler, softVertexCount, smoothingDeviation } from '@flatkit/engine/path'
-import { bboxIntersects } from '@flatkit/engine/bbox'
+import { bboxIntersects, ringsBBox } from '@flatkit/engine/bbox'
 import { lint, localVariables, type LintContext } from './lint'
 import { forEachAction, forEachExpression } from './docWalk'
 import { parseUnits } from '@flatkit/engine/dsl'
@@ -166,6 +166,11 @@ function timeCapturedVars(doc: Doc): Set<string> {
 
 /** The closest of `names` to `word` (edit distance <= 2), as a ` — did you mean "…"?` suffix, or ''. */
 function didYouMean(word: string, names: string[]): string {
+  // A suggestion is for a TYPO: a name within two edits. Two names whose lengths differ by more than that
+  // cannot be, and a full edit distance between two names of thousands of characters was 22 s of `--check`
+  // on a 181 KB program. Nobody types a 64-character name with a typo they need help with.
+  if (word.length > 64) return ''
+  names = names.filter((n) => n.length <= 64 && Math.abs(n.length - word.length) <= 2)
   const dist = (a: string, b: string): number => {
     const row = Array.from({ length: b.length + 1 }, (_, j) => j)
     for (let i = 1; i <= a.length; i++) {
@@ -303,7 +308,9 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
   for (const f of doc.functions ?? []) {
     if (f.name.includes('.')) continue // the qualified alias of a package function repeats the plain one
     for (const p of f.params) {
-      const by = hiddenBy(p)
+      // A VALUE function binds its parameters over the reserved names (`fn dbl(value) = value * 2` reads
+      // its argument); only math names, resolved first everywhere, hide one there.
+      const by = f.kind === 'value' ? (STD_CONSTANTS.includes(p) ? `the constant ${p}` : Object.hasOwn(MATH_CTX, p) ? `the function ${p}()` : undefined) : hiddenBy(p)
       if (by) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `parameter "${p}" of fn ${f.name} is hidden by ${by} — the body reads that, never the argument. Rename it` } })
     }
   }
@@ -320,8 +327,8 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
       // and a warning that changes nothing on screen is one nobody believes the next time.
       // "Show" = at least one unit, and a visible fraction of the shape (artwork drawn in a large space
       // and scaled down by its container would otherwise pass the first test on sub-pixel differences).
-      const xs = sp.segments.map((sg) => sg.anchor.x), ys = sp.segments.map((sg) => sg.anchor.y)
-      const size = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys))
+      const bb = ringsBBox([sp.segments.map((sg) => sg.anchor)]) // a loop: `Math.max(...xs)` overflows the stack past ~120k points
+      const size = bb ? Math.hypot(bb.maxX - bb.minX, bb.maxY - bb.minY) : 0
       if (softVertexCount(sp) >= n * 0.75 && smoothingDeviation(sp) >= Math.max(1, size * 0.004)) return n
     }
     return 0

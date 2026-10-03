@@ -22,6 +22,7 @@ import { isInstance, isGroup } from '@flatkit/engine/layers'
 import { IDENTITY } from '@flatkit/engine/transform'
 import { parsePathData } from '@flatkit/engine/svgPath'
 import { softVertexCount, smoothingDeviation } from '@flatkit/engine/path'
+import { ringsBBox } from '@flatkit/engine/bbox'
 import { lintDocReport, docHasErrors } from '../programDoc'
 import { applyFixes, formatDiagnostics, programDiagnostics, repairLoop } from '../check'
 import { FlatSyntaxError } from '@flatkit/engine/flatFormat'
@@ -336,7 +337,10 @@ function playOnce(filePath: string, scriptPath: string, trace: boolean, noLibs =
   try { doc = loadDoc(filePath, noLibs, explicitFlats) } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
   try { gestures = JSON.parse(readFileSync(scriptPath, 'utf8')) as Gesture[] } catch (e) { process.stderr.write(`flatc: invalid JSON script: ${(e as Error).message}\n`); return 1 }
   if (!Array.isArray(gestures)) { process.stderr.write('flatc: the script must be an array of gestures\n'); return 1 }
-  const res = playHeadless(doc, gestures, { trace, seed, settle })
+  // A gesture that cannot be replayed (an object the scene does not have) is the author's to fix: one
+  // line, and the exit code — not a stack trace.
+  let res: ReturnType<typeof playHeadless>
+  try { res = playHeadless(doc, gestures, { trace, seed, settle }) } catch (e) { process.stderr.write(`flatc: ${(e as Error).message}\n`); return 1 }
   // On stderr, and no effect on the exit code: the JSON on stdout stays what a caller parses.
   for (const w of res.warnings ?? []) process.stderr.write(`flatc: warning: ${w}\n`)
   if (!trace) process.stdout.write(JSON.stringify(res, null, 2) + '\n')
@@ -601,21 +605,26 @@ function sinceReport(files: string[], since: string, all = false): number {
   for (const file of files) {
     let src: string
     try { src = readFileSync(file, 'utf8') } catch (e) { process.stderr.write(`flatc: cannot read ${file}: ${(e as Error).message}\n`); return 1 }
+    // Line of an offset: the line starts are found ONCE per file. Counting from the top for each finding
+    // made the report quadratic (20 000 paths, 3 s).
+    const starts = [0]
+    for (let k = src.indexOf('\n'); k >= 0; k = src.indexOf('\n', k + 1)) starts.push(k + 1)
+    const lineOf = (off: number): number => { let lo = 0, hi = starts.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= off) lo = mid; else hi = mid - 1 } return lo + 1 }
     // Every `path "…"` of the file that does not already say `smooth` (a text laid `along path "…"` is not a shape).
     for (const m of src.matchAll(/(?<!along\s)\bpath\s+"([^"]*)"(?!\s+smooth\b)/g)) {
       // Read as it was BEFORE (free-hand material) to measure what smoothing did to it.
       for (const sub of parsePathData(m[1], { smooth: true }).subpaths) {
         if (sub.segments.some((sg) => sg.inHandle || sg.outHandle) || !softVertexCount(sub)) continue // has a curve, or only sharp corners
         const moved = smoothingDeviation(sub)
-        const xs = sub.segments.map((sg) => sg.anchor.x), ys = sub.segments.map((sg) => sg.anchor.y)
-        const size = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys))
+        const bb = ringsBBox([sub.segments.map((sg) => sg.anchor)]) // a loop, not `Math.max(...xs)`: no stack overflow on a huge path
+        const size = bb ? Math.hypot(bb.maxX - bb.minX, bb.maxY - bb.minY) : 0
         // Listed when the outline moves by 1% of the shape's size or more — RELATIVE, because artwork is often
         // drawn in a large space and scaled down by its container. An OPEN line is also listed from 2 units:
         // a long stroke with gentle turns (a hill, a horizon) moves by little of its length and visibly all
         // the same. Below that the two renderings are a few pixels apart at most; `--all` lists those too.
         if (moved <= 0 || size <= 0) continue
         if (moved < size * 0.01 && (sub.closed || moved < SINCE_OPEN_UNITS) && !all) { slight++; continue }
-        const line = src.slice(0, m.index).split('\n').length
+        const line = lineOf(m.index ?? 0)
         if (sub.closed) closed++; else open++
         process.stdout.write(`${file}:${line}: ${sub.closed ? 'closed' : 'open'} path of ${sub.segments.length} points was rounded before 0.36 and is now straight — it moves by up to ${Math.round(moved * 10) / 10} units (${Math.round((1000 * moved) / (size || 1)) / 10}% of its size). Write \`smooth\` after its path data to keep the curve.\n`)
       }

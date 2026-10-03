@@ -917,3 +917,15 @@ describe('headless -- `turn` presses on the shape, or says it could not', () => 
     expect(play(hand(), [{ type: 'turn', target: 'Hand', angle: 90 }]).warnings).toBeUndefined()
   })
 })
+
+// A text with no id is named by what it shows, and yields that name to a group (0.39.2). The replay looked
+// targets up on its own, without that rule: a caption reading "Hand" placed before the dial hid it.
+describe('headless -- a target found by name follows the rule of names', () => {
+  it('`turn` reaches the group "Hand", not the text that shows "Hand"', () => {
+    const src = ['size 300 300', 'var a = 0',
+      'scene {', '  layer "t" { text "Hand" at 10,10 size 20 color #000000 box 100 30 }',
+      '  layer "c" { group "Hand" at 150,150 pivot 0,0 { layer "a" { rect -6 -90 12 88 fill #333333 } } }', '}',
+      'object "Hand" {', '  turnDeg a around 150,150', '  rotationDeg = a', '}'].join('\n')
+    expect(playHeadless(parseProgramFull(src) as unknown as Doc, [{ type: 'turn', target: 'Hand', angle: 90 }]).vars.a).toBeCloseTo(90, 6)
+  })
+})

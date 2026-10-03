@@ -1812,7 +1812,11 @@ export class FlatPlayer {
       if (this.actionDepth === 0) this.render()
       return true
     }
-    let targetVal = sm && sm.states.some((s) => s.name === trimmed) ? stateValueOf(sm, trimmed) : this.evalNumber(raw)
+    // A number written out, or `true` / `false` (accepted at a call site, so in an assignment too), is read
+    // as such — not compiled: a host driving a param with a slider sends a new value every frame, and each
+    // distinct source compiled was kept for good.
+    const literal = trimmed === 'true' ? 1 : trimmed === 'false' ? 0 : trimmed !== '' ? Number(trimmed) : Number.NaN
+    let targetVal = sm && sm.states.some((s) => s.name === trimmed) ? stateValueOf(sm, trimmed) : Number.isFinite(literal) ? literal : this.evalNumber(raw)
     if (!Number.isFinite(targetVal)) return false
     // Clamp a declared number param to its range (consistent with call-site/default resolution).
     const def = sym?.params?.find((p) => p.name === param && p.type === 'number')

@@ -8,7 +8,7 @@
 // -----------------------------------------------------------------------------
 import { FlatPlayer } from './player'
 import { itemBoundsByName, dropZoneBounds } from '@flatkit/engine/groups'
-import { isGroup } from '@flatkit/engine/layers'
+import { isGroup, isNamedByContent } from '@flatkit/engine/layers'
 import type { Doc, Item } from '@flatkit/types'
 export type { Gesture } from './player' // defined on the player side (reused by `--record`)
 import type { Gesture, SendEvent } from './player'
@@ -17,25 +17,31 @@ type Box = { minX: number; minY: number; maxX: number; maxY: number }
 /** Cap on the moves a `scratch` synthesizes (anti-DoS: a huge bbox / tiny brush must not blow up). */
 const MAX_SWEEP = 2000
 
-/** First named item matching `name` (walks groups). Used to find the reveal interactor's brush. */
-function findItemByName(items: Item[], name: string): Item | null {
+/** First named item matching `name` (walks groups) — under the rule of names: a text named by what it
+ *  shows yields to any other item of that name (`isNamedByContent`). */
+function findItemByName(items: Item[], name: string, yieldText = true): Item | null {
   for (const it of items) {
-    if ('name' in it && it.name === name) return it
-    if (isGroup(it)) for (const l of it.layers) { const r = findItemByName(l.items, name); if (r) return r }
+    if ('name' in it && it.name === name && !(yieldText && isNamedByContent(it))) return it
+    if (isGroup(it)) for (const l of it.layers) { const r = findItemByName(l.items, name, yieldText); if (r) return r }
   }
+  return null
+}
+/** The item a gesture names, across the scene's layers: another item first, else a text that shows it. */
+function findNamed(doc: Doc, name: string): Item | null {
+  for (const yieldText of [true, false]) for (const l of doc.layers) { const it = findItemByName(l.items, name, yieldText); if (it) return it }
   return null
 }
 /** Brush radius (= grid) of the `reveal` interactor on a named target; default 24 if none. */
 function revealBrushFor(doc: Doc, name: string): number {
   let id: string | null = null
-  for (const l of doc.layers) { const it = findItemByName(l.items, name); if (it) { id = it.id; break } }
+  const it = findNamed(doc, name); if (it) id = it.id
   const inter = id ? doc.interactors?.find((x) => x.targetId === id) : undefined
   return inter?.grid && inter.grid > 0 ? inter.grid : 24
 }
 /** The `turn`/`turnDeg` interactor on a named target: its WORLD pivot + unit (deg/rad), or null if none. */
 function turnTargetFor(doc: Doc, name: string): { id: string; pivot: { x: number; y: number }; deg: boolean } | null {
   let id: string | null = null
-  for (const l of doc.layers) { const it = findItemByName(l.items, name); if (it) { id = it.id; break } }
+  const it = findNamed(doc, name); if (it) id = it.id
   const inter = id ? doc.interactors?.find((x) => x.targetId === id) : undefined
   if (!inter || (inter.axis !== 'turn' && inter.axis !== 'turnDeg')) return null
   return { id: inter.targetId, pivot: inter.pivot ?? { x: 0, y: 0 }, deg: inter.axis === 'turnDeg' }

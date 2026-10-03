@@ -1368,7 +1368,9 @@ class FlatParser {
     const first = this.peek()
     if (!first) this.fail('a value is expected after "="')
     const rest = this.restOfLine(first.at).replace(/\/\/.*$/, '').trim()
-    if (first.k === 'num' && !/^[-+*/%]/.test(rest.slice(first.v.length).trim())) return this.num()
+    // The fast path is a number ALONE: anything after it — an operator of any kind, or a word — makes the
+    // line an expression, evaluated whole or refused (`var a = 3 == 3` used to keep the 3).
+    if (first.k === 'num' && rest.slice(first.v.length).trim() === '') return this.num()
     const v = evalConst(rest, {})
     if (!Number.isFinite(v)) this.fail(`a var is initialised with a number or a constant expression — "${rest}" is neither (assign it in \`when loaded\` if it depends on other variables)`)
     const end = first.at + this.restOfLine(first.at).length
@@ -1903,6 +1905,11 @@ class FlatParser {
     const px = t.a * pv.x + t.c * pv.y + t.e, py = t.b * pv.x + t.d * pv.y + t.f
     return { a: la, b: lb, c: lc, d: ld, e: px - (la * pv.x + lc * pv.y), f: py - (lb * pv.x + ld * pv.y) }
   }
+  /** On a declaration line `rotate 45` is a fixed rotation in DEGREES; a channel spelled `rotate` there
+   *  (`expr rotate "…"`, `spring rotate "…"`) meant RADIANS. The two units in one line — refused, by name. */
+  private refuseRotateChannel(raw: string): void {
+    if (raw === 'rotate') this.fail('a channel is not spelled `rotate` on a declaration line, where `rotate <n>` is a fixed rotation in degrees: write `rotation` (radians) or `rotationDeg` (degrees)')
+  }
   private poseAttrs(): ParsedAttrs {
     const a: ParsedAttrs = {}
     for (;;) {
@@ -1920,14 +1927,15 @@ class FlatParser {
         // renderer does not know was stored as written, compiled, and animated nothing.
         this.next()
         const raw = this.peek()?.v ?? ''
+        this.refuseRotateChannel(raw)
         const { ch, deg } = modChannel(raw)
         if (!(BIND_CHANNELS as string[]).includes(ch)) this.fail(`unknown channel "${raw}" in \`expr\` (expected ${BIND_CHANNELS.join(', ')}, or rotationDeg)`)
         this.next()
         const ex = this.str()
         ;(a.expressions ??= {})[ch as BindChannel] = deg ? `rad(${ex})` : ex
       }
-      else if (this.is('spring')) { this.next(); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let stiffness = 0, damping = 0; for (;;) { if (this.is('stiffness')) { this.next(); stiffness = this.num() } else if (this.is('damping')) { this.next(); damping = this.num() } else break } (a.modifiers ??= {})[ch] = { kind: 'spring', target, stiffness, damping } }
-      else if (this.is('smooth')) { this.next(); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let k = 0; if (this.is('k')) { this.next(); k = this.num() } (a.modifiers ??= {})[ch] = { kind: 'smooth', target, k } }
+      else if (this.is('spring')) { this.next(); this.refuseRotateChannel(this.peek()?.v ?? ''); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let stiffness = 0, damping = 0; for (;;) { if (this.is('stiffness')) { this.next(); stiffness = this.num() } else if (this.is('damping')) { this.next(); damping = this.num() } else break } (a.modifiers ??= {})[ch] = { kind: 'spring', target, stiffness, damping } }
+      else if (this.is('smooth')) { this.next(); this.refuseRotateChannel(this.peek()?.v ?? ''); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let k = 0; if (this.is('k')) { this.next(); k = this.num() } (a.modifiers ??= {})[ch] = { kind: 'smooth', target, k } }
       else if (this.is('nohit')) { this.next(); a.noHit = true }
       else if (this.is('blend')) { this.next(); a.blend = this.next().v as BlendMode }
       else if (this.is('hitbox')) { this.next(); const w = this.num(); const h = this.num(); a.hitbox = { w, h } }

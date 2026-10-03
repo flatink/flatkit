@@ -705,11 +705,17 @@ describe('flatFormat — stateful channel modifiers (spring/smooth) in a .flat',
     expect((parseFlat(text)[0].layers[0].items[0] as Group).modifiers?.rotation).toEqual({ kind: 'spring', target: 'rad(-velocity(crochetX) * 40)', stiffness: 0.06, damping: 0.22 })
   })
 
-  it('authoring sugar: `rotate` aliases `rotation`; `rotationDeg` wraps the target in rad()', () => {
+  // `rotate 45` on a declaration line is a FIXED rotation in DEGREES (0.38). A channel spelled `rotate` on
+  // that same line meant radians — `group "G" rotate 45 spring rotate "a"` mixed the two units in one
+  // breath. On a declaration line the channel is now written `rotation` (radians) or `rotationDeg`.
+  it('on a declaration line, a modifier on `rotate` is an error that names the two spellings', () => {
+    expect(() => parseFlat('symbol "S" {\n  layer "c" {\n    group "A" spring rotate "crochetX" stiffness 0.08 damping 0.86 {\n    }\n  }\n}')).toThrow(/`rotate`.*degrees.*`rotation`.*`rotationDeg`/s)
+  })
+  it('authoring sugar: `rotationDeg` wraps the target in rad()', () => {
     const text = [
       'symbol "S" {',
       '  layer "c" {',
-      '    group "A" spring rotate "crochetX" stiffness 0.08 damping 0.86 {',
+      '    group "A" spring rotation "crochetX" stiffness 0.08 damping 0.86 {',
       '    }',
       '    group "B" smooth rotationDeg "valeur * 270" k 0.18 {',
       '    }',
@@ -1808,8 +1814,8 @@ describe('`.flat` — the channel of an inline `expr`', () => {
   it('`rotationDeg` is the degree twin of `rotation`, as in a behavior block', () => {
     expect(group('expr rotationDeg "a"').expressions).toEqual({ rotation: 'rad(a)' })
   })
-  it('`rotate` is accepted as `rotation`', () => {
-    expect(group('expr rotate "a"').expressions).toEqual({ rotation: 'a' })
+  it('`rotate` is refused: on this line `rotate 45` is degrees, and the channel would have been radians', () => {
+    expect(() => parseFlat(sym('expr rotate "45"'))).toThrow(/`rotate`.*degrees.*`rotation`.*`rotationDeg`/s)
   })
   it('an unknown channel is an error naming the valid ones', () => {
     expect(() => parseFlat(sym('expr rotationn "a"'))).toThrow(/unknown channel "rotationn".*rotation/)
@@ -1914,5 +1920,24 @@ describe('`path "…" smooth` — free-hand material says so (flatink/flatink#8)
   it('a shape with sharp corners only is printed as before, without it', () => {
     expect(printProgram(parseProgram(prog0('')))).not.toContain('smooth')
     expect(printProgram(parseProgram(prog0('').replace('path "M0 0L10 0L10 10Z" fill #000000', 'rect 0 0 40 20 fill #000000')))).not.toContain('smooth')
+  })
+})
+
+// A `var` initialiser that starts with a number used to stop at the number unless an ARITHMETIC operator
+// followed: `var a = 3 == 3` gave 3, `var a = 2 > 1 ? 7 : 8` gave 2, `var a = 4 garbage` gave 4 — and
+// `--check` passed all three.
+describe('a `var` initialiser is read to the end of its line', () => {
+  const v = (init: string) => parseProgram(`size 10 10\nvar a = ${init}\nscene { }\n`).variables?.a
+  it('a comparison and a ternary are evaluated whole', () => {
+    expect(v('3 == 3')).toBe(1)
+    expect(v('2 > 1 ? 7 : 8')).toBe(7)
+    expect(v('1 && 0')).toBe(0)
+  })
+  it('a number alone, with or without a comment, is still the fast path', () => {
+    expect(v('42')).toBe(42)
+    expect(v('-3.5 // the start')).toBe(-3.5)
+  })
+  it('a number followed by something that is not an expression is an error', () => {
+    expect(() => v('4 garbage')).toThrow(/constant expression/)
   })
 })

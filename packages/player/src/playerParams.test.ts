@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { FlatPlayer } from './player'
 import { parseProgramFull, parseFlat } from '@flatkit/engine/flatFormat'
+import { exprCacheSize } from '@flatkit/engine/expr'
 import type { Doc, Instance } from '@flatkit/types'
 import { IDENTITY } from '@flatkit/engine/transform'
 
@@ -132,5 +133,50 @@ describe('FlatPlayer.setParam — the host sets an instance param', () => {
     expect(numbers()).toEqual({})
     r.reset(); pl.render()
     expect([r.seen.fills, r.seen.texts]).toEqual([['#3366cc'], ['Niveau']])
+  })
+})
+
+// Found by a security pass: `setParam` wrote a number as text and evaluated it as an expression, so every
+// distinct value was compiled and kept for good — a slider at 60 Hz grew the heap by 150 MB per million
+// writes. And `Inst.flag = true`, accepted at a call site, did nothing in an assignment.
+describe('setParam and `Inst.p = …`: numbers are numbers, booleans are booleans', () => {
+  const LAMP = `size 200 200
+symbol "Lamp" {
+  params {
+    bool on = false
+    number level = 0 range 0 1000000
+  }
+  layer "a" { group "Bulb" at 0,0 expr opacity "on" { layer "c" { circle 0 0 10 fill #ffcc00 } } }
+}
+var hits = 0
+scene { layer "c" {
+  instance "Lamp" as "L1" at 50,50
+  instance "Lamp" as "L2" at 150,50
+} }
+when loaded {
+  L1.on = true
+  L2.on = 1
+}
+`
+  /** A player on `src`, whose plain `symbol` blocks are resolved by name (what the compiler does). */
+  const playerFor = (src: string) => {
+    const doc = parseProgramFull(src) as unknown as Doc
+    const byName = new Map(doc.symbols.map((sy) => [sy.name, sy.id]))
+    for (const it of doc.layers[0].items as Instance[]) it.symbolId = byName.get(it.symbolId.slice(1)) ?? it.symbolId
+    const r = recorder()
+    const pl = new FlatPlayer(r.canvas as unknown as HTMLCanvasElement, doc, { input: false, audio: false, autoplay: false })
+    return { pl, r }
+  }
+  const bulbs = (r: ReturnType<typeof recorder>) => r.seen.fills.filter((f) => f.toLowerCase() === '#ffcc00').length
+  it('a host writing a thousand distinct numbers compiles none of them', () => {
+    const { pl } = playerFor(LAMP)
+    const loaded = exprCacheSize()
+    for (let k = 0; k < 1000; k++) expect(pl.setParam('L1', 'level', k + 0.5)).toBe(true)
+    expect(exprCacheSize() - loaded).toBe(0)
+  })
+  it('`Inst.boolParam = true` turns it on, as `= 1` does', () => {
+    const { pl, r } = playerFor(LAMP)
+    r.reset(); pl.render()
+    expect(bulbs(r)).toBe(2) // both lamps lit — L1 used to stay dark
   })
 })
