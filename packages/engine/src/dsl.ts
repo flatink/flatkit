@@ -230,13 +230,29 @@ const CONDITION_AFTER_WHEN = /[<>]|==|!=/
 
 const INTERACTOR_SLOT = /^[^\n]*\b(confine|snap|tolerance|step|both|point|brush|grain|erase|cells|enabled)\b/
 
+/**
+ * A break that is NOT a line: U+2028. Unfolded sugar (`repeat`, a parameterized symbol, `each`, `match`)
+ * separates what it generates with it, so the generated text keeps the line count of what the author wrote
+ * and every diagnostic below it keeps its line. To this parser it ends a statement exactly like a newline;
+ * it is only not counted when a position is turned into a line.
+ */
+export const SOFT_NL = '\u2028'
+
 class Parser {
   private i = 0
   private line = 1
   private col = 1
   readonly diags: Diagnostic[] = []
   readonly sites: Site[] = []
-  constructor(private readonly s: string) {}
+  private readonly s: string
+  private readonly soft: Set<number> | null
+  constructor(src: string) {
+    if (!src.includes(SOFT_NL)) { this.s = src; this.soft = null; return }
+    const soft = new Set<number>()
+    for (let k = src.indexOf(SOFT_NL); k >= 0; k = src.indexOf(SOFT_NL, k + 1)) soft.add(k)
+    this.s = src.replaceAll(SOFT_NL, '\n') // every newline test below sees a statement boundary…
+    this.soft = soft // …and `next` does not count these as lines
+  }
 
   /** Records an expression to validate, at the position `m` where it starts. */
   private exprSite(text: string, m: Mark) {
@@ -255,7 +271,7 @@ class Parser {
   }
   private next() {
     const c = this.s[this.i++]
-    if (c === '\n') {
+    if (c === '\n' && !this.soft?.has(this.i - 1)) {
       this.line++
       this.col = 1
     } else this.col++
@@ -1411,5 +1427,14 @@ class Parser {
 export function parseUnits(src: string): ParseResult {
   const p = new Parser(src)
   const units = p.parse()
-  return { units, diagnostics: p.diags, sites: p.sites }
+  // A mechanical repair names a range of the AUTHOR's text: on a line that holds unfolded code, that range
+  // is not what the author wrote — the diagnostic stays, its repair is dropped.
+  let diagnostics = p.diags
+  if (src.includes(SOFT_NL)) {
+    const softLines = new Set<number>()
+    let line = 1
+    for (const c of src) { if (c === '\n') line++; else if (c === SOFT_NL) softLines.add(line) }
+    diagnostics = diagnostics.map((d) => (d.fix && softLines.has(d.line) ? { line: d.line, col: d.col, message: d.message } : d))
+  }
+  return { units, diagnostics, sites: p.sites }
 }

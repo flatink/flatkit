@@ -79,3 +79,28 @@ describe('what an unfolded body may hold', () => {
     expect(compileFlatpack(src).layers[0].items).toHaveLength(9)
   })
 })
+
+// `each "Tmpl" as i { … }` and `match … onto … { … }` unfold into one `object` block per instance or per
+// item, several lines each: everything below them moved down, and so did the line of any error there.
+describe('a diagnostic after `each` or `match` keeps its line', () => {
+  const each = 'size 300 300\nvar input = 0\nsymbol "Key"(n) { layer "a" { circle 0 0 10 fill #333333 } }\nscene {\n  layer "c" {\n    instance "Key"(1) as "K1" at 20,20\n    instance "Key"(2) as "K2" at 60,20\n    instance "Key"(3) as "K3" at 100,20\n  }\n}\neach "Key" as i {\n  when clicked {\n    input = input * 10 + (i + 1)\n  }\n}\n'
+  it('below an `each` block', () => {
+    const r = checkProgram(each + 'object "Nope" { x = 1 }\nevery frame { input = input + }\n').report
+    expect(r).toMatch(/\[object "Nope"\] 16:/)
+    expect(r).toMatch(/\[scene\] 17:/)
+  })
+  it('an error inside the `each` body is reported at its line in the block', () => {
+    const r = checkProgram(each.replace('input = input * 10 + (i + 1)', 'input = input * 10 +')).report
+    expect(r).toMatch(/1[0-3]:\d+: error/) // within the `each` block (lines 11-15), not below the program's end
+  })
+  const match = 'size 300 300\nscene {\n  layer "c" {\n    group "Word1" at 20,20 { layer "a" { circle 0 0 10 fill #333333 } }\n    group "Word2" at 60,20 { layer "a" { circle 0 0 10 fill #333333 } }\n    group "Good" at 20,200 { layer "a" { rect -20 -20 40 40 fill #33aa33 } }\n    group "Bad" at 120,200 { layer "a" { rect -20 -20 40 40 fill #aa3333 } }\n  }\n}\nmatch Word1, Word2 onto Good, Bad {\n  correct Word1 -> Good, Word2 -> Bad\n  on done { send "win" }\n}\n'
+  it('below a `match` block', () => {
+    const r = checkProgram(match + 'object "Nope" { x = 1 }\n').report
+    expect(r).toMatch(/\[object "Nope"\] 14:/)
+  })
+  it('the unfolded handlers still run', async () => {
+    const { playHeadless } = await import('@flatkit/player/debug')
+    expect(playHeadless(compileFlatpack(each), [{ type: 'tap', target: 'K2' }, { type: 'tap', target: 'K3' }]).vars.input).toBe(23)
+    expect(playHeadless(compileFlatpack(match), [{ type: 'drag', source: 'Word1', target: 'Good' }, { type: 'drag', source: 'Word2', target: 'Bad' }]).sends.map((s) => s.name)).toContain('win')
+  })
+})

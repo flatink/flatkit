@@ -27,7 +27,7 @@ import { compileExpr, evalExpr, exprScope } from './expr'
 import { isGroup, isInstance, isText, isImage, isPoseable, isRegion, folderPath, isNamedByContent } from './layers'
 import { itemBoundsByName } from './groups'
 import type { BBox } from './bbox'
-import { printUnits, parseUnits, type Diagnostic, type ScriptUnit, type TextEdit } from './dsl'
+import { printUnits, parseUnits, SOFT_NL, type Diagnostic, type ScriptUnit, type TextEdit } from './dsl'
 import { timelineToUnits, unitsToTimeline, objectToUnits, unitsToObject, functionsToUnits, unitsToFunctions } from './scriptDoc'
 import { providingPackage } from './stdlib'
 
@@ -460,9 +460,9 @@ function interpolate(text: string, env: Record<string, number>): string {
 /** Ceiling on the TEXT a set of `repeat`s may unfold to. The iteration budget alone let a short loop body be
  *  copied 5000 times: a 14 KB library unfolded to hundreds of MB, 18 s and 3 GB to compile. */
 const REPEAT_MAX_TEXT = 4_000_000
-/** A break between items that is not a LINE: whitespace to the tokenizer, the end of a `//` comment and of an
- *  instance's attributes, but not counted when a position is turned into a line number. U+2028. */
-const SOFT_NL = '\u2028'
+/** On one line, the text `generated` that replaces `original`: its own newlines become SOFT_NL, and the
+ *  newlines `original` had follow it — so every line below keeps its number. */
+const onSameLines = (generated: string, original: string): string => generated.replaceAll('\n', SOFT_NL) + '\n'.repeat(countNewlines(original, 0, original.length))
 const countNewlines = (text: string, from: number, to: number): number => { let n = 0; for (let k = text.indexOf('\n', from); k >= 0 && k < to; k = text.indexOf('\n', k + 1)) n++; return n }
 type RepeatBudget = { n: number; size: number }
 const newRepeatBudget = (): RepeatBudget => ({ n: 0, size: 0 })
@@ -698,7 +698,9 @@ function expandEachHandlers(src: string, registry: Map<string, string[]>, defs: 
     out += src.slice(cursor, m.index)
     // Per instance: first resolve `$(…)` that mixes `def`s and the loop index (e.g. `$(col + i*gap)`) — these
     // stayed intact through the global def pass because the index was unknown — THEN substitute the bare index.
-    names.forEach((nm, k) => { out += `object ${JSON.stringify(nm)} {${interpolate(body, { ...defs, [m[2]]: k }).replace(sub, String(k))}}\n` })
+    let gen = ''
+    names.forEach((nm, k) => { gen += `object ${JSON.stringify(nm)} {${interpolate(body, { ...defs, [m[2]]: k }).replace(sub, String(k))}}\n` })
+    out += onSameLines(gen, src.slice(m.index, braceClose + 1)) // the lines below keep their numbers
     cursor = braceClose + 1
   }
   return out
@@ -893,7 +895,7 @@ export function expandMatch(src: string): string {
     out += src.slice(cursor, m.index)
     const items = m[1].split(',').map((s) => s.trim()).filter(Boolean)
     const zones = m[2].split(',').map((s) => s.trim()).filter(Boolean)
-    out += generateMatch(items, zones, src.slice(open + 1, close))
+    out += onSameLines(generateMatch(items, zones, src.slice(open + 1, close)), src.slice(m.index, close + 1))
     cursor = close + 1
   }
   return out
@@ -1082,7 +1084,7 @@ export function sceneOnlyUnitDiagnostics(src: string): { scope: string; diag: Di
     for (const { kind, find, what } of SCENE_ONLY) {
       if (!units.some(kind)) continue
       lines.forEach((text, i) => {
-        if (find.test(text))
+        if (text.split(SOFT_NL).some((seg) => find.test(seg))) // a line of unfolded code holds several statements
           out.push({ scope: r.scope, diag: { line: r.line + i, col: 1, severity: 'error',
             message: `${what} is scene-wide and does NOTHING inside an \`object\` block -- it is dropped, which is why nothing happened. Move it to the TOP LEVEL of the program, outside any \`object\`. An \`object\` block holds bindings, \`when clicked\`/\`when dropped\` and one interactor.` } })
       })
@@ -1123,7 +1125,7 @@ export function itemOnlyUnitDiagnostics(src: string): { scope: string; diag: Dia
   for (const [source, what] of seen) {
     const find = new RegExp(source)
     lines.forEach((text, i) => {
-      if (find.test(text))
+      if (text.split(SOFT_NL).some((seg) => find.test(seg)))
         out.push({ scope: 'scene', diag: { line: region.line + i, col: 1, severity: 'error',
           message: `${what} drives ONE item and does NOTHING at the program level -- it is dropped, which is why nothing happened. Wrap it in \`object "Name" { … }\`, naming the group it should drive. Only \`when loaded\`, \`every frame\`, \`at frame\`, \`use\`, \`let\` and \`fn\` are program-wide.` } })
     })
