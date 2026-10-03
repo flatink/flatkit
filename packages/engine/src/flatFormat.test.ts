@@ -1937,6 +1937,10 @@ describe('a `var` initialiser is read to the end of its line', () => {
     expect(v('42')).toBe(42)
     expect(v('-3.5 // the start')).toBe(-3.5)
   })
+  it('several `var`s on one line, a common idiom, each get their value', () => {
+    const vars = parseProgram('size 10 10\nvar a = 0  var b = 2 > 1 ? 7 : 8   var c = 105\nscene { }\n').variables
+    expect(vars).toEqual({ a: 0, b: 7, c: 105 })
+  })
   it('a number followed by something that is not an expression is an error', () => {
     expect(() => v('4 garbage')).toThrow(/constant expression/)
   })

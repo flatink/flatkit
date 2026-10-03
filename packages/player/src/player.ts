@@ -223,6 +223,8 @@ function seededRandom(seed: number): () => number {
 }
 
 const SIM_STEP = 1 / SIM_HZ // seconds per simulation step (`DT` in the language)
+/** A change smaller than this, since a number was last painted, cannot show: 1e-4 of a unit, a pixel or an opacity. */
+const PAINT_EPSILON = 1e-4
 const RESERVED = new Set(['time', 'frame', 'clock', 'value']) // runtime-provided names; never shadowed by a variable
 /**
  * What the scene reads from the INPUT devices, over-approximated by ONE scan of the serialized document
@@ -451,6 +453,7 @@ export class FlatPlayer {
   private moving = false // …and it changed during the last sim steps: the interpolation between them is still running
   private timeDriven = true // the picture changes with time alone (clock/frame in an expression, keyframes playing) → paint every frame
   private reads: Set<string> = new Set() // names the picture can read (see `pictureReads`)
+  private readonly painted = new Map<string, number>() // the value of each number the picture reads, as last painted
   private readonly drawnMods = new Map<string, number>() // modifier-driven channels: the value last painted
   private actionDepth = 0 // > 0 while actions run: whoever ran them paints once they are done
   private readonly maxDpr: number
@@ -461,7 +464,13 @@ export class FlatPlayer {
   private readonly ring: { color: string; width: number } | null // the default focus ring (null = the scene draws its own)
   private tabBack = false // the last Tab seen was a Shift+Tab
   private pointerDown = false // a pointer is pressing: the canvas focus it brings is not a keyboard focus
-  private rand: () => number = () => Math.random() // what `random()` draws from (see `PlayerOptions.seed`)
+  private rand: () => number = () => Math.random() // what `random()` draws from in the LOGIC (see `PlayerOptions.seed`)
+  // …and in the PICTURE (channel bindings, hit tests): a stream of its own. On one shared stream, every paint
+  // and every hit test shifted the numbers the logic drew next, so the same script under the same seed said
+  // different things depending on how often the scene was painted.
+  private drawRand: () => number = () => Math.random()
+  private picturing = 0 // > 0 while the named objects are resolved: their channel bindings are the picture's
+  private readonly random = (): number => (this.actionDepth > 0 && this.picturing === 0 ? this.rand() : this.drawRand())
   private longPressTimer: ReturnType<typeof setTimeout> | null = null
   // -- Several pointers --
   // The fields above (`grabbed`, `grabStart`, `pendingClick`, `dragActive`, `longPressTimer`) describe ONE
@@ -523,10 +532,13 @@ export class FlatPlayer {
     this.readKeys = use.keys
   }
   /** Invalidates the named-objects cache (input changed outside of a frame advance). */
-  private bustNamed(): void {
+  /** Runs `f` as PICTURE work: resolving the named objects evaluates channel bindings, and a binding that
+   *  calls `random()` must draw from the picture's stream even when a handler is what asked. */
+  private pictureSide<T>(f: () => T): T { this.picturing++; try { return f() } finally { this.picturing-- } }
+  private bustNamed(dirty = true): void {
     this.namedFrame = Number.NaN
     this.ctxCache = null // its baked-in named channels are now stale
-    this.dirty = true // an input changed: the picture may read it
+    if (dirty) this.dirty = true // an input changed: the picture may read it
   }
   /** Re-reads what the picture depends on (see `pictureReads`, `keyframesPlay`). Load-time only. */
   private analysePicture(): void {
@@ -945,7 +957,10 @@ export class FlatPlayer {
     this.mouse.dy += p.y - this.mouse.y
     this.mouse.x = p.x
     this.mouse.y = p.y
-    if (this.usesMousePos) this.bustNamed() // refresh the expr cache only if something reads mouse.x/y (a drag self-busts in applyDrag); else a move changes no expression input
+    // Refresh the expr cache only if something reads mouse.x/y (a drag self-busts in applyDrag); else a move
+    // changes no expression input. And repaint only if the PICTURE reads the mouse: a scene whose logic
+    // alone reads it repaints through the variables it writes, not on every move.
+    if (this.usesMousePos) this.bustNamed(this.reads.has('mouse'))
     if (this.pendingClick && Math.hypot(p.x - this.grabStart.x, p.y - this.grabStart.y) > TAP_TOL) this.pendingClick = null // moved past the tap tolerance → a drag, not a click
     // Grab in progress: the grabbed item receives `drag` (even if the pointer leaves it).
     if (this.grabbed) {
@@ -954,7 +969,10 @@ export class FlatPlayer {
       this.canvas.style.cursor = 'grabbing'
       this.applyDrag(p) // "drag" interactor: writes varX/varY (no-op if no active drag)
       this.fireEvent(this.grabbed, 'drag')
-      this.render()
+      // Painted now only if no loop runs; else the next frame paints it (it is dirty). Painting here as
+      // well drew a playing scene twice per frame while a finger dragged.
+      this.dirty = true
+      if (!this.playing && !this.transRaf) this.render()
       return
     }
     if (this.doc.interactions?.length || this.doc.interactors?.length) {
@@ -1110,7 +1128,7 @@ export class FlatPlayer {
     const fr = opts.focusRing ?? true
     this.ring = fr === false ? null : { color: (fr !== true && fr.color) || '#1a73e8', width: (fr !== true && fr.width) || 3 }
     this.buildFocusList()
-    if (this.seed !== undefined) this.rand = seededRandom(this.seed)
+    if (this.seed !== undefined) { this.rand = seededRandom(this.seed); this.drawRand = seededRandom(this.seed ^ 0x5bd1e995) }
     this.maxDpr = opts.maxPixelRatio && opts.maxPixelRatio > 0 ? opts.maxPixelRatio : Infinity
     this.hasModifiers = docHasModifiers(this.doc)
     this.hasSymbolTimelines = this.doc.symbols.some((s) => !!s.timeline)
@@ -1221,7 +1239,13 @@ export class FlatPlayer {
    *  re-copy every variable on each eval. Reserved names (time/frame/clock/value) and function names are
    *  never overwritten in the ctx. */
   private setVarLive(name: string, value: number | number[]): void {
-    if (this.vars.get(name) !== value && this.reads.has(name)) { this.dirty = true; this.moving = true }
+    if (this.vars.get(name) !== value && this.reads.has(name)) {
+      // A NUMBER that has moved by less than can be seen since it was last PAINTED does not repaint: an
+      // exponential decay (`flash = flash * 0.86`) changes every step until it underflows, a minute later.
+      // Compared to the painted value, not the previous step's, so a slow drift still adds up and shows.
+      const painted = this.painted.get(name)
+      if (typeof value !== 'number' || painted === undefined || Math.abs(value - painted) > PAINT_EPSILON) { this.dirty = true; this.moving = true }
+    }
     this.vars.set(name, value)
     if (this.ctxCache && !this.funcNames.has(name) && !RESERVED.has(name)) this.ctxCache[name] = value
     // A continuous `trace` keeps its progress across grabs, so the ONLY way to restart the exercise is the
@@ -1292,7 +1316,7 @@ export class FlatPlayer {
     // `time`/`frame`/`clock` baked in (per-frame constants) so `evalNumber` can evaluate against this ctx
     // DIRECTLY — no `exprScope` copy per statement (object construction dominated the sim profile). They are
     // reserved (never shadowed by a same-named variable), so the var loops skip them.
-    const ctx: ExprContext = { mouse: this.mouse, keys: this.keyProxy, random: this.rand, clock: this.mono / this.fps, time: this.frame / this.fps, frame: this.frame }
+    const ctx: ExprContext = { mouse: this.mouse, keys: this.keyProxy, random: this.random, clock: this.mono / this.fps, time: this.frame / this.fps, frame: this.frame }
     for (const [k, v] of vars) if (!RESERVED.has(k)) ctx[k] = v
     for (const vf of this.valueFuncs) { // fn name(p) = expr -> closure (the body sees globals + math + time + params)
       ctx[vf.name] = (...args: number[]) => {
@@ -1312,11 +1336,11 @@ export class FlatPlayer {
     // consistent with the "one level" resolution; bustNamed() refreshes it on mouse/keyboard/seek/load).
     if (interp) {
       // Interpolated render: we recompute the named channels from the interpolated vars (no memo).
-      const named = namedChannels(this.doc, this.frame, ctx, this.fps)
+      const named = this.pictureSide(() => namedChannels(this.doc, this.frame, ctx, this.fps))
       for (const name in named) if (!(name in ctx)) ctx[name] = named[name]
     } else {
       if (!this.namedCache || this.namedFrame !== this.frame) {
-        this.namedCache = namedChannels(this.doc, this.frame, ctx, this.fps)
+        this.namedCache = this.pictureSide(() => namedChannels(this.doc, this.frame, ctx, this.fps))
         this.namedFrame = this.frame
       }
       for (const name in this.namedCache) if (!(name in ctx)) ctx[name] = this.namedCache[name]
@@ -1620,7 +1644,7 @@ export class FlatPlayer {
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
     this.applyInputUse()
     this.analysePicture()
-    if (this.seed !== undefined) this.rand = seededRandom(this.seed) // a new document starts the sequence again
+    if (this.seed !== undefined) { this.rand = seededRandom(this.seed); this.drawRand = seededRandom(this.seed ^ 0x5bd1e995) } // a new document starts the sequence again
     this.vars = cloneVars(doc.variables)
     this.namedCache = null // new document -> named-objects cache stale
     this.ctxCache = null // new document -> cached expr context stale (vars Map replaced just above)
@@ -1691,6 +1715,7 @@ export class FlatPlayer {
     const expr = this.playing && this.simActive && this.prevSimVars && this.simAlpha < 1
       ? this.exprCtx(lerpVars(this.prevSimVars, this.vars, this.simAlpha))
       : this.exprCtx()
+    for (const name of this.reads) { const v = this.vars.get(name); if (typeof v === 'number') this.painted.set(name, v) }
     renderLayers(ctx, doc, doc.layers, this.frame, null, new Set(), { fps: this.fps, expr, image: (id) => this.imageFor(id), filterCache: this.filterCache, imageEpoch: this.imageEpoch, itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), stringsFor: this.stringsOf, monoTime: this.mono / this.fps, ...(this.scratched.size ? { scratched: this.scratched } : {}), ...(this.hasModifiers ? { statePath: '', channelValue: (key: string, ch: string) => this.channelValueFor(key, ch) } : {}) })
     this.drawFocusRing(ctx)
     ctx.restore()

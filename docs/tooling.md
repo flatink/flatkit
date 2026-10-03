@@ -174,7 +174,8 @@ the same version on both sides. While version 4 is a release candidate, pin the 
 flatc <file> --render -o out.png [--frame N] [--at k=v[,k2=v2]] [--steps N] [--scale S]
 ```
 
-- `--frame N` target frame · `--scale S` resolution factor.
+- `--frame N` target frame · `--scale S` resolution factor. A picture is at most 40 million pixels, scale
+  included (3840 x 2160 at scale 2 fits); more is an error, not gigabytes of memory.
 - `--at score=3,step=2` forces variables → capture a precise state.
 - **`--steps N`** runs N fixed simulation steps (`every frame`, 60 Hz) *before* capture, so a stateful
   act unfolds on its own — no need to force every derived ramp variable by hand.
@@ -183,7 +184,7 @@ flatc <file> --render -o out.png [--frame N] [--at k=v[,k2=v2]] [--steps N] [--s
   with other initial `var`s. The order is: `--frame`, `--at`, the script, `--steps`, the capture. A
   **`{ "type": "shot", "name": "after" }`** gesture writes the image *at that point* next to the output
   (`out.after.png`; unnamed shots are numbered), and the output is always the final state. A failed
-  `expect` makes the run exit ≠0, images written all the same. `--settle` applies as in `--play`. From
+  `expect` makes the run exit ≠0, images written all the same. `--settle` applies as in `--play`. A script holds at most 200 `shot`s. From
   code: `createRenderer(doc, { interactive: true })`, then `play(gestures)` and `capture()`.
 - **Embedded fonts render too**: any `asset "id" "font.woff2" font` is registered with skia before
   capture, so text uses the authored face (matched by the font's intrinsic family name — the same name
@@ -259,6 +260,10 @@ flatc <file> --play --script gestures.json [--trace] [--settle N]
 - Audio is off in `--play`: a `sound` action is a silent no-op, so a program is replayed as written.
 - `random()` is seeded in `--play` (seed `1`), so a replay says the same thing twice and an `expect` can
   assert on a draw. `--seed N` picks another one.
+- **What a script may cost**: 100 000 simulation steps in all (`wait`, `settle`, `key`, `wheel` together —
+  28 minutes of simulated time), a `turn` of at most 10 000 sub-moves; more is an error that names it. A
+  `scratch` takes a frame for its press and its release, not for each of its moves (up to 2 000), unless it
+  says `settle` itself.
 - **A pointer event takes a frame.** Each press, move and release is followed by one simulation step, as
   a real pointer stays at least one frame on each position — so a rule written in `every frame` sees the
   drag. `--settle N` sets that number for the whole script, and `"settle": N` on a gesture sets it for that

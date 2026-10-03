@@ -929,3 +929,32 @@ describe('headless -- a target found by name follows the rule of names', () => {
     expect(playHeadless(parseProgramFull(src) as unknown as Doc, [{ type: 'turn', target: 'Hand', angle: 90 }]).vars.a).toBeCloseTo(90, 6)
   })
 })
+
+// Found by a perf / security pass on the replay. A `scratch` synthesizes up to 2000 moves: stepping the
+// simulation after each one made it 45x slower on a scene with `every frame`, and advanced 33 s of
+// simulated time for one gesture. And nothing bounded what a script could ask: `wait` of a billion frames,
+// a `settle` of a billion, a `turn` of a billion degrees.
+describe('headless -- what a script may cost', () => {
+  const SRC = ['size 300 300', 'var frames = 0', 'var seen = 0',
+    'scene { layer "c" { group "Cover" at 50,50 { layer "a" { rect 0 0 200 200 fill #888888 } } } }',
+    'object "Cover" { reveal seen }', 'every frame { frames = frames + 1 }'].join('\n')
+  const doc = () => parseProgramFull(SRC) as unknown as Doc
+  it('a `scratch` takes a frame for its press and its release, not for each of its moves', () => {
+    const v = playHeadless(doc(), [{ type: 'scratch', target: 'Cover' }]).vars
+    expect(v.frames).toBe(2)
+    expect(v.seen as number).toBeGreaterThan(0.9) // …and still covers the zone
+  })
+  it('a script asking for more than the step budget is refused, quickly', () => {
+    for (const g of [{ type: 'wait', frames: 1e9 }, { type: 'tap', x: 5, y: 5, settle: 1e9 }, { type: 'key', name: 'a', frames: 1e9 }] as Gesture[]) {
+      const t = performance.now()
+      expect(() => playHeadless(doc(), [g])).toThrow(/simulation steps/)
+      expect(performance.now() - t).toBeLessThan(2000)
+    }
+  })
+  it('a `turn` of a billion degrees is refused, quickly', () => {
+    const src = ['size 300 300', 'var a = 0', 'scene { layer "c" { group "H" at 150,150 pivot 0,0 { layer "a" { rect -6 -90 12 88 fill #333333 } } } }', 'object "H" { turnDeg a around 150,150 }'].join('\n')
+    const t = performance.now()
+    expect(() => playHeadless(parseProgramFull(src) as unknown as Doc, [{ type: 'turn', target: 'H', angle: 1e9, settle: 0 }])).toThrow(/turn/)
+    expect(performance.now() - t).toBeLessThan(2000)
+  })
+})

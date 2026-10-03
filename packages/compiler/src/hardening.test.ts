@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import type { Doc } from '@flatkit/types'
 import { compileFlatpack } from './compile'
+import { parseFlat } from '@flatkit/engine/flatFormat'
 import { checkProgram } from './check'
-import { renderDocToPng } from './cli/render'
+import { renderDocToPng, createRenderer } from './cli/render'
+import { playHeadless } from '@flatkit/player/debug'
 import { run } from './cli/flatc'
 import { vi } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
@@ -83,4 +85,71 @@ describe('`flatc --play` reports a gesture it cannot replay, without a stack tra
       expect(errs.join('')).not.toMatch(/\n\s+at /) // no stack
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
+})
+
+describe('`repeat` cannot be used to make the compiler build a huge source', () => {
+  it('a short library whose loop copies a large body 5000 times is refused quickly', () => {
+    const body = Array.from({ length: 400 }, (_, k) => `      path "M${k} 0 L${k + 1} 1" fill #333333`).join('\n')
+    const lib = `symbol "Big" {\n  layer "a" {\n    repeat i from 1 to 5000 {\n${body}\n    }\n  }\n}\n`
+    let err: unknown
+    const t = ms(() => { try { parseFlat(lib) } catch (e) { err = e } })
+    expect(String(err)).toMatch(/unfolded source passes/)
+    expect(t).toBeLessThan(3000) // was 18 s and 3 GB
+  })
+  it('a comment full of `repeat x from … to …` with no brace is scanned in linear time', () => {
+    // The comment comes LAST: with no `{` after it, a regex over the source retried every split of the ` to `s.
+    const lib = `symbol "S" { layer "a" { circle 0 0 5 fill #333333 } }\n// repeat a from ${' to'.repeat(40_000)}\n`
+    expect(ms(() => parseFlat(lib))).toBeLessThan(1000) // was 12 s for 120 KB
+  })
+  it('more than 5000 iterations in all is an error, not a silent cut', () => {
+    expect(() => parseFlat('symbol "S" {\n  layer "a" {\n    repeat i from 1 to 6000 { circle $(i) 0 1 fill #333333 }\n  }\n}\n')).toThrow(/more than 5000 iterations/)
+  })
+})
+
+describe('`--render --script`: what a script may write', () => {
+  it('more than 200 `shot`s is refused before anything is written', async () => {
+    const skiaPkg: string = 'skia-canvas'
+    try { await import(skiaPkg) } catch { return }
+    const dir = mkdtempSync(join(tmpdir(), 'flatc-shots-'))
+    try {
+      writeFileSync(join(dir, 'p.flatink'), 'size 40 40\nscene { layer "c" { circle 20 20 5 fill #000000 } }\n')
+      writeFileSync(join(dir, 's.json'), JSON.stringify(Array.from({ length: 201 }, (_, k) => ({ type: 'shot', name: `s${k}` }))))
+      const errs: string[] = []
+      const se = vi.spyOn(process.stderr, 'write').mockImplementation((x: string | Uint8Array) => { errs.push(String(x)); return true })
+      const so = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+      let code: unknown
+      try { code = await run(['node', 'flatc', join(dir, 'p.flatink'), '--render', '--script', join(dir, 's.json'), '-o', join(dir, 'o.png'), '--scale', '1', '--no-libs']) } finally { se.mockRestore(); so.mockRestore() }
+      expect(code).toBe(1)
+      expect(errs.join('')).toMatch(/200 shots/)
+      const { readdirSync } = await import('node:fs')
+      expect(readdirSync(dir).filter((f) => f.endsWith('.png'))).toEqual([])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  }, 60_000)
+})
+
+// A seeded run must say the same thing twice, whoever runs it. But drawing and hit-testing drew from the
+// same seeded stream as the logic: a channel bound to `random()` shifted every draw a handler made after
+// it, so `--play` and `--render --script` disagreed on the same script and the same seed.
+describe('`random()`: the logic draws the same numbers, whatever is painted', () => {
+  const SRC = 'size 200 100\nvar v = 0\nscene { layer "c" { group "Star" at 50,50 { layer "a" { circle 0 0 10 fill #000000 } } } }\nobject "Star" { dx = random() * 2 }\nwhen loaded { v = floor(random() * 1000) }\n'
+  it('`--play` and a renderer agree on what `when loaded` drew', async () => {
+    const played = playHeadless(compileFlatpack(SRC), [{ type: 'wait', frames: 1 }]).vars.v
+    const r = await createRenderer(compileFlatpack(SRC), { scale: 1, interactive: true })
+    try {
+      await r.frame(0)
+      const res = r.play([{ type: 'wait', frames: 1 }, { type: 'expect', vars: { v: played as number } }])
+      expect(res.expectFailures).toEqual([])
+    } finally { r.close() }
+  }, 60_000)
+})
+
+describe('the renderer refuses a picture it cannot afford', () => {
+  it('`size 8000 8000` at scale 2 (256 million pixels) is an error, not 3 GB of memory', async () => {
+    const doc = compileFlatpack('size 8000 8000\nscene { layer "c" { circle 10 10 5 fill #000000 } }\n')
+    await expect(createRenderer(doc, { scale: 2 })).rejects.toThrow(/pixels/)
+  }, 60_000)
+  it('an ordinary 1920 x 1080 frame at scale 2 is fine', async () => {
+    const r = await createRenderer(compileFlatpack('size 1920 1080\nscene { layer "c" { circle 10 10 5 fill #000000 } }\n'), { scale: 2 })
+    r.close()
+  }, 60_000)
 })

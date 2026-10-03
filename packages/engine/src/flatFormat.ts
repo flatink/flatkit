@@ -394,6 +394,24 @@ export function splitLocalSymbols(src: string): { rest: string; flat: string } {
   return { rest: rest + src.slice(cursor), flat }
 }
 
+/** `src` with each of the program's own plain `symbol "X" { … }` blocks replaced by `fn(block)` — the same
+ *  blocks `splitLocalSymbols` finds (the scene is walked over, never searched). */
+function mapLocalSymbols(src: string, fn: (block: string) => string): string {
+  if (!/\bsymbol\b/.test(src)) return src
+  const re = /\bscene\s*\{|\bsymbol\s*"(?:[^"\\]|\\.)*"\s*(?:in\s*"(?:[^"\\]|\\.)*"\s*)?\{/g
+  let out = '', cursor = 0
+  for (;;) {
+    re.lastIndex = cursor
+    const m = re.exec(src)
+    if (!m) break
+    const close = matchBrace(src, m.index + m[0].length - 1)
+    if (close < 0) break
+    out += src.slice(cursor, m.index) + (m[0].startsWith('scene') ? src.slice(m.index, close + 1) : fn(src.slice(m.index, close + 1)))
+    cursor = close + 1
+  }
+  return out + src.slice(cursor)
+}
+
 /** Parses the COMPOSITION of a `.flatink` program (`@Name` refs, resolved at compile time). */
 export function parseProgram(src: string): Program {
   const { rest: expanded, flat } = splitLocalSymbols(expandSceneRepeats(src))
@@ -433,19 +451,53 @@ function interpolate(text: string, env: Record<string, number>): string {
   }
   return out
 }
+/** Ceiling on the TEXT a set of `repeat`s may unfold to. The iteration budget alone let a short loop body be
+ *  copied 5000 times: a 14 KB library unfolded to hundreds of MB, 18 s and 3 GB to compile. */
+const REPEAT_MAX_TEXT = 4_000_000
+type RepeatBudget = { n: number; size: number }
+const newRepeatBudget = (): RepeatBudget => ({ n: 0, size: 0 })
+const REPEAT_HEAD = /\brepeat[ \t]+([A-Za-z_]\w*)[ \t]+from[ \t]+/g
+/** The next `repeat <i> from <a> to <b> {` of `text`, found by a SCAN: the head, then ` to ` on the same line,
+ *  then the `{` (on that line, or after nothing but blanks). A regex over the whole source backtracked
+ *  quadratically on text with many ` to ` and no `{` — 12 s on 120 KB of comment. */
+function findRepeat(text: string): { at: number; name: string; lo: string; hi: string; open: number } | null {
+  REPEAT_HEAD.lastIndex = 0
+  for (let m = REPEAT_HEAD.exec(text); m; m = REPEAT_HEAD.exec(text)) {
+    const from = m.index + m[0].length
+    const eol = text.indexOf('\n', from), lineEnd = eol < 0 ? text.length : eol
+    const brace = text.indexOf('{', from)
+    if (brace < 0) return null
+    let head: string, open: number
+    if (brace < lineEnd) { head = text.slice(from, brace); open = brace }
+    else { // `{` on a later line: only blanks may sit between the end of the head and it
+      if (text.slice(lineEnd, brace).trim() !== '') continue
+      head = text.slice(from, lineEnd); open = brace
+    }
+    const t = /^(.*?)[ \t]+to[ \t]+(.*?)[ \t]*$/.exec(head)
+    if (t) return { at: m.index, name: m[1], lo: t[1], hi: t[2], open }
+  }
+  return null
+}
 /** Recursively unfolds the `repeat … { … }` of a scene fragment (interpolates `$()` along the way). */
-function expandRepeats(text: string, env: Record<string, number>, budget: { n: number }): string {
-  const m = /\brepeat\s+([A-Za-z_]\w*)\s+from\s+([^{]*?)\s+to\s+([^{]*?)\s*\{/.exec(text)
+function expandRepeats(text: string, env: Record<string, number>, budget: RepeatBudget): string {
+  const m = findRepeat(text)
   if (!m) return interpolate(text, env)
-  const open = m.index + m[0].length - 1
-  const close = matchBrace(text, open)
+  const close = matchBrace(text, m.open)
   if (close < 0) return interpolate(text, env) // unclosed brace → left to the parser (hard error)
-  const body = text.slice(open + 1, close)
-  const a = Math.round(evalConst(m[2], env)), b = Math.round(evalConst(m[3], env))
-  let out = interpolate(text.slice(0, m.index), env)
-  if (Number.isFinite(a) && Number.isFinite(b)) {
+  const body = text.slice(m.open + 1, close)
+  const a = Math.round(evalConst(m.lo, env)), b = Math.round(evalConst(m.hi, env))
+  // A bound that is not a constant used to unfold ZERO times, in silence.
+  for (const [src, v] of [[m.lo, a], [m.hi, b]] as const) {
+    if (!Number.isFinite(v)) throw new Error(`repeat ${m.name} from ${m.lo} to ${m.hi}: a bound must be a constant — a number, a \`def\`, or \`$(…)\` of them; "${src.trim()}" is not (a param or a variable is not known when the loop is unfolded)`)
+  }
+  let out = interpolate(text.slice(0, m.at), env)
+  for (let k = a; k <= b; k++) {
+    if (++budget.n > REPEAT_BUDGET) throw new Error(`repeat: more than ${REPEAT_BUDGET} iterations in all — unfold fewer items, or generate them`)
     // `\n` between iterations: keeps ONE item per line (otherwise stuck-together `instance`s break their bounding). Tokenizer is indifferent.
-    for (let k = a; k <= b && budget.n < REPEAT_BUDGET; k++) { budget.n++; out += expandRepeats(body, { ...env, [m[1]]: k }, budget) + '\n' }
+    const piece = expandRepeats(body, { ...env, [m.name]: k }, budget) + '\n'
+    budget.size += piece.length
+    if (budget.size > REPEAT_MAX_TEXT) throw new Error(`repeat: the unfolded source passes ${REPEAT_MAX_TEXT / 1e6} MB — unfold fewer items, or a smaller body`)
+    out += piece
   }
   return out + expandRepeats(text.slice(close + 1), env, budget)
 }
@@ -644,13 +696,17 @@ export function expandSceneSugar(src: string): { src: string; symbolGroups: Map<
   const { src: s2, templates } = extractSymbolTemplates(sd)
   const hasParamInstance = /\binstance\s+"(?:[^"\\]|\\.)*"\s*\(/.test(s2) // parameterized call → always expand (otherwise hard error)
   if (!/\brepeat\b/.test(s2) && !/\$\(/.test(s2) && templates.size === 0 && !hasParamInstance) return { src: s2, symbolGroups, defs }
-  const si = splitLocalSymbols(s2).rest.search(/\bscene\b/) // same offsets; a local symbol is not the scene
-  const open = si >= 0 ? s2.indexOf('{', si) : -1
-  const close = open >= 0 ? matchBrace(s2, open) : -1
-  if (close < 0) return { src: s2, symbolGroups, defs }
-  let inner = expandRepeats(s2.slice(open + 1, close), defs, { n: 0 }) // repeat + $(index) → concrete instances
+  const budget = newRepeatBudget() // ONE budget for the scene and the program's own symbols
+  // The program's own plain symbols unfold their `repeat`s HERE, where the program's `def`s are known: read
+  // later as a library, `repeat i from 0 to N` saw no `N` and unfolded nothing.
+  const s3 = mapLocalSymbols(s2, (block) => expandRepeats(block, defs, budget))
+  const si = splitLocalSymbols(s3).rest.search(/\bscene\b/) // same offsets; a local symbol is not the scene
+  const open = si >= 0 ? s3.indexOf('{', si) : -1
+  const close = open >= 0 ? matchBrace(s3, open) : -1
+  if (close < 0) return { src: s3, symbolGroups, defs }
+  let inner = expandRepeats(s3.slice(open + 1, close), defs, budget) // repeat + $(index) → concrete instances
   inner = expandSymbolInstances(inner, templates, symbolGroups) // parameterized instances → groups (registry for `each`)
-  return { src: s2.slice(0, open + 1) + inner + s2.slice(close), symbolGroups, defs }
+  return { src: s3.slice(0, open + 1) + inner + s3.slice(close), symbolGroups, defs }
 }
 /** Scene pre-expansion (facade returning just the text) — used by `parseProgram`. */
 export function expandSceneRepeats(src: string): string {
@@ -1367,13 +1423,17 @@ class FlatParser {
     // keep the `10` and drop the rest of the line without a word.
     const first = this.peek()
     if (!first) this.fail('a value is expected after "="')
-    const rest = this.restOfLine(first.at).replace(/\/\/.*$/, '').trim()
+    // The initialiser runs to the end of its line, or to the next `var` on it: `var a = 0  var b = 0` is a
+    // common way to declare a row of them.
+    const line = this.restOfLine(first.at).replace(/\/\/.*$/, '')
+    const cut = line.search(/\s+var\s/)
+    const stmt = (cut >= 0 ? line.slice(0, cut) : line).trim()
     // The fast path is a number ALONE: anything after it — an operator of any kind, or a word — makes the
-    // line an expression, evaluated whole or refused (`var a = 3 == 3` used to keep the 3).
-    if (first.k === 'num' && rest.slice(first.v.length).trim() === '') return this.num()
-    const v = evalConst(rest, {})
-    if (!Number.isFinite(v)) this.fail(`a var is initialised with a number or a constant expression — "${rest}" is neither (assign it in \`when loaded\` if it depends on other variables)`)
-    const end = first.at + this.restOfLine(first.at).length
+    // statement an expression, evaluated whole or refused (`var a = 3 == 3` used to keep the 3).
+    if (first.k === 'num' && stmt === first.v) return this.num()
+    const v = evalConst(stmt, {})
+    if (!Number.isFinite(v)) this.fail(`a var is initialised with a number or a constant expression — "${stmt}" is neither (assign it in \`when loaded\` if it depends on other variables)`)
+    const end = first.at + (cut >= 0 ? cut : this.restOfLine(first.at).length)
     while (this.peek() && this.peek()!.at < end) this.next()
     return v
   }
@@ -2025,7 +2085,7 @@ function expandLibSugar(src: string): string {
   if (!/\b(?:repeat|def)\b/.test(src) && !src.includes('$(')) return src
   const { src: s1, defs } = extractDefs(src)
   // `$(def)` first, everywhere (a loop bound may be one), then the loops and their own `$(index)`.
-  return expandRepeats(Object.keys(defs).length ? interpolate(s1, defs) : s1, defs, { n: 0 })
+  return expandRepeats(Object.keys(defs).length ? interpolate(s1, defs) : s1, defs, newRepeatBudget())
 }
 
 /** Resolves the `symbolId: '@Name'` (references by name) into real ids, recursively. */

@@ -385,3 +385,35 @@ describe('place — labels that fold to the same identifier', () => {
     expect(objects('place p {\n  target T at 200,400\n  item a -> T at 100,100\n  item b -> T at 200,100\n}\n')).toEqual(['p_TT', 'p_Ia', 'p_Ib'])
   })
 })
+
+// Two findings of a review of the keyboard way into `place` (0.36) and of the Tab order across blocks.
+describe('place / steps / compose — picking and the Tab order', async () => {
+  const { playHeadless } = await import('@flatkit/player/debug')
+  const play = (src: string, g: unknown[]) => {
+    const c = checkProgram(ensureHeader(desugar(src).flatink))
+    expect(c.errors).toBe(0)
+    return playHeadless(c.doc!, g as never)
+  }
+  it('an item picked, then DRAGGED onto its target, stays there when another target is tapped', () => {
+    const place = 'place p {\n  target A at 150,470\n  target B at 450,470\n  item a -> A at 100,150\n  item b -> B at 300,150\n}\n'
+    const r = play(place, [{ type: 'tap', target: 'p_Ia' }, { type: 'drag', source: 'p_Ia', target: 'p_TA' }, { type: 'tap', target: 'p_TB' }, { type: 'wait', frames: 2 }])
+    expect(r.sends.map((s) => s.name)).toEqual(['correct'])
+    expect(r.vars.p_IaPlaced).toBe(1)
+    expect(r.vars.p_sel).toBe(0)
+  })
+  it('Tab goes through the blocks in their order, whatever their kind', () => {
+    const src = 'compose c {\n  total 30\n  chip 10 at 100,100\n  chip 20 at 300,100\n}\n'
+      + 'steps s {\n  step "one" at 100,300\n  step "two" at 300,300\n  step "three" at 500,300\n  step "four" at 700,300\n}\n'
+      + 'place p {\n  target A at 150,470\n  item a -> A at 100,550\n}\n'
+    const doc = checkProgram(ensureHeader(desugar(src).flatink)).doc!
+    const order = (name: string): number => {
+      const find = (items: unknown[]): number | undefined => { for (const it of items as Array<Record<string, unknown>>) { if (it.name === name) return (it.focusable as { order?: number } | undefined)?.order; if (Array.isArray(it.layers)) for (const l of it.layers as Array<{ items: unknown[] }>) { const o = find(l.items); if (o !== undefined) return o } } return undefined }
+      for (const l of doc.layers) { const o = find(l.items); if (o !== undefined) return o }
+      return Number.NaN
+    }
+    const seq = ['c_C0', 'c_C1', 's_S0', 's_S3', 'p_Ia', 'p_TA'].map(order)
+    expect(seq.every(Number.isFinite)).toBe(true)
+    expect(seq).toEqual([...seq].sort((a, b) => a - b))
+    expect(order('s_S0')).toBeLessThan(order('s_S1')) // a sequence keeps its cards in order
+  })
+})

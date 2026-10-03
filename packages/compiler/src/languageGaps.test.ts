@@ -170,3 +170,17 @@ every frame { v = [1, nope, 3][0] }
     expect(r.report).toMatch(/nope/)
   })
 })
+
+// Found by a review: a `repeat` whose bound was not a constant unfolded ZERO times, in silence — a
+// program's `def` used inside its own plain `symbol` (the defs were not passed to it), and a param used as
+// a bound in a `.flat` (a param is not known when the library is read).
+describe('`repeat` bounds', () => {
+  it("a program's `def` bounds a `repeat` in the program's own plain symbol", () => {
+    const doc = compileFlatpack('size 300 300\ndef N = 3\nsymbol "Dots" {\n  layer "a" {\n    repeat i from 0 to N {\n      circle $(i * 20) 0 5 fill #ff0000\n    }\n  }\n}\nscene {\n  layer "c" { instance "Dots" at 50,50 }\n}\n')
+    expect(doc.symbols[0].layers[0].items).toHaveLength(4)
+  })
+  it('a bound that is not a constant is an error that says so, not zero iterations', () => {
+    const LIB = 'symbol "Row" {\n  params { number count = 3 range 1 9 "count" }\n  layer "a" {\n    repeat i from 0 to count - 1 { circle $(i*10) 0 3 fill #333333 }\n  }\n}\n'
+    expect(() => parseFlat(LIB)).toThrow(/repeat.*constant.*"count - 1"/s)
+  })
+})

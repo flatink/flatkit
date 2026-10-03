@@ -21,6 +21,8 @@ export type PlayReport = { sends: SendEvent[]; expectFailures: string[]; warning
 
 /** Cap on `--steps` (anti-DoS: an untrusted doc must not freeze the render host). One step = 1/60 s of sim. */
 const MAX_RENDER_STEPS = 10_000
+/** Ceiling on the pixels of one rendered picture (scale included). */
+const MAX_RENDER_PIXELS = 40_000_000
 
 /** Minimal structural view of the `skia-canvas` surface we use. Kept local so the public build needs
  *  no native binary; the real module is resolved at runtime only when `--render` runs. */
@@ -118,6 +120,10 @@ export async function createRenderer(doc: Doc, opts: { scale?: number; params?: 
   const { Canvas, loadImage, Path2D, FontLibrary, DOMMatrix } = skia
   const scale = opts.scale && opts.scale > 0 ? opts.scale : 2
   const W = doc.width, H = doc.height
+  // A picture is width x height x 4 bytes, several times over (the canvas, filter layers, the PNG): a
+  // document from someone else asking for `size 8000 8000` took 3 GB. 3840 x 2160 at scale 2 still fits.
+  const pixels = Math.round(W * scale) * Math.round(H * scale)
+  if (!(pixels <= MAX_RENDER_PIXELS)) throw new Error(`the picture would be ${Math.round(W * scale)} x ${Math.round(H * scale)} = ${Math.round(pixels / 1e6)} million pixels, over the ${MAX_RENDER_PIXELS / 1e6} million a render takes — lower --scale, or the document's size`)
 
   const withParams = opts.params ? applyParams(doc, opts.params) : doc
 

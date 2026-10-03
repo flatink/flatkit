@@ -238,3 +238,41 @@ describe('FlatPlayer — moving the keyboard focus repaints a still scene', () =
     expect(paints).toBe(0)
   })
 })
+
+// Three findings of a performance pass on on-demand painting.
+describe('FlatPlayer — painting settles when nothing VISIBLE changes any more', () => {
+  it('an exponential decay stops repainting once its steps are below what can be seen', () => {
+    // `flash` is lit by a click and decays by 14% a step: it changes every step until it underflows, some
+    // 4 000 steps — more than a minute of repainting a still picture.
+    const doc = scene('timeline 24 240\nvar flash = 1', 'object "B" { opacity = 0.3 + flash }\nevery frame { flash = flash * 0.86 }')
+    const pl = new FlatPlayer(canvasOf(), doc, { input: false, audio: false })
+    pl.play(); frames(120) // two seconds: flash is ~1e-8, far below a visible change
+    paints = 0; frames(60)
+    expect(paints).toBe(0)
+  })
+  it('a slow drift still repaints: changes too small for one step add up', () => {
+    const doc = scene('timeline 24 240\nvar x = 0', 'object "B" { x = 50 + x }\nevery frame { x = x + 0.00005 }')
+    const pl = new FlatPlayer(canvasOf(), doc, { input: false, audio: false })
+    expect(paintsOver(pl, 120)).toBeGreaterThan(0)
+  })
+})
+
+describe('FlatPlayer — the pointer repaints only what reads it', () => {
+  it('moving the pointer over a scene whose LOGIC reads the mouse paints nothing while it plays', () => {
+    const h: Handlers = {}
+    const doc = scene('timeline 24 240\nvar mx = 0', 'every frame { mx = mouse.x }')
+    const pl = new FlatPlayer(canvasOf(h), doc, { input: true, audio: false })
+    pl.play(); frames(2); paints = 0
+    for (let k = 0; k < 10; k++) { h.pointermove?.({ clientX: 10 + k, clientY: 10, pointerId: 1 }); frames(1) }
+    expect(paints).toBe(0)
+  })
+  it('during a drag, a playing scene paints once per frame, not once per move and once per frame', () => {
+    const h: Handlers = {}
+    const doc = scene('timeline 24 240\nvar px = 50\nvar py = 50', 'object "B" {\n  x = px\n  y = py\n  drag px, py\n}')
+    const pl = new FlatPlayer(canvasOf(h), doc, { input: true, audio: false })
+    pl.play(); frames(2)
+    h.pointerdown?.({ clientX: 50, clientY: 50, pointerId: 1 }); frames(1); paints = 0
+    for (let k = 0; k < 10; k++) { h.pointermove?.({ clientX: 52 + k, clientY: 50, pointerId: 1 }); frames(1) }
+    expect(paints).toBeLessThanOrEqual(11)
+  })
+})

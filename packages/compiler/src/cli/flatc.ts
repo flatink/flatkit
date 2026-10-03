@@ -421,6 +421,9 @@ async function renderAfterScript(doc: Doc, outPath: string, scriptPath: string, 
   let gestures: Gesture[]
   try { gestures = JSON.parse(readFileSync(scriptPath, 'utf8')) as Gesture[] } catch (e) { process.stderr.write(`flatc: invalid JSON script: ${(e as Error).message}\n`); return 1 }
   if (!Array.isArray(gestures)) { process.stderr.write('flatc: the script must be an array of gestures\n'); return 1 }
+  // Each `shot` writes a file: a script from someone else must not fill the disk.
+  const MAX_SHOTS = 200
+  if (gestures.filter((g) => g?.type === 'shot').length > MAX_SHOTS) { process.stderr.write(`flatc: the script has more than ${MAX_SHOTS} shots — split it\n`); return 1 }
   const shotPath = (name: string) => join(dirname(outPath), `${basename(outPath, extname(outPath))}.${name.replace(/[^\w.-]/g, '_')}${extname(outPath) || '.png'}`)
   const written: string[] = []
   let failures: string[] = [], warned: string[] = []

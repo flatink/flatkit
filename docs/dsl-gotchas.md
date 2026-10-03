@@ -20,7 +20,7 @@
 
 - **A text without `as "<id>"` is named by what it SHOWS.** `text "Titre" …` answers to `"Titre"` — so
   does a `group "Titre"`. When both exist, the name goes to the **group** (or instance, or image), for
-  `pose`, `object`, `Titre.x` and drop zones alike, whatever their order. Before 0.39.2 the text took it
+  `pose`, `object`, `Titre.x` and drop zones alike, whatever their order. Before 0.40 the text took it
   for a `pose` when declared last, and for an `object` when declared first: the group lost its animation
   without a word. To address the text, give it an id: `text "Titre" as "legende" …`, then
   `object "legende" { … }`.
@@ -332,6 +332,9 @@ and composes with `self.x`/`self.y` etc. (same `self`).
   ```
   The index is used inside numbers via the **`$(expr)`** interpolation (compile-time
   arithmetic: `$(i*40)`, `$( (i+1)*20 )`…). Nested loops are fine (grids).
+  The **bounds are constants** — numbers, `def`s, or `$(…)` of them. A param or a variable is not known when
+  the loop is unfolded: since 0.40 that is an error naming the bound (it unfolded zero times, in silence).
+  Unfolding is bounded: 5 000 iterations and 4 MB of generated source in all, both errors when passed.
   ⚠️ Not to be confused with `repeat … times` / `repeat i from … to …` inside `object`
   scripts (a RUNTIME loop, executed every frame).
 - **`def <name> = <expr>`**: a named **compile-time** constant (columns, margins, counts…).

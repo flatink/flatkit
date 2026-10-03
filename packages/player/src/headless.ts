@@ -130,8 +130,25 @@ export type Replayer = { apply(g: Gesture): void; readonly expectFailures: strin
  *  of the package is accepted. */
 export type ReplayTarget = Pick<FlatPlayer, 'stepSim' | 'setVar' | 'setKey' | 'getVar' | 'objectCenter' | 'grabTargetAt'>
 
-export function createReplayer(pl: ReplayTarget, doc: Doc, handlers: Handlers, sends: SendEvent[], opts: { settle?: number } = {}): Replayer {
+/** What one replay may ask of the simulation, in all: 100 000 steps, 28 minutes of simulated time. A
+ *  script is often written by someone else (a model, a user of a public page), and `wait`, `settle`, `key`
+ *  and `wheel` took any number they were given. */
+export const MAX_REPLAY_STEPS = 100_000
+/** A `turn` sweeps in sub-moves of at most 60 degrees: 10 000 of them is 1 666 full turns. */
+const MAX_TURN_MOVES = 10_000
+
+export function createReplayer(pl: ReplayTarget, doc: Doc, handlers: Handlers, sends: SendEvent[], opts: { settle?: number; maxSteps?: number } = {}): Replayer {
   const ev = (x: number, y: number, id = 1) => ({ clientX: x, clientY: y, pointerId: id })
+  const maxSteps = opts.maxSteps ?? MAX_REPLAY_STEPS
+  let spent = 0
+  /** Every simulation step of the replay goes through here, against one budget for the whole script. */
+  const step = (n: number): void => {
+    const k = Math.max(0, Math.floor(n))
+    if (!k) return
+    if (spent + k > maxSteps) throw new Error(`gesture: the script asks for more than ${maxSteps} simulation steps in all (${Math.round(maxSteps / 3600)} minutes of simulated time) — shorten its \`wait\`, \`settle\` or \`frames\``)
+    spent += k
+    pl.stepSim(k)
+  }
   // A pointer event TAKES A FRAME: a real pointer stays at least one frame on each position, so
   // `every frame` runs between a press, its moves and its release. `settle` = sim steps after each event
   // (default 1; 0 = the instantaneous replay). A gesture's own `settle` wins over the script's.
@@ -139,7 +156,7 @@ export function createReplayer(pl: ReplayTarget, doc: Doc, handlers: Handlers, s
   const fire = (type: string, p: { x: number; y: number }, id = 1, settle = 0) => {
     const h = handlers[`pointer${type}`]
     if (h) h(ev(p.x, p.y, id))
-    if (settle > 0) pl.stepSim(settle)
+    if (settle > 0) step(settle)
   }
   // GRAB: the RESOLVED position of the object (expressions included -> we touch the object exactly where it is).
   const grabPoint = (name: string): { x: number; y: number } => {
@@ -161,11 +178,11 @@ export function createReplayer(pl: ReplayTarget, doc: Doc, handlers: Handlers, s
   const warnings: string[] = []
   const apply = (g: Gesture): void => {
     if (g.type === 'set') { pl.setVar(g.name, g.value); return }
-    if (g.type === 'wait') { pl.stepSim(g.frames); return }
+    if (g.type === 'wait') { step(g.frames); return }
     if (g.type === 'shot') return // a marker for the renderer (`flatc --render --script`): nothing to replay
     // Keyboard: no DOM event in Node (the global listeners are stubs) -> drive the held-keys set directly.
-    if (g.type === 'key') { pl.setKey(g.name, true); pl.stepSim(g.frames ?? 1); pl.setKey(g.name, false); return }
-    if (g.type === 'wheel') { const h = handlers['wheel']; if (h) (h as unknown as (e: { deltaY: number; deltaMode: number; preventDefault: () => void }) => void)({ deltaY: g.dy, deltaMode: 0, preventDefault: () => {} }); pl.stepSim(g.frames ?? 1); return }
+    if (g.type === 'key') { pl.setKey(g.name, true); try { step(g.frames ?? 1) } finally { pl.setKey(g.name, false) } return }
+    if (g.type === 'wheel') { const h = handlers['wheel']; if (h) (h as unknown as (e: { deltaY: number; deltaMode: number; preventDefault: () => void }) => void)({ deltaY: g.dy, deltaMode: 0, preventDefault: () => {} }); step(g.frames ?? 1); return }
     if (g.type === 'drag') { const id = g.id ?? 1, n = settleOf(g), t = dropPoint(g.target); fire('down', grabPoint(g.source), id, n); fire('move', t, id, n); fire('up', t, id, n); return }
     if (g.type === 'tap') {
       // By NAME (the object's resolved position) or at a POINT (`x`, `y`) — a rail, an unnamed area.
@@ -177,12 +194,15 @@ export function createReplayer(pl: ReplayTarget, doc: Doc, handlers: Handlers, s
     }
     if (g.type === 'connect') { const id = g.id ?? 1, n = settleOf(g), t = grabPoint(g.target); fire('down', grabPoint(g.source), id, n); fire('move', t, id, n); fire('up', t, id, n); return } // pull a link wire source -> target
     if (g.type === 'scratch') { // sweep the reveal target's bbox so its coverage reaches ~1
-      const id = g.id ?? 1, n = settleOf(g)
+      // A sweep is ONE gesture: its press and its release take a frame, its moves (up to 2000 of them) do
+      // not, unless the gesture says `settle` itself. Stepping each move was 45x slower on a scene with
+      // `every frame`, and 33 s of simulated time for one scratch.
+      const id = g.id ?? 1, n = settleOf(g), between = g.settle !== undefined ? n : 0
       const b = itemBoundsByName(doc, g.target)
       if (!b) throw new Error(`gesture: object "${g.target}" not found in the scene`)
       const pts = sweepPoints(b, revealBrushFor(doc, g.target))
       fire('down', pts[0], id, n)
-      for (let i = 1; i < pts.length; i++) fire('move', pts[i], id, n)
+      for (let i = 1; i < pts.length; i++) fire('move', pts[i], id, between)
       fire('up', pts[pts.length - 1], id, n)
       return
     }
@@ -209,6 +229,7 @@ export function createReplayer(pl: ReplayTarget, doc: Doc, handlers: Handlers, s
       const at = (v: number) => { const rad = ti.deg ? (v * Math.PI) / 180 : v; return { x: piv.x + R * Math.cos(rad), y: piv.y + R * Math.sin(rad) } } // target value (deg/rad) -> pointer position
       const maxStep = ti.deg ? 60 : Math.PI / 3 // <= per sub-move: keeps each delta small (under the atan2 wrap / typical author jump-guards) so multi-turn works
       const N = Math.max(2, Math.ceil(Math.abs(g.angle) / maxStep))
+      if (!Number.isFinite(N) || N > MAX_TURN_MOVES) throw new Error(`gesture: turn "${g.target}" by ${g.angle} is more than ${MAX_TURN_MOVES} sub-moves — turn by less`)
       // The sub-moves have ALWAYS taken a step each (a delta-accumulating `every frame` integrates the
       // turn), whatever the script's `settle`: only the gesture's own `settle` turns that off. So
       // `settle: 0` for a script is exactly the replay of before, `turn` included.

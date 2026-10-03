@@ -123,6 +123,10 @@ function parsePlace(name: string, body: string, p: string): PlaceModel {
   return m
 }
 
+/** Each block owns a range of 1000 focus ranks, so Tab goes through the blocks in their order whatever their
+ *  kind — a sequence numbered its cards from 1 and a compose ranked nothing, which mixed them with the others. */
+const focusBase = (block: number): number => block * 1000
+
 function expandPlace(name: string, body: string, theme: Theme, ctx: GestureContext): Expansion {
   const { prefix: p, index: b, doneVar } = ctx
   const m = parsePlace(name, body, p)
@@ -136,7 +140,7 @@ function expandPlace(name: string, body: string, theme: Theme, ctx: GestureConte
   const sel = `${p}sel`
   vars.push(`var ${sel} = 0`)
   // Tab order: the items of this block, then its targets — and the blocks one after the other.
-  const itemOrder = b * 2 + 1, targetOrder = b * 2 + 2
+  const itemOrder = focusBase(b) + 1, targetOrder = focusBase(b) + 2
   /** What putting item `i` on target `t` does — the SAME outcome whether it was dragged or picked. */
   const put = (it: PlaceModel['items'][number], i: number, t: PlaceModel['targets'][number], ind: string): string[] => t.id === it.target
     ? [
@@ -145,6 +149,7 @@ function expandPlace(name: string, body: string, theme: Theme, ctx: GestureConte
         // Snap onto the target it was put on, reading the target's LIVE position -- so a skin may move
         // the target anywhere and the item still lands on it.
         `${ind}  ${it.id}X = ${t.id}.x`, `${ind}  ${it.id}Y = ${t.id}.y`,
+        `${ind}  if ${sel} == ${i + 1} {`, `${ind}    ${sel} = 0`, `${ind}  }`, // placed: no longer picked, however it got there
         `${ind}  send "correct", { block = ${b}, item = ${i} }`,
         `${ind}  if ${p}progress == ${n} {`, `${ind}    ${doneVar} = 1`, `${ind}    send "part", { block = ${b} }`, `${ind}  }`,
         `${ind}}`,
@@ -175,7 +180,8 @@ function expandPlace(name: string, body: string, theme: Theme, ctx: GestureConte
   })
   for (const t of m.targets) {
     behavior.push(`object "${t.id}" {`, `  focusable order ${targetOrder}`, '  when clicked {')
-    m.items.forEach((it, i) => behavior.push(`    if ${sel} == ${i + 1} {`, `      ${sel} = 0`, ...put(it, i, t, '      '), '    }'))
+    // Only an item still to place: one picked and then dragged home must not be sent back by a later tap.
+    m.items.forEach((it, i) => behavior.push(`    if ${sel} == ${i + 1} && ${it.id}Placed < 0.5 {`, `      ${sel} = 0`, ...put(it, i, t, '      '), '    }'))
     behavior.push('  }', '}', '')
   }
   return {
@@ -217,7 +223,7 @@ function expandCompose(name: string, body: string, theme: Theme, ctx: GestureCon
   const behavior: string[] = []
   if (sh) behavior.push('when loaded {', ...sh.load, '}', '')
   chips.forEach((c, i) => {
-    behavior.push(`object "${p}C${i}" {`, '  focusable', ...(sh ? [`  x = ${sh.x(i)}`, `  y = ${sh.y(i)}`] : []), '  when clicked {', `    if ${doneVar} < 0.5 {`)
+    behavior.push(`object "${p}C${i}" {`, `  focusable order ${focusBase(b) + 1}`, ...(sh ? [`  x = ${sh.x(i)}`, `  y = ${sh.y(i)}`] : []), '  when clicked {', `    if ${doneVar} < 0.5 {`)
     behavior.push(`      if ${p}total + ${c.value} > ${target} {`)
     behavior.push(`        ${p}total = 0`, `        send "incorrect", { block = ${b}, item = ${i} }`)
     behavior.push('      } else {')
@@ -263,7 +269,7 @@ function expandSteps(name: string, body: string, theme: Theme, ctx: GestureConte
   if (sh) behavior.push('when loaded {', ...sh.load, '}', '')
   steps.forEach((_s, i) => {
     // `order`: Tab walks the cards in the order of the SEQUENCE, wherever they stand (`shuffle` moves them).
-    behavior.push(`object "${p}S${i}" {`, `  focusable order ${i + 1}`, ...(sh ? [`  x = ${sh.x(i)}`, `  y = ${sh.y(i)}`] : []), '  when clicked {', `    if ${p}step == ${i} {`, `      ${p}step = ${p}step + 1`, `      send "step", { block = ${b}, item = ${i} }`)
+    behavior.push(`object "${p}S${i}" {`, `  focusable order ${focusBase(b) + 1 + i}`, ...(sh ? [`  x = ${sh.x(i)}`, `  y = ${sh.y(i)}`] : []), '  when clicked {', `    if ${p}step == ${i} {`, `      ${p}step = ${p}step + 1`, `      send "step", { block = ${b}, item = ${i} }`)
     if (i === steps.length - 1) behavior.push(`      ${doneVar} = 1`, `      send "part", { block = ${b} }`)
     behavior.push('    }', '  }')
     // The only thing the gesture says about looks: a step that is not current is dimmed, because

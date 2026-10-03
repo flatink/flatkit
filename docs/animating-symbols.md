@@ -226,7 +226,7 @@ group "Aiguille" smooth rotationDeg "valeur * 270" k 0.18 { … }               
 - `<target>` is an ordinary expression (params, `time`, `self.x`, …) — the resting value the channel chases.
   The channel is `rotation` (radians) or `rotationDeg` (degrees: the target is wrapped in `rad()`). Not
   `rotate`: on a declaration line `rotate <n>` is a fixed rotation in degrees, so `rotate` as a channel there
-  is an error since 0.39.2 (it meant radians, next to a `rotate` that meant degrees).
+  is an error since 0.40 (it meant radians, next to a `rotate` that meant degrees).
 - A modifier **wins** over a plain `expr` / keyframes on the same channel.
 
 **React to MOVEMENT, not value — `velocity(expr)`.** Inside a modifier target (only there), `velocity(x)` is
