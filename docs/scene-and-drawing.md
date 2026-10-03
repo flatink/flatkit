@@ -162,6 +162,9 @@ text "OUTLINE" font "sans-serif" size 64 color #ffd23f stroke #e23b3b 6 join rou
 ```
 
 - `box <w> <h>` sets the text box; `align left|center|right`; `line` = line-height; `bold` / `italic`.
+- **Its name is what it shows**, unless it has an id: `text "Titre" as "legende"` is addressed as
+  `"legende"` (`object "legende" { … }`, `text("legende")`). A group, instance or image that bears the same
+  name as a text's content always takes the name — see [gotchas](dsl-gotchas.md).
 - `stroke <color> <width> [cap …] [join …] [miter n] [dash a,b]` outlines the glyphs (same grammar as
   paths). The stroke is drawn **behind** the fill, so the fill keeps its full weight. Accepts a gradient
   paint too (`stroke linear(…) 4`).

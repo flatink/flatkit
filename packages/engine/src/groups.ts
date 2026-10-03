@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Doc, Group, Instance, Item, Layer, Point, Region, Text, Path, Subpath } from '@flatkit/types'
 import { apply, compose, IDENTITY, invert, rotationOf, type Transform } from './transform'
-import { containerLayers, getSymbol, isContainer, isGroup, isInstance, isText, isImage, isRegion } from './layers'
+import { containerLayers, getSymbol, isContainer, isGroup, isInstance, isText, isImage, isRegion, isNamedByContent } from './layers'
 import { pointInRegion } from './regionHit'
 import { transformPath } from './path'
 import { combineBBox, regionBBox, type BBox } from './bbox'
@@ -126,12 +126,14 @@ export function transformBBox(b: BBox, m: Transform): BBox {
  *  ancestors' transforms → correct even for a NESTED zone (inside a transformed group). */
 export function itemBoundsByName(doc: Doc, name: string): BBox | null {
   let result: BBox | null = null
+  let fallback: BBox | null | undefined // a text named by what it shows: used only if nothing else bears the name
   let done = false
   const walk = (layers: Layer[], matrix: Transform) => {
     for (const l of layers) for (const it of l.items) {
       if (done) return
       if ('name' in it && it.name === name) { // itemBBox = bbox in PARENT space (includes it.transform) → × the parent's world matrix
         const b = itemBBox(doc, it)
+        if (isNamedByContent(it)) { if (fallback === undefined) fallback = b ? transformBBox(b, matrix) : null; continue }
         result = b ? transformBBox(b, matrix) : null
         done = true
         return
@@ -140,18 +142,20 @@ export function itemBoundsByName(doc: Doc, name: string): BBox | null {
     }
   }
   walk(doc.layers, IDENTITY)
-  return result
+  return done ? result : (fallback ?? null)
 }
 
 /** World bbox of a named DROP ZONE: if the group or instance has a `hitbox W H`, use that local rectangle (centered
  *  on the origin, ±w/2 × ±h/2) instead of the content bbox — otherwise `itemBoundsByName`. */
 export function dropZoneBounds(doc: Doc, name: string): BBox | null {
   let result: BBox | null = null
+  let fallback: BBox | null | undefined // a text named by what it shows yields to any other item of the name
   let done = false
   const walk = (layers: Layer[], matrix: Transform) => {
     for (const l of layers) for (const it of l.items) {
       if (done) return
       if ('name' in it && it.name === name) {
+        if (isNamedByContent(it)) { if (fallback === undefined) { const b = itemBBox(doc, it); fallback = b ? transformBBox(b, matrix) : null } continue }
         if ((isGroup(it) || isInstance(it)) && it.hitbox) {
           const { w, h } = it.hitbox
           result = transformBBox({ minX: -w / 2, minY: -h / 2, maxX: w / 2, maxY: h / 2 }, compose(matrix, it.transform))
@@ -166,7 +170,7 @@ export function dropZoneBounds(doc: Doc, name: string): BBox | null {
     }
   }
   walk(doc.layers, IDENTITY)
-  return result
+  return done ? result : (fallback ?? null)
 }
 
 /** WORLD bbox of the first item with the given `id` — for a `reveal`'s zone (the object IS the zone). */

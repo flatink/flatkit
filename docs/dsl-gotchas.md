@@ -18,6 +18,12 @@
 
 ## `object "X"` addresses an ANIMATABLE item — a group, instance, text or image
 
+- **A text without `as "<id>"` is named by what it SHOWS.** `text "Titre" …` answers to `"Titre"` — so
+  does a `group "Titre"`. When both exist, the name goes to the **group** (or instance, or image), for
+  `pose`, `object`, `Titre.x` and drop zones alike, whatever their order. Before 0.39.2 the text took it
+  for a `pose` when declared last, and for an `object` when declared first: the group lost its animation
+  without a word. To address the text, give it an id: `text "Titre" as "legende" …`, then
+  `object "legende" { … }`.
 - A **shape is baked material**: `rect 0 0 960 540 as "Eclat"` names it so `text … along "Eclat"` can
   find it, but it carries **no pose**, so it can never be animated. Same for a **layer**. An `object`
   block on either used to be dropped in **total silence** — the program compiled, ran, and the animation

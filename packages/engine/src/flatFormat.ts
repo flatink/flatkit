@@ -24,7 +24,7 @@ import type { BlendMode, ChannelModifier, Focusable, Interactor } from '@flatkit
 import { EXPR_CHANNELS, BIND_CHANNELS, type Easing, type ExprChannel, type BindChannel, type SoundClip, type Timeline } from './timeline'
 import { parsePathData, circlePath, ellipsePath, rectPath } from './svgPath'
 import { compileExpr, evalExpr, exprScope } from './expr'
-import { isGroup, isInstance, isText, isImage, isPoseable, isRegion, folderPath } from './layers'
+import { isGroup, isInstance, isText, isImage, isPoseable, isRegion, folderPath, isNamedByContent } from './layers'
 import { itemBoundsByName } from './groups'
 import type { BBox } from './bbox'
 import { printUnits, parseUnits, type Diagnostic, type ScriptUnit, type TextEdit } from './dsl'
@@ -827,7 +827,7 @@ const itemsByName = (layers: Layer[]): Map<string, Item> => {
   // A text leaf's NAME is its content; its `as "<id>"` lives in a SEPARATE namespace (consumed by
   // `text("<id>")`). Index that id too so `object "<id>" { … }` can address (gate/animate) a bare text
   // leaf — otherwise the `object` block silently no-ops (it resolves targets by name, never by text id).
-  const walk = (ls: Layer[]) => { for (const l of ls) for (const it of l.items) { const nm = itemName(it); if (nm && !m.has(nm)) m.set(nm, it); if (isText(it) && it.idExplicit && !m.has(it.id)) m.set(it.id, it); if (isGroup(it)) walk(it.layers) } }
+  const walk = (ls: Layer[]) => { for (const l of ls) for (const it of l.items) { const nm = itemName(it); const had = nm ? m.get(nm) : undefined; if (nm && (!had || (isNamedByContent(had) && !isNamedByContent(it)))) m.set(nm, it); if (isText(it) && it.idExplicit && !m.has(it.id)) m.set(it.id, it); if (isGroup(it)) walk(it.layers) } }
   walk(layers)
   return m
 }
@@ -1531,8 +1531,11 @@ class FlatParser {
     while (!this.is('}')) children.push(...this.layer(id)) // nested layers → siblings pointing to `parent`
     this.eat('}')
     if (cels.length) { // poses reference the roster by NAME → we resolve to ids
-      const byName = new Map<string, string>(items.map((it): [string, string] => [itemName(it), it.id]).filter(([nm]) => nm !== ''))
-      for (const c of cels) for (const p of c.poses) if (p.id.startsWith('@')) p.id = byName.get(p.id.slice(1)) ?? p.id
+      // The last declared wins on a name two items share — except a text named by what it shows, which
+      // never takes a name from another item (`isNamedByContent`).
+      const byName = new Map<string, Item>()
+      for (const it of items) { const nm = itemName(it); const had = nm ? byName.get(nm) : undefined; if (nm && (!had || isNamedByContent(had) || !isNamedByContent(it))) byName.set(nm, it) }
+      for (const c of cels) for (const p of c.poses) if (p.id.startsWith('@')) p.id = byName.get(p.id.slice(1))?.id ?? p.id
     }
     const self: Layer = {
       id, name, visible: !hidden, locked, opacity, items,

@@ -954,6 +954,7 @@ export function lintDoc(doc: Doc, src?: string): { scope: string; diag: Diagnost
   return out
 }
 
+
 /** Lint each stateful channel modifier's TARGET expression with its scope's known names (a symbol's params
  *  included) — so a typo'd `spring rotation "crochetXX"` surfaces as "unknown variable" at `--check` time,
  *  not a silent NaN at runtime. Also flags out-of-range spring damping (clamped at runtime, but worth noting). */

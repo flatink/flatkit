@@ -19,7 +19,7 @@ import type { Doc, ExprContext, Group, Image, Instance, Item, Layer, Text } from
 import { IDENTITY, compose, decompose, type Transform } from './transform'
 import { resolveLayerAt } from './cel'
 import { resolveInstanceFrame } from './timeline'
-import { containerLayers, getSymbol, isGroup, isInstance, isPoseable } from './layers'
+import { containerLayers, getSymbol, isGroup, isInstance, isPoseable, isNamedByContent } from './layers'
 
 /** Live channels of an object (same keys as `ExprChannel`). Read-only. */
 export type ObjectChannels = Record<string, number>
@@ -70,9 +70,13 @@ const roots = (doc: Doc, frame: number, ctx: ExprContext | undefined, fps: numbe
  */
 export function namedChannels(doc: Doc, frame: number, ctx: ExprContext | undefined, fps: number): NamedChannels {
   const out: NamedChannels = {}
+  const byContent = new Set<string>() // names held by a text that is named by what it shows: they yield
   roots(doc, frame, ctx, fps, (it, t) => {
-    // First name carrier wins (document order) → deterministic; duplicates are `each`'s job.
-    if (it.name && !(it.name in out)) out[it.name] = channelsOf(t, it.opacity ?? 1)
+    // First name carrier wins (document order) → deterministic; duplicates are `each`'s job. A text named
+    // by its content never keeps a name another item bears (`isNamedByContent`).
+    if (!it.name || ((it.name in out) && !(byContent.has(it.name) && !isNamedByContent(it)))) return
+    out[it.name] = channelsOf(t, it.opacity ?? 1)
+    if (isNamedByContent(it)) byContent.add(it.name); else byContent.delete(it.name)
   })
   return out
 }

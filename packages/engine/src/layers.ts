@@ -34,6 +34,11 @@ export function isGroup(item: Item): item is Group {
 export function isInstance(item: Item): item is Instance {
   return (item as Instance).kind === 'instance'
 }
+/** A text with no `as "<id>"` is named by what it SHOWS. That name yields to any other item that bears it:
+ *  a caption reading "Titre" must not take `pose "Titre"`, `object "Titre"` or `Titre.x` from the group
+ *  "Titre" — it did, without a word, depending on which of the two was declared last (or first). */
+export const isNamedByContent = (item: Item): boolean => isText(item) && !item.idExplicit
+
 export function isText(item: Item): item is Text {
   return (item as Text).kind === 'text'
 }
