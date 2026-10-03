@@ -460,6 +460,10 @@ function interpolate(text: string, env: Record<string, number>): string {
 /** Ceiling on the TEXT a set of `repeat`s may unfold to. The iteration budget alone let a short loop body be
  *  copied 5000 times: a 14 KB library unfolded to hundreds of MB, 18 s and 3 GB to compile. */
 const REPEAT_MAX_TEXT = 4_000_000
+/** A break between items that is not a LINE: whitespace to the tokenizer, the end of a `//` comment and of an
+ *  instance's attributes, but not counted when a position is turned into a line number. U+2028. */
+const SOFT_NL = '\u2028'
+const countNewlines = (text: string, from: number, to: number): number => { let n = 0; for (let k = text.indexOf('\n', from); k >= 0 && k < to; k = text.indexOf('\n', k + 1)) n++; return n }
 type RepeatBudget = { n: number; size: number }
 const newRepeatBudget = (): RepeatBudget => ({ n: 0, size: 0 })
 const REPEAT_HEAD = /\brepeat[ \t]+([A-Za-z_]\w*)[ \t]+from[ \t]+/g
@@ -470,13 +474,15 @@ function findRepeat(text: string): { at: number; name: string; lo: string; hi: s
   REPEAT_HEAD.lastIndex = 0
   for (let m = REPEAT_HEAD.exec(text); m; m = REPEAT_HEAD.exec(text)) {
     const from = m.index + m[0].length
-    const eol = text.indexOf('\n', from), lineEnd = eol < 0 ? text.length : eol
+    // The head ends at a line or at a soft break (an unfolded body's items are separated by SOFT_NL).
+    let lineEnd = text.length
+    for (let k = from; k < text.length; k++) if (text[k] === '\n' || text[k] === SOFT_NL) { lineEnd = k; break }
     const brace = text.indexOf('{', from)
     if (brace < 0) return null
     let head: string, open: number
     if (brace < lineEnd) { head = text.slice(from, brace); open = brace }
     else { // `{` on a later line: only blanks may sit between the end of the head and it
-      if (text.slice(lineEnd, brace).trim() !== '') continue
+      if (text.slice(lineEnd, brace).replaceAll(SOFT_NL, ' ').trim() !== '') continue
       head = text.slice(from, lineEnd); open = brace
     }
     const t = /^(.*?)[ \t]+to[ \t]+(.*?)[ \t]*$/.exec(head)
@@ -497,15 +503,20 @@ function expandRepeats(text: string, env: Record<string, number>, budget: Repeat
     if (!Number.isFinite(v)) throw new Error(`repeat ${m.name} from ${m.lo} to ${m.hi}: a bound must be a constant — a number, a \`def\`, or \`$(…)\` of them; "${src.trim()}" is not (a param or a variable is not known when the loop is unfolded)`)
   }
   let out = interpolate(text.slice(0, m.at), env)
+  // The unfolded block keeps the LINE COUNT of the source block: iterations (and their own lines) are
+  // separated by SOFT_NL — a break for the parsers, not a line — and the block's real newlines come after.
+  // One item per line used to push every line below down by the size of the loop, so an error further down
+  // (in the scene, or in an `object` block) was reported tens of lines too low.
+  const lines = countNewlines(text, m.at, close + 1)
   for (let k = a; k <= b; k++) {
     if (++budget.n > REPEAT_BUDGET) throw new Error(`repeat: more than ${REPEAT_BUDGET} iterations in all — unfold fewer items, or generate them`)
-    // `\n` between iterations: keeps ONE item per line (otherwise stuck-together `instance`s break their bounding). Tokenizer is indifferent.
-    const piece = expandRepeats(body, { ...env, [m.name]: k }, budget) + '\n'
+    // A break between iterations (SOFT_NL): otherwise stuck-together `instance`s break their bounding.
+    const piece = expandRepeats(body, { ...env, [m.name]: k }, budget).replaceAll('\n', SOFT_NL) + SOFT_NL
     budget.size += piece.length
     if (budget.size > REPEAT_MAX_TEXT) throw new Error(`repeat: the unfolded source passes ${REPEAT_MAX_TEXT / 1e6} MB — unfold fewer items, or a smaller body`)
     out += piece
   }
-  return out + expandRepeats(text.slice(close + 1), env, budget)
+  return out + '\n'.repeat(lines) + expandRepeats(text.slice(close + 1), env, budget)
 }
 /** Extracts the `def <name> = <expr>` constants (compile-time) and REMOVES their lines from the source.
  *  A `def` may reference the previous `def`s. Trailing `//` comments in the value are ignored. */
@@ -625,7 +636,8 @@ function buildSymbolGroup(tmpl: SymbolTemplate, name: string, argsText: string, 
   const asM = /^\s*as\s+"((?:[^"\\]|\\.)*)"/.exec(trailing)
   const groupName = asM ? asM[1] : name
   const rest = asM ? trailing.slice(asM[0].length) : trailing // transform/attrs (` at x,y`, ` align …`, ` opacity …`)
-  return { text: `group ${JSON.stringify(groupName)}${rest} {${substituteSymbolBody(tmpl.body, env)}}`, groupName }
+  // On the call's line: the body's newlines become SOFT_NL, so the lines below the call keep their numbers.
+  return { text: `group ${JSON.stringify(groupName)}${rest} {${substituteSymbolBody(tmpl.body, env).replaceAll('\n', SOFT_NL)}}`, groupName }
 }
 /** Unfolds the `instance "Tmpl"(args) …` calls of a scene into concrete `group`s (successive passes
  *  for nested templates; anti-recursion budget). An `instance "X"(…)` without a template = error.
@@ -649,7 +661,7 @@ function expandSymbolInstances(scene: string, templates: Map<string, SymbolTempl
       let end = parenClose + 1, depth = 0
       while (end < text.length) {
         const c = text[end]
-        if (c === '\n') break
+        if (c === '\n' || c === SOFT_NL) break
         if (c === '{') depth++
         else if (c === '}') { if (depth === 0) break; depth-- }
         end++
@@ -911,7 +923,7 @@ function matchBrace(text: string, open: number): number {
   while (i < text.length) {
     const c = text[i]
     if (c === '"') { i++; while (i < text.length && text[i] !== '"') { if (text[i] === '\\') i++; i++ } }
-    else if (c === '/' && text[i + 1] === '/') { while (i < text.length && text[i] !== '\n') i++ }
+    else if (c === '/' && text[i + 1] === '/') { while (i < text.length && text[i] !== '\n' && text[i] !== SOFT_NL) i++ } // a comment ends at a soft break too
     else if (c === '{') depth++
     else if (c === '}') { depth--; if (depth === 0) return i }
     i++
@@ -1271,8 +1283,8 @@ function tokenize(src: string): Tok[] {
   const N = src.length
   while (i < N) {
     const c = src[i]
-    if (c === ' ' || c === '\t' || c === '\n' || c === '\r') { i++; continue }
-    if (c === '/' && src[i + 1] === '/') { while (i < N && src[i] !== '\n') i++; continue }
+    if (c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === SOFT_NL) { i++; continue }
+    if (c === '/' && src[i + 1] === '/') { while (i < N && src[i] !== '\n' && src[i] !== SOFT_NL) i++; continue }
     const start = i
     if (c === '"') {
       let v = ''
