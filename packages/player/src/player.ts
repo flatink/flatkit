@@ -1694,8 +1694,19 @@ export class FlatPlayer {
   }
 
   /** Draws the current frame (pure, without advancing time). */
+  /**
+   * Runs `f` with painting SUSPENDED: whatever it does — gestures, steps, writes — draws nothing; the picture
+   * is left dirty for the caller's next `render()`. For a host that replays many events and wants only the
+   * picture at the end (a renderer after a gesture script painted the whole scene at every synthetic move).
+   */
+  withoutPainting<T>(f: () => T): T {
+    this.paintHeld++
+    try { return f() } finally { this.paintHeld-- }
+  }
+  private paintHeld = 0
   render(): void {
     if (!this.renderOn) return // headless: no painting (no Canvas API required)
+    if (this.paintHeld > 0) { this.dirty = true; return }
     this.dirty = false
     const { ctx, doc, view, dpr } = this
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)

@@ -173,8 +173,9 @@ export async function createRenderer(doc: Doc, opts: { scale?: number; params?: 
   const play = (gestures: Gesture[]): PlayReport => {
     if (!player) throw new Error('renderer is closed')
     if (!opts.interactive) throw new Error('this renderer cannot replay gestures: open it with createRenderer(doc, { interactive: true })')
-    replayer ??= createReplayer(player, withParams, handlers, sends, { settle: opts.settle })
-    for (const g of gestures) replayer.apply(g)
+    const rp = (replayer ??= createReplayer(player, withParams, handlers, sends, { settle: opts.settle }))
+    // Nothing is painted while the script replays: the picture that matters is the one captured after it.
+    player.withoutPainting(() => { for (const g of gestures) rp.apply(g) })
     return { sends: [...sends], expectFailures: [...replayer.expectFailures], warnings: [...replayer.warnings] }
   }
 

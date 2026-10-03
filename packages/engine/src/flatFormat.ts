@@ -95,8 +95,11 @@ const isTranslate = (t: Transform) => t.a === 1 && t.b === 0 && t.c === 0 && t.d
 function printTransform(t: Transform): string {
   if (t.e === 0 && t.f === 0 && isTranslate(t)) return ''
   if (isTranslate(t)) return ` at ${n(t.e)},${n(t.f)}`
-  return ` matrix(${n(t.a)},${n(t.b)},${n(t.c)},${n(t.d)},${n(t.e)},${n(t.f)})`
+  // The linear part with 6 decimals: two lost 0.4% of a rotation (`rotate 45` came back as 0.71), a couple of
+  // pixels away from the pivot at each round trip. The translation keeps 4.
+  return ` matrix(${nm(t.a)},${nm(t.b)},${nm(t.c)},${nm(t.d)},${nm(t.e, 1e4)},${nm(t.f, 1e4)})`
 }
+const nm = (v: number, k = 1e6): string => { const r = Math.round(v * k) / k; return Object.is(r, -0) ? '0' : String(r) }
 
 // ── Poseable attributes (opacity, pivot, tint, filters, expressions). ─────────
 // `withExpr`: include the expressions? YES for a `.flat` asset (internal animation); NO for a
@@ -380,18 +383,21 @@ export function printProgram(doc: Program): string {
 export function splitLocalSymbols(src: string): { rest: string; flat: string } {
   if (!/\bsymbol\b/.test(src)) return { rest: src, flat: '' }
   const re = /\bscene\s*\{|\bsymbol\s*"(?:[^"\\]|\\.)*"\s*(?:in\s*"(?:[^"\\]|\\.)*"\s*)?\{/g
-  let rest = '', flat = '', cursor = 0
+  // Both texts keep EVERY position of `src`: `rest` blanks the symbol blocks, `flat` blanks everything
+  // else — so a syntax error inside a program's own symbol is reported at its line in the program.
+  let rest = '', flat = '', cursor = 0, any = false
   for (;;) {
     re.lastIndex = cursor
     const m = re.exec(src)
     if (!m) break
     const close = matchBrace(src, m.index + m[0].length - 1)
     if (close < 0) break
-    if (m[0].startsWith('scene')) { rest += src.slice(cursor, close + 1) } // the scene is walked over, never searched
-    else { rest += src.slice(cursor, m.index) + blankSpan(src.slice(m.index, close + 1)); flat += src.slice(m.index, close + 1) + '\n' }
+    const before = src.slice(cursor, m.index), block = src.slice(m.index, close + 1)
+    if (m[0].startsWith('scene')) { rest += before + block; flat += blankSpan(before + block) } // the scene is walked over, never searched
+    else { rest += before + blankSpan(block); flat += blankSpan(before) + block; any = true }
     cursor = close + 1
   }
-  return { rest: rest + src.slice(cursor), flat }
+  return { rest: rest + src.slice(cursor), flat: any ? flat : '' }
 }
 
 /** `src` with each of the program's own plain `symbol "X" { … }` blocks replaced by `fn(block)` — the same
@@ -510,7 +516,9 @@ function extractDefs(src: string): { src: string; defs: Record<string, number> }
   const kept: string[] = []
   for (const line of src.split('\n')) {
     const m = re.exec(line)
-    if (m) { defs[m[1]] = evalConst(m[2].replace(/\/\/.*$/, '').trim(), defs); continue } // evaluated with the previous defs
+    // Evaluated with the previous defs. The line is BLANKED, not removed: every line below keeps its number,
+    // so a syntax error further down is reported where the author wrote it.
+    if (m) { defs[m[1]] = evalConst(m[2].replace(/\/\/.*$/, '').trim(), defs); kept.push(''); continue }
     kept.push(line)
   }
   return { src: kept.join('\n'), defs }
@@ -579,7 +587,7 @@ function extractSymbolTemplates(src: string): { src: string; templates: Map<stri
     const braceClose = braceOpen >= 0 ? matchBrace(src, braceOpen) : -1
     if (braceClose < 0) { out += src.slice(cursor); break }
     templates.set(m[1], { params: parseSignature(src.slice(parenOpen + 1, parenClose)), body: src.slice(braceOpen + 1, braceClose) })
-    out += src.slice(cursor, m.index) // removes the template definition
+    out += src.slice(cursor, m.index) + blankSpan(src.slice(m.index, braceClose + 1)) // blanked, newlines kept: the lines below keep their numbers
     cursor = braceClose + 1
   }
   return { src: out, templates }
@@ -699,7 +707,8 @@ export function expandSceneSugar(src: string): { src: string; symbolGroups: Map<
   const budget = newRepeatBudget() // ONE budget for the scene and the program's own symbols
   // The program's own plain symbols unfold their `repeat`s HERE, where the program's `def`s are known: read
   // later as a library, `repeat i from 0 to N` saw no `N` and unfolded nothing.
-  const s3 = mapLocalSymbols(s2, (block) => expandRepeats(block, defs, budget))
+  // …and their instances of the program's parameterized symbols, which only the scene used to unfold.
+  const s3 = mapLocalSymbols(s2, (block) => expandSymbolInstances(expandRepeats(block, defs, budget), templates, symbolGroups))
   const si = splitLocalSymbols(s3).rest.search(/\bscene\b/) // same offsets; a local symbol is not the scene
   const open = si >= 0 ? s3.indexOf('{', si) : -1
   const close = open >= 0 ? matchBrace(s3, open) : -1

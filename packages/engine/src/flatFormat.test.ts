@@ -1945,3 +1945,15 @@ describe('a `var` initialiser is read to the end of its line', () => {
     expect(() => v('4 garbage')).toThrow(/constant expression/)
   })
 })
+
+// `printProgram` wrote a matrix with two decimals: `rotate 45` came back as `matrix(0.71,0.71,-0.71,0.71,…)`,
+// 0.4% off — two pixels at 500 units from the pivot, more at every round trip through the editor.
+describe('a matrix survives a print and a re-read', () => {
+  it('`rotate 45` round-trips to within a millionth', () => {
+    const src = 'size 400 400\nscene {\n  layer "c" {\n    group "G" at 200,200 pivot 20,0 rotate 45 scale 1.5 { layer "a" { rect -10 -10 20 20 fill #000000 } }\n  }\n}\n'
+    const a = (parseProgram(src).layers[0].items[0] as Group).transform
+    const b = (parseProgram(printProgram(parseProgram(src))).layers[0].items[0] as Group).transform
+    for (const k of ['a', 'b', 'c', 'd'] as const) expect(Math.abs(a[k] - b[k])).toBeLessThan(1e-6)
+    for (const k of ['e', 'f'] as const) expect(Math.abs(a[k] - b[k])).toBeLessThan(1e-3)
+  })
+})

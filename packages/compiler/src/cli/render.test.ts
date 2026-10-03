@@ -228,3 +228,21 @@ describe('rendering — a plain frame is drawn once', () => {
     } finally { spy.mockRestore(); r.close() }
   }, 60_000)
 })
+
+// A replayed script painted the whole scene at every synthetic event — twice for a move (the move itself,
+// then its step): one `scratch` on a 300-object scene took 4.8 s to render, for one picture at the end.
+describe('rendering after a script paints once, at the capture', () => {
+  it('replaying 200 moves and a `scratch` paints nothing until the capture, which paints once', async () => {
+    const skiaPkg = 'skia-canvas'
+    const skia = (await import(skiaPkg)) as { CanvasRenderingContext2D: { prototype: { clearRect: (...a: number[]) => void } } }
+    const src = 'size 600 400\nvar seen = 0\nvar t = 0\nscene {\n  layer "top" {\n    group "Cover" at 0,0 { layer "a" { rect 0 0 600 400 fill #888888 } }\n  }\n}\nobject "Cover" { reveal seen }\nevery frame { t = t + 1 }\n'
+    const r = await createRenderer(compileFlatpack(src), { scale: 1, interactive: true })
+    const paints = vi.spyOn(skia.CanvasRenderingContext2D.prototype, 'clearRect')
+    try {
+      r.play([...Array.from({ length: 200 }, (_, k) => ({ type: 'move' as const, x: 10 + k, y: 10 })), { type: 'scratch', target: 'Cover' }])
+      expect(paints).toHaveBeenCalledTimes(0)
+      await r.capture()
+      expect(paints).toHaveBeenCalledTimes(1)
+    } finally { paints.mockRestore(); r.close() }
+  }, 60_000)
+})

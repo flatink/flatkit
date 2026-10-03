@@ -219,7 +219,9 @@ function compileOnce(programPath: string, explicitFlats: string[], out: string, 
   let built: BuildResult
   try { built = build(parseRepaired || undefined) }
   catch (e) {
-    process.stderr.write(`flatc: compile error: ${(e as Error).message}\n`)
+    // Where it happened, as every editor and terminal reads it: file:line:col.
+    const where = e instanceof FlatSyntaxError ? `${basename(programPath)}:${e.line}:${e.col}: ` : ''
+    process.stderr.write(`flatc: ${where}compile error: ${(e as Error).message}\n`)
     return 1
   }
   const { doc } = built

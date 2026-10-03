@@ -46,6 +46,11 @@ Everything the player exposes paints on its own (`setVar`, `setParam`, `setKey`,
 what is drawn behind the player's back — it mutates the document it handed over, say — it calls
 `player.render()`.
 
+To replay many events and look only at the result, wrap them: `player.withoutPainting(() => { … })` runs
+the function with painting suspended — gestures, steps and writes draw nothing — and leaves the picture
+dirty for your next `render()`. The renderer of `@flatkit/compiler/render` does this while it replays a
+gesture script.
+
 ## Receiving events (`send` → `onEvent`)
 
 `onEvent` gets **one object per `send`**, synchronously, during the tick that fired it. The type is
