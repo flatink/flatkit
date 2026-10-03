@@ -1,5 +1,47 @@
 # @flatkit/compiler
 
+## 0.40.0
+
+### Minor Changes
+
+- [`669ab59`](https://github.com/flatink/flatkit/commit/669ab59554bcbd35ec11a3741bca4837256db7db) Thanks [@kaelhem](https://github.com/kaelhem)! - Three leftovers of the review pass.
+  
+  - **A syntax error points at its line in the author's file.** It was off by the number of `def` lines and parameterized symbols above it (they were cut out of the text before parsing; they are now blanked), it pointed inside a rebuilt text for an error in the program's own `symbol`, and `flatc` printed no line at all: it now prints `flatc: <file>:<line>:<col>: compile error: ...`. A parameterized symbol can be used inside the program's own plain symbol (it failed on `(`).
+  - **A loop or a parameterized symbol no longer moves the lines below it.** Unfolding put one item per line, so a scene `repeat` of ten pushed every line after it down - an error further down, in the scene or in an `object` block, was reported up to tens of lines too low. The unfolded text now keeps the line count of the source (items are separated by a break that is not a line): an error after the loop is at its own line, an error inside it at the line of the `repeat`. The same for a parameterized symbol unfolded at its call, and for `each` and `match` blocks: the behaviour parser treats that break as the end of a statement, and drops the mechanical repair of a diagnostic that falls on unfolded code (its range would not be the author's text).
+  - **`printProgram` keeps a matrix**: its linear part is written with 6 decimals and its translation with 4 (two decimals turned `rotate 45` into 0.71, a couple of pixels away from the pivot at each round trip).
+  - **Rendering after a script paints once.** `player.withoutPainting(f)` runs `f` with painting suspended and leaves the picture dirty for the next `render()`; the renderer uses it while it replays a gesture script (200 moves and a `scratch` painted the scene 828 times, for one picture at the end).
+
+- [`be29259`](https://github.com/flatink/flatkit/commit/be29259a11207b62ef6347a1a0cd288558c5a82e) Thanks [@kaelhem](https://github.com/kaelhem)! - What a performance, quality and security pass over the 0.36-0.39 changes found, each reproduced before being fixed. Measured on four consumer repositories: no `--check` exit code changes on 789 files, 145 of 145 replay tests of one, 127 of 128 gesture scripts of another with identical output (the last differs in variables only).
+  
+  **Errors that used to be silent** - a program that relied on them now fails to compile, with a message that says why:
+  
+  - A `repeat` bound that is not a constant (a param, a variable) unfolded zero times; it is now an error naming the bound. A program's `def` now reaches a `repeat` in the program's own plain `symbol`. More than 5000 iterations in all, or more than 4 MB of unfolded source, is an error instead of a silent cut or a server running out of memory (a 14 KB library took 18 s and 3 GB). The `repeat` head is found by a linear scan (a regex backtracked for 12 s on 120 KB of comment).
+  - A `var` initialiser is read to the end of its statement: `var a = 3 == 3` gave 3, `var a = 4 garbage` gave 4. Several `var`s on one line still work.
+  - On a declaration line, a channel spelled `rotate` (`expr rotate "45"`, `spring rotate "a"`) is an error: it meant radians, next to `rotate <n>` in degrees. Write `rotation` or `rotationDeg`.
+  
+  **Player**
+  
+  - `random()` draws from two seeded streams, one for the logic and one for the picture: painting and hit-testing shifted the numbers the logic drew, so `--play` and `--render --script` disagreed on the same seed.
+  - On-demand painting settles: a number the picture reads repaints only when it has moved by more than 1e-4 since it was last painted (an exponential decay repainted for a minute after each trigger). The pointer repaints only when the picture reads the mouse; a playing scene is painted once per frame while dragging.
+  - `setParam` and `Inst.p = <number>` read the number directly (each distinct value was compiled and cached for good); `Inst.flag = true` now works; the expression cache has a ceiling.
+  - A crafted document's `contentParam: "constructor"` or non-string `content` no longer crashes the renderer.
+  
+  **flatc and the replay**
+  
+  - One budget per replay: 100 000 simulation steps in all, a `turn` of at most 10 000 sub-moves, at most 200 `shot`s; a `scratch` steps the simulation on its press and release only (it was 45x slower on a scene with `every frame`). A gesture that cannot be replayed is one line on stderr. A replayed target follows the rule of names (a text named by its content yields to a group).
+  - A rendered picture is at most 40 million pixels, scale included.
+  - `--check`: "did you mean" skips names that cannot be a typo (22 s on long names); a value function's parameter named `value` or `time` is no longer reported as hidden; path extents no longer overflow the stack on huge paths; `--since` counts lines once per file.
+  
+  **sugarflat**: in `place`, an item picked and then dragged home is no longer sent back by a later tap on another target; Tab goes through the blocks in their order (each block owns a range of focus ranks).
+
+### Patch Changes
+
+- [`00e721b`](https://github.com/flatink/flatkit/commit/00e721b657ffb569ca2a9330c5608da7ebfbe09a) Thanks [@kaelhem](https://github.com/kaelhem)! - A group no longer loses its animation to a text that shows its name. A text without `as "<id>"` is named by what it shows, so a caption reading "Titre" and a `group "Titre"` bore the same name, and the text took it: for a `pose` when it was declared after the group, for an `object` block when it was declared before. The group was then never animated, without a warning. The name now always goes to the group (or instance, or image) - in cel poses, `object` blocks, `Titre.x` and drop zones alike, whatever the order. A text alone with its name is still addressed by it; `text "Titre" as "<id>"` addresses the text by its id.
+- Updated dependencies [[`669ab59`](https://github.com/flatink/flatkit/commit/669ab59554bcbd35ec11a3741bca4837256db7db), [`be29259`](https://github.com/flatink/flatkit/commit/be29259a11207b62ef6347a1a0cd288558c5a82e), [`00e721b`](https://github.com/flatink/flatkit/commit/00e721b657ffb569ca2a9330c5608da7ebfbe09a)]:
+  - @flatkit/engine@0.40.0
+  - @flatkit/player@0.40.0
+  - @flatkit/types@0.40.0
+
 ## 0.39.1
 
 ### Patch Changes
