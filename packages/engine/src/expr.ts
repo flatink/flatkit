@@ -79,139 +79,139 @@ function tokenize(src: string): Tok[] {
 
 // ── Parser (recursive descent) ───────────────────────────────────────────────
 class Parser {
-  private p = 0
+  #p = 0
   constructor(private readonly toks: Tok[]) {}
-  private peek() {
-    return this.toks[this.p]
+  #peek() {
+    return this.toks[this.#p]
   }
-  private next() {
-    return this.toks[this.p++]
+  #next() {
+    return this.toks[this.#p++]
   }
-  private eat(v: string) {
-    const t = this.toks[this.p]
+  #eat(v: string) {
+    const t = this.toks[this.#p]
     if (t.v !== v) throw new Error(`expected "${v}", found "${t.v || 'end'}"`)
-    this.p++
+    this.#p++
   }
-  private isOp(v: string) {
-    const t = this.peek()
+  #isOp(v: string) {
+    const t = this.#peek()
     return t.k === 'op' && t.v === v
   }
 
   parse(): Node {
-    const node = this.ternary()
-    if (this.peek().k !== 'eof') throw new Error(`unexpected "${this.peek().v}"`)
+    const node = this.#ternary()
+    if (this.#peek().k !== 'eof') throw new Error(`unexpected "${this.#peek().v}"`)
     return node
   }
 
-  private ternary(): Node {
-    const c = this.or()
-    if (this.isOp('?')) {
-      this.next()
-      const a = this.ternary()
-      this.eat(':')
-      const b = this.ternary()
+  #ternary(): Node {
+    const c = this.#or()
+    if (this.#isOp('?')) {
+      this.#next()
+      const a = this.#ternary()
+      this.#eat(':')
+      const b = this.#ternary()
       return { t: 'cond', c, a, b }
     }
     return c
   }
-  private binL(next: () => Node, ops: string[]): Node {
+  #binL(next: () => Node, ops: string[]): Node {
     let l = next()
-    while (this.peek().k === 'op' && ops.includes(this.peek().v)) {
-      const op = this.next().v
+    while (this.#peek().k === 'op' && ops.includes(this.#peek().v)) {
+      const op = this.#next().v
       l = { t: 'bin', op, l, r: next() }
     }
     return l
   }
-  private or() {
-    return this.binL(() => this.and(), ['||'])
+  #or() {
+    return this.#binL(() => this.#and(), ['||'])
   }
-  private and() {
-    return this.binL(() => this.eq(), ['&&'])
+  #and() {
+    return this.#binL(() => this.#eq(), ['&&'])
   }
-  private eq() {
-    return this.binL(() => this.cmp(), ['==', '!='])
+  #eq() {
+    return this.#binL(() => this.#cmp(), ['==', '!='])
   }
-  private cmp() {
-    return this.binL(() => this.add(), ['<', '>', '<=', '>='])
+  #cmp() {
+    return this.#binL(() => this.#add(), ['<', '>', '<=', '>='])
   }
-  private add() {
-    return this.binL(() => this.mul(), ['+', '-'])
+  #add() {
+    return this.#binL(() => this.#mul(), ['+', '-'])
   }
-  private mul() {
-    return this.binL(() => this.unary(), ['*', '/', '%'])
+  #mul() {
+    return this.#binL(() => this.#unary(), ['*', '/', '%'])
   }
-  private unary(): Node {
-    if (this.isOp('-') || this.isOp('!')) {
-      const op = this.next().v
-      return { t: 'un', op, x: this.unary() }
+  #unary(): Node {
+    if (this.#isOp('-') || this.#isOp('!')) {
+      const op = this.#next().v
+      return { t: 'un', op, x: this.#unary() }
     }
-    return this.primary()
+    return this.#primary()
   }
-  private primary(): Node {
-    const t = this.peek()
+  #primary(): Node {
+    const t = this.#peek()
     if (t.k === 'num') {
-      this.next()
+      this.#next()
       const v = Number(t.v)
       if (!Number.isFinite(v)) throw new Error(`invalid number "${t.v}"`)
       return { t: 'num', v }
     }
-    if (this.isOp('(')) {
-      this.next()
-      const e = this.ternary()
-      this.eat(')')
+    if (this.#isOp('(')) {
+      this.#next()
+      const e = this.#ternary()
+      this.#eat(')')
       return e
     }
-    if (this.isOp('[')) {
+    if (this.#isOp('[')) {
       // A table written in place. It is not a value on its own (every expression is a number): it is
       // indexed on the spot, `[a, b, c][i]`, and only the element picked is evaluated.
-      this.next()
+      this.#next()
       const items: Node[] = []
-      if (!this.isOp(']')) {
-        items.push(this.ternary())
-        while (this.isOp(',')) { this.next(); items.push(this.ternary()) }
+      if (!this.#isOp(']')) {
+        items.push(this.#ternary())
+        while (this.#isOp(',')) { this.#next(); items.push(this.#ternary()) }
       }
-      this.eat(']')
-      if (!this.isOp('[')) throw new Error('a table written in place must be indexed at once: `[a, b, c][i]` (to keep it, declare an array: `var t = [a, b, c]`)')
-      this.next()
-      const idx = this.ternary()
-      this.eat(']')
+      this.#eat(']')
+      if (!this.#isOp('[')) throw new Error('a table written in place must be indexed at once: `[a, b, c][i]` (to keep it, declare an array: `var t = [a, b, c]`)')
+      this.#next()
+      const idx = this.#ternary()
+      this.#eat(']')
       return { t: 'pick', items, idx }
     }
     if (t.k === 'id') {
-      this.next()
-      if (this.isOp('(')) {
-        this.next()
+      this.#next()
+      if (this.#isOp('(')) {
+        this.#next()
         const args: Node[] = []
-        if (!this.isOp(')')) {
-          args.push(this.ternary())
-          while (this.isOp(',')) {
-            this.next()
-            args.push(this.ternary())
+        if (!this.#isOp(')')) {
+          args.push(this.#ternary())
+          while (this.#isOp(',')) {
+            this.#next()
+            args.push(this.#ternary())
           }
         }
-        this.eat(')')
+        this.#eat(')')
         return { t: 'call', name: t.v, args }
       }
-      if (this.isOp('.')) {
-        this.next()
-        const prop = this.next()
+      if (this.#isOp('.')) {
+        this.#next()
+        const prop = this.#next()
         if (prop.k !== 'id') throw new Error('expected a property name after "."')
-        if (this.isOp('(')) { // QUALIFIED call: collision.boxHit(…) → a call named "collision.boxHit"
-          this.next()
+        if (this.#isOp('(')) { // QUALIFIED call: collision.boxHit(…) → a call named "collision.boxHit"
+          this.#next()
           const args: Node[] = []
-          if (!this.isOp(')')) {
-            args.push(this.ternary())
-            while (this.isOp(',')) { this.next(); args.push(this.ternary()) }
+          if (!this.#isOp(')')) {
+            args.push(this.#ternary())
+            while (this.#isOp(',')) { this.#next(); args.push(this.#ternary()) }
           }
-          this.eat(')')
+          this.#eat(')')
           return { t: 'call', name: t.v + '.' + prop.v, args }
         }
         return { t: 'member', obj: t.v, prop: prop.v }
       }
-      if (this.isOp('[')) {
-        this.next()
-        const idx = this.ternary()
-        this.eat(']')
+      if (this.#isOp('[')) {
+        this.#next()
+        const idx = this.#ternary()
+        this.#eat(']')
         return { t: 'index', name: t.v, idx }
       }
       return { t: 'id', name: t.v }

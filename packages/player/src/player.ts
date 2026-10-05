@@ -316,61 +316,63 @@ function getAudioCtx(): AudioContext {
   return playerAudioCtx
 }
 
+type FontSetLike = { addEventListener?: (t: string, f: () => void) => void; removeEventListener?: (t: string, f: () => void) => void }
+
 export class FlatPlayer {
-  private readonly ctx: CanvasRenderingContext2D
+  readonly #ctx: CanvasRenderingContext2D
   private doc: Doc
-  private readonly loop: boolean
-  private readonly pad: number
-  private dpr = 1
-  private cssW = 0
-  private cssH = 0
-  private view: View = { tx: 0, ty: 0, scale: 1 }
-  private frame = 0
-  private mono = 0 // MONOTONE frame count (never wrapped by the loop) → `clock = mono/fps` for ambient motion
-  private playing = false
-  private raf = 0
-  private last = 0
-  private simAcc = 0 // time accumulator for the fixed-step simulation (onEnterFrame)
+  readonly #loop: boolean
+  readonly #pad: number
+  #dpr = 1
+  #cssW = 0
+  #cssH = 0
+  #view: View = { tx: 0, ty: 0, scale: 1 }
+  #frame = 0
+  #mono = 0 // MONOTONE frame count (never wrapped by the loop) → `clock = mono/fps` for ambient motion
+  #playing = false
+  #raf = 0
+  #last = 0
+  #simAcc = 0 // time accumulator for the fixed-step simulation (onEnterFrame)
   // Render interpolation (anti-judder): we draw the motion driven by `onEnterFrame` at the INTERPOLATED
   // position between the two last sim steps, by `simAlpha = simAcc/SIM_STEP`. Otherwise a 60 Hz sim
   // on a 120 Hz screen (ProMotion) stutters. Cf. "Fix Your Timestep" (Gaffer).
-  private prevSimVars: Map<string, number | number[]> | null = null
-  private simAlpha = 1
-  private simActive = false
-  private audioOn: boolean
-  private readonly onEvent?: (event: SendEvent) => void
-  private renderOn = true
-  private readonly imageProvider?: (assetId: string) => CanvasImageSource | null
-  private readonly resolveAsset: (asset: Asset) => string | null
+  #prevSimVars: Map<string, number | number[]> | null = null
+  #simAlpha = 1
+  #simActive = false
+  #audioOn: boolean
+  readonly #onEvent?: (event: SendEvent) => void
+  #renderOn = true
+  readonly #imageProvider?: (assetId: string) => CanvasImageSource | null
+  readonly #resolveAsset: (asset: Asset) => string | null
   // Gesture recording (`--record`): we play by hand, capture down/up/cancel + the `move`s
   // DURING a drag (reduced volume), with `wait`s (elapsed frames) between them -> replayable script.
-  private recording: Gesture[] | null = null
-  private recordFrame = 0
+  #recording: Gesture[] | null = null
+  #recordFrame = 0
   // Perf: cache of static filtered composites (set dressing). `imageEpoch` bumps on each decoded image
   // -> invalidates the entries depending on an asset that just loaded. Cleared when the doc changes.
-  private readonly filterCache = new Map<string, FilterCacheEntry>()
-  private imageEpoch = 0
-  private activeSources: AudioBufferSourceNode[] = []
-  private readonly awaitedSounds = new Set<string>() // one-shots waiting for their asset to finish decoding
-  private audioGen = 0 // bumped by every `startAudio`: a restart queued by an older one is then stale
-  private destroyed = false
+  readonly #filterCache = new Map<string, FilterCacheEntry>()
+  #imageEpoch = 0
+  #activeSources: AudioBufferSourceNode[] = []
+  readonly #awaitedSounds = new Set<string>() // one-shots waiting for their asset to finish decoding
+  #audioGen = 0 // bumped by every `startAudio`: a restart queued by an older one is then stale
+  #destroyed = false
   // -- Interaction (Layer B) --
-  private vars = new Map<string, number | number[]>()
-  private procs = new Map<string, { params: string[]; body: Action[] }>() // fn name(p) { ... }
-  private valueFuncs: { name: string; params: string[]; comp: Compiled }[] = [] // fn name(p) = expr (compiled)
-  private funcDepth = 0 // anti-recursion guard (procedures + value functions)
-  private readonly mouse = { x: 0, y: 0, dx: 0, dy: 0, wheel: 0 } // dx/dy = movement SINCE the last tick; wheel = accumulated wheel delta SINCE the last tick (both reset after onEnterFrame) -> "what happened this frame?"
-  private usesWheel = false // does the scene read `mouse.wheel`? → capture the wheel + preventDefault (else let the page scroll over the canvas)
-  private usesMousePos = false // does the scene read `mouse.x`/`mouse.y`? → only then must a pointermove bust the expr cache
-  private readKeys = new Set<string>() // key names the scene reads (`keys.<Name>`) → the only ones consumed (preventDefault)
-  private hitWarmId = 0 // requestIdleCallback handle for the deferred hit-cache warm-up (0 = none pending)
-  private readonly heldKeys = new Set<string>() // every name `keys.<Name>` answers to right now (derived, see `holdKey`)
-  private readonly plainKeys = new Set<string>() // held by NAME only: `setKey`, the headless `key` gesture, an event without a `code`
-  private readonly keyOfCode = new Map<string, string>() // physical keys down (`event.code`) -> the `key` each reported when it went down
-  private readonly keyProxy = new Proxy(
+  #vars = new Map<string, number | number[]>()
+  #procs = new Map<string, { params: string[]; body: Action[] }>() // fn name(p) { ... }
+  #valueFuncs: { name: string; params: string[]; comp: Compiled }[] = [] // fn name(p) = expr (compiled)
+  #funcDepth = 0 // anti-recursion guard (procedures + value functions)
+  readonly #mouse = { x: 0, y: 0, dx: 0, dy: 0, wheel: 0 } // dx/dy = movement SINCE the last tick; wheel = accumulated wheel delta SINCE the last tick (both reset after onEnterFrame) -> "what happened this frame?"
+  #usesWheel = false // does the scene read `mouse.wheel`? → capture the wheel + preventDefault (else let the page scroll over the canvas)
+  #usesMousePos = false // does the scene read `mouse.x`/`mouse.y`? → only then must a pointermove bust the expr cache
+  #readKeys = new Set<string>() // key names the scene reads (`keys.<Name>`) → the only ones consumed (preventDefault)
+  #hitWarmId = 0 // requestIdleCallback handle for the deferred hit-cache warm-up (0 = none pending)
+  readonly #heldKeys = new Set<string>() // every name `keys.<Name>` answers to right now (derived, see `holdKey`)
+  readonly #plainKeys = new Set<string>() // held by NAME only: `setKey`, the headless `key` gesture, an event without a `code`
+  readonly #keyOfCode = new Map<string, string>() // physical keys down (`event.code`) -> the `key` each reported when it went down
+  readonly #keyProxy = new Proxy(
     {},
     {
-      get: (_t, k) => (typeof k === 'string' && this.heldKeys.has(k) ? 1 : 0),
+      get: (_t, k) => (typeof k === 'string' && this.#heldKeys.has(k) ? 1 : 0),
       // The expression evaluator guards member access with `Object.hasOwn(o, prop)`
       // (sandbox: own props only). A bare get-trap proxy has an empty target, so
       // hasOwn is always false and `keys.<Name>` evaluates to NaN. Report every
@@ -379,264 +381,264 @@ export class FlatPlayer {
       has: (_t, k) => typeof k === 'string',
       getOwnPropertyDescriptor: (_t, k) =>
         typeof k === 'string'
-          ? { value: this.heldKeys.has(k) ? 1 : 0, writable: false, enumerable: true, configurable: true }
+          ? { value: this.#heldKeys.has(k) ? 1 : 0, writable: false, enumerable: true, configurable: true }
           : undefined,
     },
   ) as Record<string, number>
-  private hovered: string | null = null
-  private hoverIds = new Set<string>() // ALL ids in the topmost hit chain under the pointer (for self.hovered feedback, handler-independent)
-  private selfChannels: ObjectChannels | null = null // `self` in a handler = the targeted object's channels (set for the duration of runActions)
-  private selfParent: Transform | null = null // world transform of the targeted object's parent -> toLocal/toGlobal conversions
+  #hovered: string | null = null
+  #hoverIds = new Set<string>() // ALL ids in the topmost hit chain under the pointer (for self.hovered feedback, handler-independent)
+  #selfChannels: ObjectChannels | null = null // `self` in a handler = the targeted object's channels (set for the duration of runActions)
+  #selfParent: Transform | null = null // world transform of the targeted object's parent -> toLocal/toGlobal conversions
   // namedChannels resolves the WHOLE scene (costly); memoized per frame -- otherwise recomputed on every
   // evalNumber (hundreds/frame in a game) -> stutter. Invalidated by inputs (cf. bustNamed).
-  private namedCache: NamedChannels | null = null
-  private namedFrame = Number.NaN
-  private namedMono = Number.NaN // …and `clock`: a HELD playhead keeps the frame while the scene moves on
+  #namedCache: NamedChannels | null = null
+  #namedFrame = Number.NaN
+  #namedMono = Number.NaN // …and `clock`: a HELD playhead keeps the frame while the scene moves on
   // Per-frame expression context cache: the `every frame` interpreter calls exprCtx hundreds of times/frame;
   // everything but the variables is stable within a frame (named channels memoized, funcs/mouse/keys reused),
   // so we build it ONCE per frame and only refresh the live vars on reuse. Bypassed when `self` is set
   // (a handler) or when called with interpolated vars (render between sim steps). Invalidated by bustNamed.
-  private ctxCache: ExprContext | null = null
-  private ctxFrame = Number.NaN
-  private ctxMono = Number.NaN
-  private funcNames: Set<string> = new Set() // value-function names → keep priority over vars when refreshing
+  #ctxCache: ExprContext | null = null
+  #ctxFrame = Number.NaN
+  #ctxMono = Number.NaN
+  #funcNames: Set<string> = new Set() // value-function names → keep priority over vars when refreshing
   // -- Grabbing (drag / press / long-press) --
-  private grabbed: string | null = null // grabbed item (between pointerdown and pointerup)
-  private grabStart: Point = { x: 0, y: 0 } // world point of the press (long-press + tap tolerance)
+  #grabbed: string | null = null // grabbed item (between pointerdown and pointerup)
+  #grabStart: Point = { x: 0, y: 0 } // world point of the press (long-press + tap tolerance)
   // `click` is DEFERRED to pointerup: a tap fires it only if the pointer stayed within TAP_TOL of the press
   // (a press that becomes a drag is NOT a click). Lets a draggable surface and a tappable child coexist.
-  private pendingClick: string | null = null // click target captured on press, fired on release if it stayed a tap
-  private dragActive: { it: Interactor; offX: number; offY: number; parentInv: Transform; tracePath?: Path | null; traceMaxT?: number; traceLen?: number; revealCells?: Set<number>; revealGrid?: RevealGrid } | null = null // "drag" interactor in progress (parentInv cached at grab time)
+  #pendingClick: string | null = null // click target captured on press, fired on release if it stayed a tap
+  #dragActive: { it: Interactor; offX: number; offY: number; parentInv: Transform; tracePath?: Path | null; traceMaxT?: number; traceLen?: number; revealCells?: Set<number>; revealGrid?: RevealGrid } | null = null // "drag" interactor in progress (parentInv cached at grab time)
   // `reveal` coverage PERSISTED per target across grabs → true monotonicity (a child scratching with
   // several short strokes keeps accumulating instead of resetting to the current stroke each grab).
-  private readonly revealStates = new Map<string, RevealState>()
+  readonly #revealStates = new Map<string, RevealState>()
   // CONTINUOUS `trace` (`step`) — progress + the end it was entered from, per TARGET. Persisted across
   // grabs for the same reason: a child stops mid-letter, lifts, and puts the finger back where it was.
   // Reset by writing the progress variable from the scene (`avance = 0`), which is how an author restarts.
-  private readonly traceStates = new Map<string, { progress: number; dir: 0 | 1 | -1 }>()
-  private traceOutputs: Set<string> = new Set() // the progress variables of continuous traces (see `syncTraceState`)
+  readonly #traceStates = new Map<string, { progress: number; dir: 0 | 1 | -1 }>()
+  #traceOutputs: Set<string> = new Set() // the progress variables of continuous traces (see `syncTraceState`)
   // Grab zones handed to the hit test: the WORLD bbox of each `reveal` target, so a veil stays grabbable
   // where the child already scratched it away (its cells sit at `opacity 0`, which normally lets the
   // pointer through). Built on load, when the scene geometry is known; UNDEFINED when the doc declares no
   // `reveal` — the hit test then skips the whole zone path (the overwhelmingly common case).
-  private grabZones: GrabZones | undefined
+  #grabZones: GrabZones | undefined
   // `reveal … erase`: what the renderer must rub out of each target, by item id. The mask holds the SAME
   // `Set` the gesture ticks (a live view — no rebuild per frame, no copy per stroke) plus the grid geometry.
   // Filled on the first grab of an erasing `reveal`; empty otherwise, and the renderer then skips the branch.
-  private readonly scratched = new Map<string, ScratchMask>()
+  readonly #scratched = new Map<string, ScratchMask>()
   // Per-instance exposed-param runtime (P3 states): instanceId → param → in-progress transition.
   // `value` is the current eased value; it drives the instance's local playhead (see drawScene.paramsFor).
-  private readonly paramRt = new Map<string, Map<string, { value: number; from: number; target: number; elapsed: number; dur: number; ease?: Easing }>>()
+  readonly #paramRt = new Map<string, Map<string, { value: number; from: number; target: number; elapsed: number; dur: number; ease?: Easing }>>()
   // Stateful channel modifiers (smooth/spring): per-(instance,channel) integrator state, keyed
   // `statePath+itemId|channel`. Persists across frames; cleared on seek/load → snap to rest on the target.
-  private readonly channelState = new Map<string, ModState>()
+  readonly #channelState = new Map<string, ModState>()
   // `velocity(arg)` inside a modifier target: previous value(s) of arg per `key|channel` (one slot per
   // velocity() occurrence in the target). Separate from channelState (pos/vel) so the spring's first-frame
   // rest-init never clobbers it. Advanced once per tick by the advance pass; cleared on seek/load.
-  private readonly velocityState = new Map<string, number[]>()
-  private modAcc = 0 // fixed-step accumulator for the modifier advance (independent of the onEnterFrame sim gate)
-  private hasModifiers = false // doc declares ≥1 modifier → run the advance pass (else zero overhead)
-  private hasSymbolTimelines = false // any symbol carries a timeline? (else `activeSymbolTimelines` is empty by construction)
-  private instNameCache?: Map<string, { id: string; symbolId: string }>
-  private assetCache?: Map<string, Asset> // asset id -> asset (see `assetById`); rebuilt on load
+  readonly #velocityState = new Map<string, number[]>()
+  #modAcc = 0 // fixed-step accumulator for the modifier advance (independent of the onEnterFrame sim gate)
+  #hasModifiers = false // doc declares ≥1 modifier → run the advance pass (else zero overhead)
+  #hasSymbolTimelines = false // any symbol carries a timeline? (else `activeSymbolTimelines` is empty by construction)
+  #instNameCache?: Map<string, { id: string; symbolId: string }>
+  #assetCache?: Map<string, Asset> // asset id -> asset (see `assetById`); rebuilt on load
   // WORLD path of a `trace` target by name. It is built from the scene's ROSTER transforms, so playback
   // never moves it — yet it was rebuilt (a full document walk, plus a transformed copy of every subpath) on
   // every write of a trace's progress, i.e. on every pointer move while a child draws.
-  private readonly tracePathCache = new Map<string, Path | null>()
+  readonly #tracePathCache = new Map<string, Path | null>()
   // Handlers and interactors indexed BY TARGET. Both sat on the pointer path: `pickTarget` scanned the whole
   // interaction list for each item of each hit chain on every move, and `fireEvent` re-filtered it —
   // allocating a fresh array — for each `drag` a grab emits.
-  private handlerIndex?: Map<string, Map<ItemEvent, Interaction[]>>
-  private interactorIndex?: Map<string, Interactor[]>
-  private transRaf = 0 // lightweight rAF driving transitions while the playhead is NOT playing
+  #handlerIndex?: Map<string, Map<ItemEvent, Interaction[]>>
+  #interactorIndex?: Map<string, Interactor[]>
+  #transRaf = 0 // lightweight rAF driving transitions while the playhead is NOT playing
   // -- Painting on demand --
   // The playback loop paints a frame only when the picture can differ from the one on the canvas. A scene
   // at rest (the learner is reading the instructions) used to be redrawn in full sixty times a second.
-  private dirty = true // something the picture reads changed since the last paint
-  private moving = false // …and it changed during the last sim steps: the interpolation between them is still running
-  private timeDriven = true // the picture changes with time alone (clock/frame in an expression, keyframes playing) → paint every frame
-  private reads: Set<string> = new Set() // names the picture can read (see `pictureReads`)
-  private readonly painted = new Map<string, number>() // the value of each number the picture reads, as last painted
-  private readonly drawnMods = new Map<string, number>() // modifier-driven channels: the value last painted
-  private actionDepth = 0 // > 0 while actions run: whoever ran them paints once they are done
-  private readonly maxDpr: number
-  private readonly seed: number | undefined
+  #dirty = true // something the picture reads changed since the last paint
+  #moving = false // …and it changed during the last sim steps: the interpolation between them is still running
+  #timeDriven = true // the picture changes with time alone (clock/frame in an expression, keyframes playing) → paint every frame
+  #reads: Set<string> = new Set() // names the picture can read (see `pictureReads`)
+  readonly #painted = new Map<string, number>() // the value of each number the picture reads, as last painted
+  readonly #drawnMods = new Map<string, number>() // modifier-driven channels: the value last painted
+  #actionDepth = 0 // > 0 while actions run: whoever ran them paints once they are done
+  readonly #maxDpr: number
+  readonly #seed: number | undefined
   // -- Keyboard focus (`focusable`) --
-  private focusList: { item: Item; name: string; noRing: boolean }[] = [] // the focusable objects, in tab order
-  private focusId: string | null = null // the object that holds the keyboard focus, if any
-  private readonly ring: { color: string; width: number } | null // the default focus ring (null = the scene draws its own)
-  private tabBack = false // the last Tab seen was a Shift+Tab
-  private pointerDown = false // a pointer is pressing: the canvas focus it brings is not a keyboard focus
-  private rand: () => number = () => Math.random() // what `random()` draws from in the LOGIC (see `PlayerOptions.seed`)
+  #focusList: { item: Item; name: string; noRing: boolean }[] = [] // the focusable objects, in tab order
+  #focusId: string | null = null // the object that holds the keyboard focus, if any
+  readonly #ring: { color: string; width: number } | null // the default focus ring (null = the scene draws its own)
+  #tabBack = false // the last Tab seen was a Shift+Tab
+  #pointerDown = false // a pointer is pressing: the canvas focus it brings is not a keyboard focus
+  #rand: () => number = () => Math.random() // what `random()` draws from in the LOGIC (see `PlayerOptions.seed`)
   // …and in the PICTURE (channel bindings, hit tests): a stream of its own. On one shared stream, every paint
   // and every hit test shifted the numbers the logic drew next, so the same script under the same seed said
   // different things depending on how often the scene was painted.
-  private drawRand: () => number = () => Math.random()
-  private picturing = 0 // > 0 while the named objects are resolved: their channel bindings are the picture's
-  private readonly random = (): number => (this.actionDepth > 0 && this.picturing === 0 ? this.rand() : this.drawRand())
-  private longPressTimer: ReturnType<typeof setTimeout> | null = null
+  #drawRand: () => number = () => Math.random()
+  #picturing = 0 // > 0 while the named objects are resolved: their channel bindings are the picture's
+  readonly #random = (): number => (this.#actionDepth > 0 && this.#picturing === 0 ? this.#rand() : this.#drawRand())
+  #longPressTimer: ReturnType<typeof setTimeout> | null = null
   // -- Several pointers --
   // The fields above (`grabbed`, `grabStart`, `pendingClick`, `dragActive`, `longPressTimer`) describe ONE
   // gesture: that of the pointer whose event is being handled. The gestures of the other pointers that are
   // down wait in `parked`, and `usePointer` swaps one in at the top of every pointer handler. With a single
   // gesture for everyone, lifting one finger released what ANOTHER finger was holding.
-  private pointerId = 0
-  private readonly parked = new Map<number, { grabbed: string | null; grabStart: Point; pendingClick: string | null; dragActive: FlatPlayer['dragActive']; longPressTimer: ReturnType<typeof setTimeout> | null }>()
+  #pointerId = 0
+  readonly #parked = new Map<number, { grabbed: string | null; grabStart: Point; pendingClick: string | null; dragActive: { it: Interactor; offX: number; offY: number; parentInv: Transform; tracePath?: Path | null; traceMaxT?: number; traceLen?: number; revealCells?: Set<number>; revealGrid?: RevealGrid } | null; longPressTimer: ReturnType<typeof setTimeout> | null }>()
   /** Keeps a pointer's events coming once it leaves the canvas. Never fatal: the browser refuses an id it
    *  does not know as an active pointer (a synthetic event), and the press must go through all the same. */
-  private capture(id: number): void {
-    try { this.canvas.setPointerCapture?.(id) } catch { /* not an active pointer: no capture, the gesture still runs */ }
+  #capture(id: number): void {
+    try { this.#canvas.setPointerCapture?.(id) } catch { /* not an active pointer: no capture, the gesture still runs */ }
   }
-  private usePointer(id: number | undefined): void {
-    const next = id ?? this.pointerId // an event without an id (a synthetic one) continues the current gesture
-    if (next === this.pointerId) return
-    if (this.grabbed || this.pendingClick !== null || this.longPressTimer !== null) {
-      this.parked.set(this.pointerId, { grabbed: this.grabbed, grabStart: this.grabStart, pendingClick: this.pendingClick, dragActive: this.dragActive, longPressTimer: this.longPressTimer })
+  #usePointer(id: number | undefined): void {
+    const next = id ?? this.#pointerId // an event without an id (a synthetic one) continues the current gesture
+    if (next === this.#pointerId) return
+    if (this.#grabbed || this.#pendingClick !== null || this.#longPressTimer !== null) {
+      this.#parked.set(this.#pointerId, { grabbed: this.#grabbed, grabStart: this.#grabStart, pendingClick: this.#pendingClick, dragActive: this.#dragActive, longPressTimer: this.#longPressTimer })
     }
-    const g = this.parked.get(next)
-    this.parked.delete(next)
-    this.grabbed = g?.grabbed ?? null
-    this.grabStart = g?.grabStart ?? { x: 0, y: 0 }
-    this.pendingClick = g?.pendingClick ?? null
-    this.dragActive = g?.dragActive ?? null
-    this.longPressTimer = g?.longPressTimer ?? null
-    this.pointerId = next
+    const g = this.#parked.get(next)
+    this.#parked.delete(next)
+    this.#grabbed = g?.grabbed ?? null
+    this.#grabStart = g?.grabStart ?? { x: 0, y: 0 }
+    this.#pendingClick = g?.pendingClick ?? null
+    this.#dragActive = g?.dragActive ?? null
+    this.#longPressTimer = g?.longPressTimer ?? null
+    this.#pointerId = next
   }
   /** Is `id` held by ANY pointer (the one being handled, or a parked one)? */
-  private isGrabbed(id: string): boolean {
-    if (this.grabbed === id) return true
-    for (const g of this.parked.values()) if (g.grabbed === id) return true
+  #isGrabbed(id: string): boolean {
+    if (this.#grabbed === id) return true
+    for (const g of this.#parked.values()) if (g.grabbed === id) return true
     return false
   }
   /** Drops every gesture in progress, without firing anything (new document, teardown). */
-  private dropGestures(): void {
-    for (const g of this.parked.values()) if (g.longPressTimer !== null) clearTimeout(g.longPressTimer)
-    this.parked.clear()
-    this.pendingClick = null
-    this.clearGrab()
+  #dropGestures(): void {
+    for (const g of this.#parked.values()) if (g.longPressTimer !== null) clearTimeout(g.longPressTimer)
+    this.#parked.clear()
+    this.#pendingClick = null
+    this.#clearGrab()
   }
-  private lastFrameInt = -1
-  private seekCount = 0
+  #lastFrameInt = -1
+  #seekCount = 0
   // The SCENE holds its playhead: a script `pause`, or the end of a timeline that does not loop. The scene
   // keeps living — `every frame`, `clock`, springs — like Flash's `stop()`; only the host's `pause()`
   // freezes the player (flatink/flatink#67: `at frame N { pause }` froze ambient `clock` motion too).
-  private held = false // lets a frame-action walk notice a `go to` run by one of its scripts
-  private readonly onResize = () => {
-    this.measure()
+  #held = false // lets a frame-action walk notice a `go to` run by one of its scripts
+  readonly #onResize = () => {
+    this.#measure()
     this.render()
   }
   /** A face finished loading: any text painted so far used its fallback. The loop no longer repaints a
    *  still scene on its own, so this is what brings the authored face in for a host that did not await
    *  `loadEmbeddedFonts` (or loads a web font of its own). */
-  private readonly onFontsLoaded = () => this.render()
-  private fontSet(): { addEventListener?: (t: string, f: () => void) => void; removeEventListener?: (t: string, f: () => void) => void } | undefined {
-    return typeof document === 'undefined' ? undefined : (document as unknown as { fonts?: ReturnType<FlatPlayer['fontSet']> }).fonts
+  readonly #onFontsLoaded = () => this.render()
+  #fontSet(): FontSetLike | undefined {
+    return typeof document === 'undefined' ? undefined : (document as unknown as { fonts?: FontSetLike }).fonts
   }
   /** Re-reads which input devices the current document uses (see `docInputUse`). Load-time only. */
-  private applyInputUse(): void {
+  #applyInputUse(): void {
     const use = docInputUse(this.doc)
-    this.usesWheel = use.wheel
-    this.usesMousePos = use.mousePos
-    this.readKeys = use.keys
+    this.#usesWheel = use.wheel
+    this.#usesMousePos = use.mousePos
+    this.#readKeys = use.keys
   }
   /** Invalidates the named-objects cache (input changed outside of a frame advance). */
   /** Runs `f` as PICTURE work: resolving the named objects evaluates channel bindings, and a binding that
    *  calls `random()` must draw from the picture's stream even when a handler is what asked. */
-  private pictureSide<T>(f: () => T): T { this.picturing++; try { return f() } finally { this.picturing-- } }
-  private bustNamed(dirty = true): void {
-    this.namedFrame = Number.NaN
-    this.namedMono = Number.NaN
-    this.ctxCache = null // its baked-in named channels are now stale
-    if (dirty) this.dirty = true // an input changed: the picture may read it
+  #pictureSide<T>(f: () => T): T { this.#picturing++; try { return f() } finally { this.#picturing-- } }
+  #bustNamed(dirty = true): void {
+    this.#namedFrame = Number.NaN
+    this.#namedMono = Number.NaN
+    this.#ctxCache = null // its baked-in named channels are now stale
+    if (dirty) this.#dirty = true // an input changed: the picture may read it
   }
   /** Re-reads what the picture depends on (see `pictureReads`, `keyframesPlay`). Load-time only. */
-  private analysePicture(): void {
-    this.reads = pictureReads(this.doc)
-    this.timeDriven = TIME_NAMES.some((n) => this.reads.has(n)) || keyframesPlay(this.doc)
-    this.drawnMods.clear()
-    this.dirty = true
+  #analysePicture(): void {
+    this.#reads = pictureReads(this.doc)
+    this.#timeDriven = TIME_NAMES.some((n) => this.#reads.has(n)) || keyframesPlay(this.doc)
+    this.#drawnMods.clear()
+    this.#dirty = true
   }
   /** Runs actions on behalf of a caller that PAINTS when they are done (a handler, a sim step, a tick). */
-  private run(actions: Action[]): void {
-    this.actionDepth++
-    try { runActions(actions, this.host) } finally { this.actionDepth-- }
+  #run(actions: Action[]): void {
+    this.#actionDepth++
+    try { runActions(actions, this.#host) } finally { this.#actionDepth-- }
   }
-  private readonly onKeyDown = (e: KeyboardEvent) => {
+  readonly #onKeyDown = (e: KeyboardEvent) => {
     if (isEditableTarget(e.target)) return // the user is typing in a field of the host page — not for us
-    this.holdKey(e.key, true, e.code)
+    this.#holdKey(e.key, true, e.code)
     // Keyboard focus: only while the canvas holds the page's focus (Tab must stay the page's everywhere
     // else), and never on a shortcut. Tab is consumed while it stays inside the scene; past either end the
     // focus is released and the key is left to the page — the scene is a stop in the tab order, not a trap.
-    if (e.key === 'Tab') this.tabBack = e.shiftKey // which way the page's focus is travelling (see `onCanvasFocus`)
-    if (this.focusList.length && !e.ctrlKey && !e.metaKey && !e.altKey && this.canvasHasFocus()) {
+    if (e.key === 'Tab') this.#tabBack = e.shiftKey // which way the page's focus is travelling (see `onCanvasFocus`)
+    if (this.#focusList.length && !e.ctrlKey && !e.metaKey && !e.altKey && this.#canvasHasFocus()) {
       if (e.key === 'Tab') { if (this.focusNext(e.shiftKey ? -1 : 1)) e.preventDefault(); return }
-      if ((e.key === 'Enter' || e.key === ' ') && this.clickFocused()) { e.preventDefault(); return }
+      if ((e.key === 'Enter' || e.key === ' ') && this.#clickFocused()) { e.preventDefault(); return }
     }
     // Consume the key ONLY if the scene reads it (cf. onWheel): an activity bound to the arrows/space
     // stops scrolling the page under it, while an unused key keeps its native behavior.
-    if ((this.readsKey(e.key) || (!!e.code && this.readsKey(e.code))) && !e.ctrlKey && !e.metaKey && !e.altKey && !NEVER_CONSUMED.test(e.key)) e.preventDefault()
+    if ((this.#readsKey(e.key) || (!!e.code && this.#readsKey(e.code))) && !e.ctrlKey && !e.metaKey && !e.altKey && !NEVER_CONSUMED.test(e.key)) e.preventDefault()
   }
   // NB: no editable-target guard on keyup — a key pressed over the canvas then released while a host
   // input has the focus must still be cleared, or it stays "held" forever.
-  private readonly onKeyUp = (e: KeyboardEvent) => {
-    this.holdKey(e.key, false, e.code)
+  readonly #onKeyUp = (e: KeyboardEvent) => {
+    this.#holdKey(e.key, false, e.code)
   }
   /** Single write path for the held-keys set (physical key, `setKey`, headless replay). The space bar
    *  arrives as `" "` but is authored as `keys.Space` → both are held/released together. */
-  private holdKey(key: string, down: boolean, code?: string): void {
+  #holdKey(key: string, down: boolean, code?: string): void {
     // A physical key is held under BOTH its names: what it types (`event.key`: "Shift", "1", "a") and where
     // it sits (`event.code`: "ShiftLeft", "Digit1", "KeyA"). The second tells the two Shift keys apart and
     // gives the digit row a name an expression can spell. Tracking by code also releases the right `key`
     // name: with Shift let go first, the keyup of "A" reports "a", and "A" used to stay held forever.
     if (code) {
-      if (down) this.keyOfCode.set(code, key)
-      else this.keyOfCode.delete(code)
-    } else if (down) this.plainKeys.add(key)
+      if (down) this.#keyOfCode.set(code, key)
+      else this.#keyOfCode.delete(code)
+    } else if (down) this.#plainKeys.add(key)
     else {
-      this.plainKeys.delete(key)
-      for (const [c, k] of this.keyOfCode) if (k === key) this.keyOfCode.delete(c) // a codeless release of a key that went down with one
+      this.#plainKeys.delete(key)
+      for (const [c, k] of this.#keyOfCode) if (k === key) this.#keyOfCode.delete(c) // a codeless release of a key that went down with one
     }
-    this.heldKeys.clear()
-    const hold = (name: string) => { this.heldKeys.add(name); if (name === ' ') this.heldKeys.add('Space') }
-    for (const k of this.plainKeys) hold(k)
-    for (const [c, k] of this.keyOfCode) { hold(c); hold(k) } // a `key` name stays held while ANY physical key reporting it is down
-    this.bustNamed()
+    this.#heldKeys.clear()
+    const hold = (name: string) => { this.#heldKeys.add(name); if (name === ' ') this.#heldKeys.add('Space') }
+    for (const k of this.#plainKeys) hold(k)
+    for (const [c, k] of this.#keyOfCode) { hold(c); hold(k) } // a `key` name stays held while ANY physical key reporting it is down
+    this.#bustNamed()
   }
   /** Losing the window (alt-tab, focus on another frame) never delivers the keyup → release everything,
    *  else the scene keeps running with a key stuck down. */
-  private readonly onBlur = () => {
-    if (!this.heldKeys.size) return
-    this.heldKeys.clear(); this.plainKeys.clear(); this.keyOfCode.clear()
-    this.bustNamed()
+  readonly #onBlur = () => {
+    if (!this.#heldKeys.size) return
+    this.#heldKeys.clear(); this.#plainKeys.clear(); this.#keyOfCode.clear()
+    this.#bustNamed()
     this.render()
   }
   /** Does the scene read this key? `" "` is authored as `keys.Space` (cf. onKeyDown's alias). */
-  private readsKey(key: string): boolean {
-    return this.readKeys.has(key === ' ' ? 'Space' : key)
+  #readsKey(key: string): boolean {
+    return this.#readKeys.has(key === ' ' ? 'Space' : key)
   }
-  private readonly onPointerLeave = (e?: PointerEvent) => {
-    this.usePointer(e?.pointerId)
+  readonly #onPointerLeave = (e?: PointerEvent) => {
+    this.#usePointer(e?.pointerId)
     // Safety net: if pointer capture is not supported, a pointer that leaves releases the grab.
-    if (this.grabbed) {
-      const id = this.grabbed
-      this.clearGrab()
-      this.clearLinkTarget(id) // the pointer left the canvas -> no target reached
-      this.fireEvent(id, 'release')
+    if (this.#grabbed) {
+      const id = this.#grabbed
+      this.#clearGrab()
+      this.#clearLinkTarget(id) // the pointer left the canvas -> no target reached
+      this.#fireEvent(id, 'release')
     }
-    if (this.hovered) {
-      this.fireEvent(this.hovered, 'leave')
-      this.hovered = null
+    if (this.#hovered) {
+      this.#fireEvent(this.#hovered, 'leave')
+      this.#hovered = null
     }
-    this.hoverIds.clear() // pointer left the canvas → nothing hovered
+    this.#hoverIds.clear() // pointer left the canvas → nothing hovered
     this.render()
   }
-  private worldPoint(e: { clientX: number; clientY: number }): Point {
-    const r = this.canvas.getBoundingClientRect()
-    return { x: (e.clientX - r.left - this.view.tx) / this.view.scale, y: (e.clientY - r.top - this.view.ty) / this.view.scale }
+  #worldPoint(e: { clientX: number; clientY: number }): Point {
+    const r = this.#canvas.getBoundingClientRect()
+    return { x: (e.clientX - r.left - this.#view.tx) / this.#view.scale, y: (e.clientY - r.top - this.#view.ty) / this.#view.scale }
   }
   /** Handlers on an item, by event, in document order (the order they must run in). */
-  private handlersFor(id: string): Map<ItemEvent, Interaction[]> | undefined {
-    if (!this.handlerIndex) {
+  #handlersFor(id: string): Map<ItemEvent, Interaction[]> | undefined {
+    if (!this.#handlerIndex) {
       const m = new Map<string, Map<ItemEvent, Interaction[]>>()
       for (const x of this.doc.interactions ?? []) {
         let byEvent = m.get(x.targetId)
@@ -645,22 +647,22 @@ export class FlatPlayer {
         if (list) list.push(x)
         else byEvent.set(x.event, [x])
       }
-      this.handlerIndex = m
+      this.#handlerIndex = m
     }
-    return this.handlerIndex.get(id)
+    return this.#handlerIndex.get(id)
   }
   /** Every interactor declared on an item, in document order. */
-  private interactorsFor(id: string): Interactor[] | undefined {
-    if (!this.interactorIndex) {
+  #interactorsFor(id: string): Interactor[] | undefined {
+    if (!this.#interactorIndex) {
       const m = new Map<string, Interactor[]>()
       for (const x of this.doc.interactors ?? []) {
         const list = m.get(x.targetId)
         if (list) list.push(x)
         else m.set(x.targetId, [x])
       }
-      this.interactorIndex = m
+      this.#interactorIndex = m
     }
-    return this.interactorIndex.get(id)
+    return this.#interactorIndex.get(id)
   }
   /**
    * Target of an event at a point: we walk ALL the hit chains (top to bottom) and, within each,
@@ -668,29 +670,29 @@ export class FlatPlayer {
    * "falls through" a non-interactive item placed on top down to the clickable one below, instead
    * of being swallowed by it.
    */
-  private pickTarget(chains: string[][], events: readonly ItemEvent[]): string | null {
+  #pickTarget(chains: string[][], events: readonly ItemEvent[]): string | null {
     if (!this.doc.interactions?.length) return null
     for (const chain of chains) {
       for (let i = chain.length - 1; i >= 0; i--) {
-        const byEvent = this.handlersFor(chain[i])
+        const byEvent = this.#handlersFor(chain[i])
         if (byEvent) for (const e of events) if (byEvent.has(e)) return chain[i]
       }
     }
     return null
   }
-  private interactorFor(id: string): Interactor | undefined {
-    return this.interactorsFor(id)?.[0] // first declared wins — what the `find` it replaces returned
+  #interactorFor(id: string): Interactor | undefined {
+    return this.#interactorsFor(id)?.[0] // first declared wins — what the `find` it replaces returned
   }
   /** Is the drag active? `enabled` absent = always; otherwise true iff the expression is != 0. */
-  private interactorEnabled(it: Interactor): boolean {
-    return !it.enabled || this.evalNumber(it.enabled) !== 0
+  #interactorEnabled(it: Interactor): boolean {
+    return !it.enabled || this.#evalNumber(it.enabled) !== 0
   }
   /** Topmost grabbable item carrying an ACTIVE (drag) interactor, at a point. */
-  private pickInteractor(chains: string[][]): string | null {
+  #pickInteractor(chains: string[][]): string | null {
     if (!this.doc.interactors?.length) return null
     for (const chain of chains) for (let i = chain.length - 1; i >= 0; i--) {
-      const its = this.interactorsFor(chain[i]) // ANY enabled one makes the item grabbable (as the scan did)
-      if (its?.some((x) => this.interactorEnabled(x))) return chain[i]
+      const its = this.#interactorsFor(chain[i]) // ANY enabled one makes the item grabbable (as the scan did)
+      if (its?.some((x) => this.#interactorEnabled(x))) return chain[i]
     }
     return null
   }
@@ -699,23 +701,23 @@ export class FlatPlayer {
    *  the object's PARENT space (`parentInv` cached at grab time -- no scene walk per movement). */
   /** Writes a gesture output: simple variable `name`, or array element `name[idx]` (idx is EVALUATED).
    *  The indexed form is the natural output under `each` (e.g. `drag hx[i], hy[i]` -> `hx[0]`... after unfolding). */
-  private writeOut(target: string, value: number): void {
+  #writeOut(target: string, value: number): void {
     const lb = target.indexOf('[')
-    if (lb < 0) { this.setVarLive(target, value); return }
-    const a = this.vars.get(target.slice(0, lb))
+    if (lb < 0) { this.#setVarLive(target, value); return }
+    const a = this.#vars.get(target.slice(0, lb))
     if (!Array.isArray(a)) return
-    const i = Math.round(this.evalNumber(target.slice(lb + 1, target.lastIndexOf(']'))))
+    const i = Math.round(this.#evalNumber(target.slice(lb + 1, target.lastIndexOf(']'))))
     if (i >= 0 && i < a.length) a[i] = value
   }
   /** `reveal … { cells <array> }`: marks the cell `i` as cleared. Silent when the name is not a declared
    *  array or the index is past its end — `--check` states the grid's exact size, which is where a
    *  mismatch belongs (a runtime throw would kill the gesture mid-stroke). */
-  private markCell(name: string, i: number): void {
-    const a = this.vars.get(name)
+  #markCell(name: string, i: number): void {
+    const a = this.#vars.get(name)
     if (Array.isArray(a) && i >= 0 && i < a.length) a[i] = 1
   }
-  private applyDrag(p: Point): void {
-    const d = this.dragActive
+  #applyDrag(p: Point): void {
+    const d = this.#dragActive
     if (!d) return
     if (d.it.axis === 'turn' || d.it.axis === 'turnDeg') { // the object points toward the cursor (pivot->pointer angle). `turn` = RADIANS (pairs with the `rotation` channel / `gesture.angle`); `turnDeg` = DEGREES (pairs with `rotationDeg`)
       const piv = d.it.pivot ?? { x: 0, y: 0 }
@@ -723,8 +725,8 @@ export class FlatPlayer {
       let a = Math.atan2(p.y - piv.y, p.x - piv.x) // radians
       if (deg) a = (a * 180) / Math.PI
       if (d.it.grid && d.it.grid > 0) { const step = deg ? d.it.grid : (d.it.grid * Math.PI) / 180; a = Math.round(a / step) * step } // `snap` is authored in degrees
-      if (d.it.varX) this.writeOut(d.it.varX, a)
-      this.bustNamed()
+      if (d.it.varX) this.#writeOut(d.it.varX, a)
+      this.#bustNamed()
       return
     }
     if (d.it.axis === 'trace') { // follow a path: progress 0..1 (monotone) as long as we stay within tolerance
@@ -738,12 +740,12 @@ export class FlatPlayer {
           // CURSOR (historical): the progress IS the projection, monotone within the grab. A press anywhere
           // on the path counts as having reached that point — fine for a slider, wrong for a tracing drill.
           if (onPath) d.traceMaxT = Math.max(d.traceMaxT ?? 0, t)
-          if (d.it.varX) this.writeOut(d.it.varX, d.traceMaxT ?? 0)
-        } else if (this.grabbed) {
-          this.advanceTrace(this.grabbed, d.it, t, d.traceLen ?? 1, onPath)
+          if (d.it.varX) this.#writeOut(d.it.varX, d.traceMaxT ?? 0)
+        } else if (this.#grabbed) {
+          this.#advanceTrace(this.#grabbed, d.it, t, d.traceLen ?? 1, onPath)
         }
-        if (d.it.pointX && d.it.pointY) this.writeTracePoint(d.it, path, this.tracePos(this.grabbed ?? '', d.it, d.traceMaxT ?? 0))
-        this.bustNamed()
+        if (d.it.pointX && d.it.pointY) this.#writeTracePoint(d.it, path, this.#tracePos(this.#grabbed ?? '', d.it, d.traceMaxT ?? 0))
+        this.#bustNamed()
       }
       return
     }
@@ -766,17 +768,17 @@ export class FlatPlayer {
           // `cells <array>`: hand the author WHERE it was scratched, not only how much. Written once per
           // cell (on the tick that clears it) — a full-frame grid is hundreds of cells and the pointer
           // sweeps it at ~120 Hz, so re-writing the whole array per move would be the expensive way.
-          if (fresh && d.it.cells) this.markCell(d.it.cells, idx)
+          if (fresh && d.it.cells) this.#markCell(d.it.cells, idx)
         }
-        if (d.it.varX) this.writeOut(d.it.varX, cells.size / (g.cols * g.rows))
-        this.bustNamed()
+        if (d.it.varX) this.#writeOut(d.it.varX, cells.size / (g.cols * g.rows))
+        this.#bustNamed()
       }
       return
     }
     if (d.it.axis === 'link') { // pull a wire: the free end follows the pointer (the author DRAWS the wire via endX/endY); target resolved on release
-      if (d.it.varX) this.writeOut(d.it.varX, p.x)
-      if (d.it.varY) this.writeOut(d.it.varY, p.y)
-      this.bustNamed()
+      if (d.it.varX) this.#writeOut(d.it.varX, p.x)
+      if (d.it.varY) this.#writeOut(d.it.varY, p.y)
+      this.#bustNamed()
       return
     }
     let x = p.x + d.offX
@@ -787,9 +789,9 @@ export class FlatPlayer {
       if (b) { x = Math.max(b.minX, Math.min(b.maxX, x)); y = Math.max(b.minY, Math.min(b.maxY, y)) }
     }
     const local = apply(d.parentInv, { x, y }) // world -> parent-local (identity at the root)
-    if (d.it.axis !== 'y' && d.it.varX) this.writeOut(d.it.varX, local.x)
-    if (d.it.axis !== 'x' && d.it.varY) this.writeOut(d.it.varY, local.y)
-    this.bustNamed()
+    if (d.it.axis !== 'y' && d.it.varX) this.#writeOut(d.it.varX, local.x)
+    if (d.it.axis !== 'x' && d.it.varY) this.#writeOut(d.it.varY, local.y)
+    this.#bustNamed()
   }
   /**
    * CONTINUOUS trace (`step`): the progress may only grow through what the finger actually passes, by at
@@ -802,8 +804,8 @@ export class FlatPlayer {
    * (`dir`), and on a CLOSED path — whose two ends are the same point — the direction is simply the one
    * the finger left in. The direction locks on the first ADVANCE, never on the press alone.
    */
-  private advanceTrace(id: string, it: Interactor, t: number, length: number, onPath: boolean): void {
-    const st = this.traceStates.get(id) ?? { progress: 0, dir: 0 as 0 | 1 | -1 }
+  #advanceTrace(id: string, it: Interactor, t: number, length: number, onPath: boolean): void {
+    const st = this.#traceStates.get(id) ?? { progress: 0, dir: 0 as 0 | 1 | -1 }
     const step = it.step ?? 0
     if (onPath) {
       // The jump is compared with a hair of slack: a replay script that moves by exactly `step` px lands on
@@ -814,24 +816,24 @@ export class FlatPlayer {
         if (u > st.progress && (u - st.progress) * length <= room) { st.dir = dir; st.progress = u; break }
       }
     }
-    this.traceStates.set(id, st)
-    if (it.varX) this.writeOut(it.varX, st.progress)
+    this.#traceStates.set(id, st)
+    if (it.varX) this.#writeOut(it.varX, st.progress)
   }
   /** Progress of a trace in the PATH's own parameter (what `samplePathAt` takes), whichever end was entered. */
-  private tracePos(id: string, it: Interactor, fallback: number): number {
+  #tracePos(id: string, it: Interactor, fallback: number): number {
     if (it.step === undefined) return fallback // cursor mode: the projection is the position
-    const st = this.traceStates.get(id)
+    const st = this.#traceStates.get(id)
     if (!st) return 0
     return st.dir === -1 ? 1 - st.progress : st.progress
   }
   /** `point <x>, <y>`: the WORLD point where the ink stops — the pen tip, and the spot to put the finger
    *  back on after a pause. Written on every move AND at load, so the marker starts on the path's start
    *  instead of at the origin. */
-  private writeTracePoint(it: Interactor, path: Path, at: number): void {
+  #writeTracePoint(it: Interactor, path: Path, at: number): void {
     if (!it.pointX || !it.pointY) return
     const pt = samplePathAt(path, at).point
-    this.writeOut(it.pointX, pt.x)
-    this.writeOut(it.pointY, pt.y)
+    this.#writeOut(it.pointX, pt.x)
+    this.#writeOut(it.pointY, pt.y)
   }
   /**
    * Re-seats the state a gesture keeps OUTSIDE the variables on the variables the document was seeded with
@@ -844,157 +846,157 @@ export class FlatPlayer {
    * the `cells` array it writes. Seed either and the gesture picks up where it was. Runs once per load,
    * before the first paint.
    */
-  private reseedDerivedState(): void {
+  #reseedDerivedState(): void {
     for (const it of this.doc.interactors ?? []) {
       if (it.axis === 'trace') {
-        const seeded = it.varX ? this.vars.get(it.varX) : undefined
+        const seeded = it.varX ? this.#vars.get(it.varX) : undefined
         if (it.step !== undefined && typeof seeded === 'number' && seeded > 0) {
           // The END it was entered from is NOT in the seed: `dir` stays undecided and re-locks on the first
           // advance, which is right for a one-way path and picks the finger's side on a `both ends` one.
-          this.traceStates.set(it.targetId, { progress: seeded > 1 ? 1 : seeded, dir: 0 })
+          this.#traceStates.set(it.targetId, { progress: seeded > 1 ? 1 : seeded, dir: 0 })
         }
         if (it.pointX && it.pointY && it.confine) { // …and the marker lands where the ink stops, not at the origin
-          const path = this.tracePathFor(it.confine)
-          if (path?.subpaths.length) this.writeTracePoint(it, path, this.tracePos(it.targetId, it, 0))
+          const path = this.#tracePathFor(it.confine)
+          if (path?.subpaths.length) this.#writeTracePoint(it, path, this.#tracePos(it.targetId, it, 0))
         }
         continue
       }
       if (it.axis !== 'reveal' || !it.cells) continue
-      const seeded = this.vars.get(it.cells)
+      const seeded = this.#vars.get(it.cells)
       if (!Array.isArray(seeded) || !seeded.some((v) => v)) continue // nothing scratched (or no grid seeded)
       // The fraction is DERIVED from the grid, so it is recomputed from the cells rather than trusting a
       // second seeded number: one array brings a half-scratched veil back exactly as it was.
-      this.reseatReveal(it, seeded)
+      this.#reseatReveal(it, seeded)
     }
   }
   /** The reveal state a GRAB starts from: the grid, plus the author's array brought back in line with the
    *  coverage we hold. An ELEMENT write (`grid[i] = 0`) is cosmetic — the coverage behind it did not move —
    *  so it is corrected here rather than letting a scene show an intact cell over a cleared zone. (Writing
    *  the array WHOLE is the other thing entirely: that one re-seats the coverage, see `reseatReveal`.) */
-  private revealGrabState(id: string, it: Interactor): RevealState | Record<string, never> {
-    const st = this.revealGridFor(id, it)
-    if (it.cells && 'revealCells' in st) for (const idx of st.revealCells) this.markCell(it.cells, idx)
+  #revealGrabState(id: string, it: Interactor): RevealState | Record<string, never> {
+    const st = this.#revealGridFor(id, it)
+    if (it.cells && 'revealCells' in st) for (const idx of st.revealCells) this.#markCell(it.cells, idx)
     return st
   }
   /** WORLD bbox of every `reveal` target — the zones the hit test honours whatever their content looks like
    *  (see `GrabZones` in hit.ts). Built once per document: a zone is the item's GEOMETRY, which erasing the
    *  veil that fills it does not change. */
-  private buildGrabZones(): void {
+  #buildGrabZones(): void {
     const ids = new Set((this.doc.interactors ?? []).filter((i) => i.axis === 'reveal').map((i) => i.targetId))
-    this.grabZones = ids.size ? itemBoundsByIds(this.doc, ids) : undefined // ONE walk for all of them
+    this.#grabZones = ids.size ? itemBoundsByIds(this.doc, ids) : undefined // ONE walk for all of them
   }
   /** Reveal state for a target: the grid of cells (side = brush) over its WORLD bbox, with the ticked cells
    *  PERSISTED across grabs (`revealStates`) so coverage accumulates monotonically over several strokes. */
-  private revealGridFor(id: string, it: Interactor): RevealState | Record<string, never> {
-    const cached = this.revealStates.get(id)
+  #revealGridFor(id: string, it: Interactor): RevealState | Record<string, never> {
+    const cached = this.#revealStates.get(id)
     if (cached) return cached // keep accumulating from a previous grab
-    const b = this.grabZones?.get(id) ?? itemBoundsById(this.doc, id) // same bbox the hit test uses as the zone
+    const b = this.#grabZones?.get(id) ?? itemBoundsById(this.doc, id) // same bbox the hit test uses as the zone
     if (!b) return {}
     // ONE definition of the grid, shared with the `--check` pass that tells the author how many cells to
     // declare (they drifted once, and the array silently lost every write past its end).
     const { cell, cols, rows } = revealGrid(b, it)
     const state: RevealState = { revealCells: new Set<number>(), revealGrid: { minX: b.minX, minY: b.minY, cell, cols, rows } }
-    this.revealStates.set(id, state)
+    this.#revealStates.set(id, state)
     // `erase`: hand the renderer a LIVE view of this grid (same Set) — every ticked cell shows up on the
     // next paint with nothing to copy or invalidate. `brush` = the radius the gesture itself rubs with.
-    if (it.erase) this.scratched.set(id, { cells: state.revealCells, minX: b.minX, minY: b.minY, cell, cols, version: 0 })
+    if (it.erase) this.#scratched.set(id, { cells: state.revealCells, minX: b.minX, minY: b.minY, cell, cols, version: 0 })
     return state
   }
   /** On release of a `link`: 1st target (named child of the group) containing the pointer -> index 1..n (0 = none).
    *  If linked, the wire end (endX/endY) sticks to the target center; otherwise it stays at the pointer (the author handles
    *  the "return" via target == 0). Several links coexist: one `link` interactor per source object. */
-  private resolveLink(it: Interactor, pointer: Point): void {
+  #resolveLink(it: Interactor, pointer: Point): void {
     const targets = it.confine ? groupTargets(this.doc, it.confine) : []
     let hit = 0
     for (let i = 0; i < targets.length; i++) {
       const b = targets[i].bbox
       if (pointer.x >= b.minX && pointer.x <= b.maxX && pointer.y >= b.minY && pointer.y <= b.maxY) {
         hit = i + 1
-        if (it.varX) this.writeOut(it.varX, (b.minX + b.maxX) / 2)
-        if (it.varY) this.writeOut(it.varY, (b.minY + b.maxY) / 2)
+        if (it.varX) this.#writeOut(it.varX, (b.minX + b.maxX) / 2)
+        if (it.varY) this.#writeOut(it.varY, (b.minY + b.maxY) / 2)
         break
       }
     }
-    if (it.varT) this.writeOut(it.varT, hit)
-    this.bustNamed()
+    if (it.varT) this.#writeOut(it.varT, hit)
+    this.#bustNamed()
   }
   /** A release that pulled NO thread (the `link` was `{ enabled … }`-gated off, or the gesture was canceled):
    *  its target index is 0 — "no target reached" — not whatever the LAST completed gesture left there.
    *  `{ enabled … }` gates the GESTURE, not the handler: `when released` still fires, so without this the
    *  handler re-read a stale index and, e.g., counted the same pair again on every further press. Only the
    *  target index is reset; the position outputs (varX/varY) are the wire end and stay where they were. */
-  private clearLinkTarget(id: string): void {
-    const it = this.interactorFor(id)
-    if (it?.axis === 'link' && it.varT) { this.writeOut(it.varT, 0); this.bustNamed() }
+  #clearLinkTarget(id: string): void {
+    const it = this.#interactorFor(id)
+    if (it?.axis === 'link' && it.varT) { this.#writeOut(it.varT, 0); this.#bustNamed() }
   }
   /** On release: `when dropped on Zone` whose tested point falls within the zone bbox.
    *  Tested point = the object's CENTER by default, or the POINTER if `at pointer`. Zone = the group's
    *  explicit `hitbox` if present, otherwise the (static) bbox of its content. */
-  private fireDrops(id: string, pointer: Point): void {
-    const drops = this.handlersFor(id)?.get('drop')
+  #fireDrops(id: string, pointer: Point): void {
+    const drops = this.#handlersFor(id)?.get('drop')
     if (!drops?.length) return
-    const pos = objectChannelsById(this.doc, id, this.frame, this.exprCtx(), this.fps)
+    const pos = objectChannelsById(this.doc, id, this.#frame, this.#exprCtx(), this.fps)
     const center: Point = { x: pos?.x ?? pointer.x, y: pos?.y ?? pointer.y }
     for (const d of drops) {
       if (!d.over) continue
       const t = d.atPointer ? pointer : center
       const b = dropZoneBounds(this.doc, d.over)
-      if (b && t.x >= b.minX && t.x <= b.maxX && t.y >= b.minY && t.y <= b.maxY) this.run(d.actions)
+      if (b && t.x >= b.minX && t.x <= b.maxX && t.y >= b.minY && t.y <= b.maxY) this.#run(d.actions)
     }
   }
-  private fireEvent(id: string, event: ItemEvent): void {
-    const matched = this.handlersFor(id)?.get(event)
+  #fireEvent(id: string, event: ItemEvent): void {
+    const matched = this.#handlersFor(id)?.get(event)
     if (!matched?.length) return // no handler -> we skip the self/conversion setup (a scene walk)
     // `self` + conversions in the handler: resolved BEFORE (ctx without self to avoid recursion),
     // set for the duration of the actions, then restored.
-    const prevSelf = this.selfChannels
-    const prevParent = this.selfParent
-    this.selfChannels = null
-    this.selfParent = null
-    const ctx = this.exprCtx()
-    const placed = objectPlacementById(this.doc, id, this.frame, ctx, this.fps) // ONE scene walk for both
-    this.selfChannels = placed?.channels ?? null
-    this.selfParent = placed?.parent ?? IDENTITY
-    for (const x of matched) this.run(x.actions)
-    this.selfChannels = prevSelf
-    this.selfParent = prevParent
+    const prevSelf = this.#selfChannels
+    const prevParent = this.#selfParent
+    this.#selfChannels = null
+    this.#selfParent = null
+    const ctx = this.#exprCtx()
+    const placed = objectPlacementById(this.doc, id, this.#frame, ctx, this.fps) // ONE scene walk for both
+    this.#selfChannels = placed?.channels ?? null
+    this.#selfParent = placed?.parent ?? IDENTITY
+    for (const x of matched) this.#run(x.actions)
+    this.#selfChannels = prevSelf
+    this.#selfParent = prevParent
   }
-  private readonly onPointerMove = (e: PointerEvent) => {
-    this.usePointer(e.pointerId)
-    const p = this.worldPoint(e)
-    this.mouse.dx += p.x - this.mouse.x // accumulate the movement until the next tick
-    this.mouse.dy += p.y - this.mouse.y
-    this.mouse.x = p.x
-    this.mouse.y = p.y
+  readonly #onPointerMove = (e: PointerEvent) => {
+    this.#usePointer(e.pointerId)
+    const p = this.#worldPoint(e)
+    this.#mouse.dx += p.x - this.#mouse.x // accumulate the movement until the next tick
+    this.#mouse.dy += p.y - this.#mouse.y
+    this.#mouse.x = p.x
+    this.#mouse.y = p.y
     // Refresh the expr cache only if something reads mouse.x/y (a drag self-busts in applyDrag); else a move
     // changes no expression input. And repaint only if the PICTURE reads the mouse: a scene whose logic
     // alone reads it repaints through the variables it writes, not on every move.
-    if (this.usesMousePos) this.bustNamed(this.reads.has('mouse'))
-    if (this.pendingClick && Math.hypot(p.x - this.grabStart.x, p.y - this.grabStart.y) > TAP_TOL) this.pendingClick = null // moved past the tap tolerance → a drag, not a click
+    if (this.#usesMousePos) this.#bustNamed(this.#reads.has('mouse'))
+    if (this.#pendingClick && Math.hypot(p.x - this.#grabStart.x, p.y - this.#grabStart.y) > TAP_TOL) this.#pendingClick = null // moved past the tap tolerance → a drag, not a click
     // Grab in progress: the grabbed item receives `drag` (even if the pointer leaves it).
-    if (this.grabbed) {
-      this.record('move', p, e.pointerId) // record moves ONLY during a drag (reduced volume)
-      if (Math.hypot(p.x - this.grabStart.x, p.y - this.grabStart.y) > LONGPRESS_TOL) this.cancelLongPress()
-      this.canvas.style.cursor = 'grabbing'
-      this.applyDrag(p) // "drag" interactor: writes varX/varY (no-op if no active drag)
-      this.fireEvent(this.grabbed, 'drag')
+    if (this.#grabbed) {
+      this.#record('move', p, e.pointerId) // record moves ONLY during a drag (reduced volume)
+      if (Math.hypot(p.x - this.#grabStart.x, p.y - this.#grabStart.y) > LONGPRESS_TOL) this.#cancelLongPress()
+      this.#canvas.style.cursor = 'grabbing'
+      this.#applyDrag(p) // "drag" interactor: writes varX/varY (no-op if no active drag)
+      this.#fireEvent(this.#grabbed, 'drag')
       // Painted now only if no loop runs; else the next frame paints it (it is dirty). Painting here as
       // well drew a playing scene twice per frame while a finger dragged.
-      this.dirty = true
-      if (!this.playing && !this.transRaf) this.render()
+      this.#dirty = true
+      if (!this.#playing && !this.#transRaf) this.render()
       return
     }
     if (this.doc.interactions?.length || this.doc.interactors?.length) {
-      const chains = hitChains(this.doc, this.frame, this.exprCtx(), p, this.grabZones, this.paramsOf)
+      const chains = hitChains(this.doc, this.#frame, this.#exprCtx(), p, this.#grabZones, this.#paramsOf)
       const top = chains[0] ?? []
-      if (top.length !== this.hoverIds.size || top.some((id) => !this.hoverIds.has(id))) this.dirty = true // `self.hovered` changed for something
-      this.hoverIds = new Set(top) // topmost stack under the pointer → drives self.hovered feedback
-      this.canvas.style.cursor = (this.pickTarget(chains, GRAB_EVENTS) ?? this.pickInteractor(chains)) ? 'grab' : this.pickTarget(chains, CLICK_EVENTS) ? 'pointer' : 'default'
-      const hov = this.pickTarget(chains, HOVER_EVENTS)
-      if (hov !== this.hovered) {
-        if (this.hovered) this.fireEvent(this.hovered, 'leave')
-        if (hov) this.fireEvent(hov, 'enter')
-        this.hovered = hov
+      if (top.length !== this.#hoverIds.size || top.some((id) => !this.#hoverIds.has(id))) this.#dirty = true // `self.hovered` changed for something
+      this.#hoverIds = new Set(top) // topmost stack under the pointer → drives self.hovered feedback
+      this.#canvas.style.cursor = (this.#pickTarget(chains, GRAB_EVENTS) ?? this.#pickInteractor(chains)) ? 'grab' : this.#pickTarget(chains, CLICK_EVENTS) ? 'pointer' : 'default'
+      const hov = this.#pickTarget(chains, HOVER_EVENTS)
+      if (hov !== this.#hovered) {
+        if (this.#hovered) this.#fireEvent(this.#hovered, 'leave')
+        if (hov) this.#fireEvent(hov, 'enter')
+        this.#hovered = hov
       }
     }
     // Coalesce the move render. A pointermove fires at 125–1000 Hz, but a full render costs ~ms. When a
@@ -1002,182 +1004,184 @@ export class FlatPlayer {
     // ~60 fps and `bustNamed()` above makes that frame reflect the new pointer — so a synchronous per-event
     // render here is pure waste that saturates the main thread ("the scene lags when I move the mouse").
     // A static scene (no loop) still renders synchronously, so the cursor/hover follows immediately.
-    if (!this.playing && !this.transRaf) this.render() // else: the running loop paints the next frame
+    if (!this.#playing && !this.#transRaf) this.render() // else: the running loop paints the next frame
   }
   /** Sync `mouse.x/y` to a pointer position WITHOUT the move-delta accumulation, so a `when pressed` /
    *  `when released` handler reads the ACTUAL press/release point. On touch there is no hover `move` to set
    *  it first, so without this `mouse.*` is stale (0,0 on the first touch) inside press/click/release. */
-  private trackPointerPos(p: Point): void { this.mouse.x = p.x; this.mouse.y = p.y; this.bustNamed() }
+  #trackPointerPos(p: Point): void { this.#mouse.x = p.x; this.#mouse.y = p.y; this.#bustNamed() }
   // Wheel/trackpad scroll → `mouse.wheel` (accumulated delta since the last tick, consumed + reset like dx/dy).
   // An `every frame` script reads it: `Off = clamp(Off + mouse.wheel * k, 0, max)`. `preventDefault` only when
   // the scene actually reads it, so a scene that ignores the wheel still lets the page scroll over the canvas.
-  private readonly onWheel = (e: WheelEvent) => {
-    const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? (this.canvas.height || 600) : 1 // lines / pages → px
-    this.mouse.wheel += e.deltaY * k
-    if (this.usesWheel) e.preventDefault()
-    this.bustNamed()
+  readonly #onWheel = (e: WheelEvent) => {
+    const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? (this.#canvas.height || 600) : 1 // lines / pages → px
+    this.#mouse.wheel += e.deltaY * k
+    if (this.#usesWheel) e.preventDefault()
+    this.#bustNamed()
     this.render()
   }
-  private readonly onPointerDown = (e: PointerEvent) => {
-    this.pointerDown = true
-    this.setFocus(null) // the pointer takes over: no keyboard ring while it is used
+  readonly #onPointerDown = (e: PointerEvent) => {
+    this.#pointerDown = true
+    this.#setFocus(null) // the pointer takes over: no keyboard ring while it is used
     if (!this.doc.interactions?.length && !this.doc.interactors?.length) return
-    this.usePointer(e.pointerId)
-    const p = this.worldPoint(e)
-    this.trackPointerPos(p) // mouse.* must reflect the press point for `when pressed`/`when clicked` (touch: no prior hover)
-    this.record('down', p, e.pointerId)
-    const chains = hitChains(this.doc, this.frame, this.exprCtx(), p, this.grabZones, this.paramsOf)
-    const clickId = this.pickTarget(chains, CLICK_EVENTS)
-    const grabId = this.pickTarget(chains, GRAB_EVENTS) ?? this.pickInteractor(chains) // grabbable = handler OR interactor
-    this.grabStart = p // press point (tap/long-press movement tolerance) — set for the click case too, not only grabs
-    this.pendingClick = clickId // DEFERRED: fired on release iff the pointer stayed a tap (cleared by a drag move)
-    if (clickId && !grabId) this.capture(e.pointerId) // a click-only target still needs the release
+    this.#usePointer(e.pointerId)
+    const p = this.#worldPoint(e)
+    this.#trackPointerPos(p) // mouse.* must reflect the press point for `when pressed`/`when clicked` (touch: no prior hover)
+    this.#record('down', p, e.pointerId)
+    const chains = hitChains(this.doc, this.#frame, this.#exprCtx(), p, this.#grabZones, this.#paramsOf)
+    const clickId = this.#pickTarget(chains, CLICK_EVENTS)
+    const grabId = this.#pickTarget(chains, GRAB_EVENTS) ?? this.#pickInteractor(chains) // grabbable = handler OR interactor
+    this.#grabStart = p // press point (tap/long-press movement tolerance) — set for the click case too, not only grabs
+    this.#pendingClick = clickId // DEFERRED: fired on release iff the pointer stayed a tap (cleared by a drag move)
+    if (clickId && !grabId) this.#capture(e.pointerId) // a click-only target still needs the release
     if (grabId) {
-      this.grabbed = grabId
-      const inter = this.interactorFor(grabId)
-      if (inter && this.interactorEnabled(inter)) { // capture the grab offset (the clicked point stays under the cursor) + the parent transform
-        const placed = objectPlacementById(this.doc, grabId, this.frame, this.exprCtx(), this.fps) // ONE scene walk for both
+      this.#grabbed = grabId
+      const inter = this.#interactorFor(grabId)
+      if (inter && this.#interactorEnabled(inter)) { // capture the grab offset (the clicked point stays under the cursor) + the parent transform
+        const placed = objectPlacementById(this.doc, grabId, this.#frame, this.#exprCtx(), this.fps) // ONE scene walk for both
         const pos = placed?.channels
         const parent = placed?.parent ?? IDENTITY
-        this.dragActive = { it: inter, offX: (pos?.x ?? p.x) - p.x, offY: (pos?.y ?? p.y) - p.y, parentInv: invert(parent), ...(inter.axis === 'trace' ? traceGrab((n) => this.tracePathFor(n), inter) : {}), ...(inter.axis === 'reveal' ? this.revealGrabState(grabId, inter) : {}) }
+        this.#dragActive = { it: inter, offX: (pos?.x ?? p.x) - p.x, offY: (pos?.y ?? p.y) - p.y, parentInv: invert(parent), ...(inter.axis === 'trace' ? traceGrab((n) => this.#tracePathFor(n), inter) : {}), ...(inter.axis === 'reveal' ? this.#revealGrabState(grabId, inter) : {}) }
       }
-      this.capture(e.pointerId) // keep the drag even if the pointer leaves the canvas
-      this.fireEvent(grabId, 'press')
-      this.cancelLongPress()
-      const pid = this.pointerId
-      this.longPressTimer = setTimeout(() => {
-        this.usePointer(pid) // the timer belongs to the gesture that armed it, whichever pointer moved last
-        this.longPressTimer = null
-        if (this.grabbed === grabId) { this.fireEvent(grabId, 'longpress'); this.render() }
+      this.#capture(e.pointerId) // keep the drag even if the pointer leaves the canvas
+      this.#fireEvent(grabId, 'press')
+      this.#cancelLongPress()
+      const pid = this.#pointerId
+      this.#longPressTimer = setTimeout(() => {
+        this.#usePointer(pid) // the timer belongs to the gesture that armed it, whichever pointer moved last
+        this.#longPressTimer = null
+        if (this.#grabbed === grabId) { this.#fireEvent(grabId, 'longpress'); this.render() }
       }, LONGPRESS_MS)
     }
     if (clickId || grabId) this.render() // reflects the changes (variables/frame)
   }
-  private readonly onPointerUp = (e: PointerEvent) => {
-    this.pointerDown = false
+  readonly #onPointerUp = (e: PointerEvent) => {
+    this.#pointerDown = false
     // Release the capture acquired on down even if the press never became a grab/tap (e.g. a click-only
     // target whose press turned into a drag) — guarded so it never throws on an uncaptured pointer.
-    if (this.canvas.hasPointerCapture?.(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId)
-    this.usePointer(e.pointerId)
-    if (!this.grabbed && this.pendingClick === null) return
-    const grabbedId = this.grabbed
-    const click = this.pendingClick
-    this.pendingClick = null
-    const p = this.worldPoint(e)
-    this.trackPointerPos(p) // mouse.* must reflect the release point for `when released`/`when clicked`
-    this.record('up', p, e.pointerId)
+    if (this.#canvas.hasPointerCapture?.(e.pointerId)) this.#canvas.releasePointerCapture(e.pointerId)
+    this.#usePointer(e.pointerId)
+    if (!this.#grabbed && this.#pendingClick === null) return
+    const grabbedId = this.#grabbed
+    const click = this.#pendingClick
+    this.#pendingClick = null
+    const p = this.#worldPoint(e)
+    this.#trackPointerPos(p) // mouse.* must reflect the release point for `when released`/`when clicked`
+    this.#record('up', p, e.pointerId)
     if (grabbedId) {
       // Write the gesture outputs BEFORE emitting `release`, so a `when released` handler can read them
       // (link target index / end position) — consistent with `drag`, which writes its vars before `dragged`.
-      if (this.dragActive?.it.axis === 'link') this.resolveLink(this.dragActive.it, p) // tests the reached target -> writes the index (0 = none)
-      else this.clearLinkTarget(grabbedId) // no thread was pulled (gated off) -> index 0, never a stale one
-      this.fireEvent(grabbedId, 'release')
-      if (this.dragActive) this.fireDrops(grabbedId, p) // `when dropped on Zone`
-      this.clearGrab()
+      if (this.#dragActive?.it.axis === 'link') this.#resolveLink(this.#dragActive.it, p) // tests the reached target -> writes the index (0 = none)
+      else this.#clearLinkTarget(grabbedId) // no thread was pulled (gated off) -> index 0, never a stale one
+      this.#fireEvent(grabbedId, 'release')
+      if (this.#dragActive) this.#fireDrops(grabbedId, p) // `when dropped on Zone`
+      this.#clearGrab()
     }
-    if (click) this.fireEvent(click, 'click') // the press stayed a tap (pointer within TAP_TOL) → click now, not on press
+    if (click) this.#fireEvent(click, 'click') // the press stayed a tap (pointer within TAP_TOL) → click now, not on press
     this.render()
   }
   // Interrupted gesture (canceled touch, OS gesture): we release WITHOUT a drop (the pointer did not "let go" on a target).
-  private readonly onPointerCancel = (e: PointerEvent) => {
-    this.pointerDown = false
-    if (this.canvas.hasPointerCapture?.(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId) // release even a click-only capture
-    this.usePointer(e.pointerId)
-    this.pendingClick = null // an interrupted gesture is never a click
-    if (!this.grabbed) return
-    const id = this.grabbed
-    this.record('cancel', this.worldPoint(e), e.pointerId)
-    this.clearLinkTarget(id) // an interrupted gesture reached no target either
-    this.fireEvent(id, 'release')
-    this.clearGrab()
+  readonly #onPointerCancel = (e: PointerEvent) => {
+    this.#pointerDown = false
+    if (this.#canvas.hasPointerCapture?.(e.pointerId)) this.#canvas.releasePointerCapture(e.pointerId) // release even a click-only capture
+    this.#usePointer(e.pointerId)
+    this.#pendingClick = null // an interrupted gesture is never a click
+    if (!this.#grabbed) return
+    const id = this.#grabbed
+    this.#record('cancel', this.#worldPoint(e), e.pointerId)
+    this.#clearLinkTarget(id) // an interrupted gesture reached no target either
+    this.#fireEvent(id, 'release')
+    this.#clearGrab()
     this.render()
   }
-  private cancelLongPress(): void {
-    if (this.longPressTimer !== null) { clearTimeout(this.longPressTimer); this.longPressTimer = null }
+  #cancelLongPress(): void {
+    if (this.#longPressTimer !== null) { clearTimeout(this.#longPressTimer); this.#longPressTimer = null }
   }
-  private clearGrab(): void {
-    this.grabbed = null
-    this.dragActive = null
-    this.cancelLongPress()
+  #clearGrab(): void {
+    this.#grabbed = null
+    this.#dragActive = null
+    this.#cancelLongPress()
   }
   /** Surface exposed to the action interpreter (frame-actions, future onClick). */
-  private readonly host: ActionHost = {
-    play: () => this.release(),
-    pause: () => this.hold(),
+  readonly #host: ActionHost = {
+    play: () => this.#release(),
+    pause: () => this.#hold(),
     seek: (f) => this.seek(f),
     labelFrame: (name) => this.doc.timeline?.labels?.find((l) => l.name === name)?.frame,
-    setVar: (name, v) => { this.setVarLive(name, v) },
+    setVar: (name, v) => { this.#setVarLive(name, v) },
     setIndex: (name, i, v) => { // in-place: ctx shares the array ref
-      const a = this.vars.get(name)
+      const a = this.#vars.get(name)
       if (!Array.isArray(a) || i < 0 || i >= a.length || a[i] === v) return
       a[i] = v
-      if (this.reads.has(name)) { this.dirty = true; this.moving = true }
+      if (this.#reads.has(name)) { this.#dirty = true; this.#moving = true }
     },
-    fillVar: (name, count, value) => this.setVarLive(name, new Array<number>(Math.max(0, Math.min(MAX_FILL, Math.floor(count)))).fill(value)),
-    setParam: (target, param, value) => { this.applyParam(target, param, value) },
-    callProc: (name, args) => this.callProc(name, args),
-    evalNumber: (src) => this.evalNumber(src),
-    emit: (name, value, fields) => this.emit(name, value, fields),
-    textContent: (itemId) => this.textContent(itemId),
+    fillVar: (name, count, value) => this.#setVarLive(name, new Array<number>(Math.max(0, Math.min(MAX_FILL, Math.floor(count)))).fill(value)),
+    setParam: (target, param, value) => { this.#applyParam(target, param, value) },
+    callProc: (name, args) => this.#callProc(name, args),
+    evalNumber: (src) => this.#evalNumber(src),
+    emit: (name, value, fields) => this.#emit(name, value, fields),
+    textContent: (itemId) => this.#textContent(itemId),
     playSound: (assetId) => this.playSound(assetId),
-    withLocals: (names, body) => this.withLocals(names, body),
+    withLocals: (names, body) => this.#withLocals(names, body),
   }
 
+  readonly #canvas: HTMLCanvasElement
   constructor(
-    private readonly canvas: HTMLCanvasElement,
+    canvas: HTMLCanvasElement,
     doc: Doc,
     opts: PlayerOptions = {},
   ) {
+    this.#canvas = canvas
     const ctx = canvas.getContext('2d')
     if (!ctx) throw new Error('FlatPlayer: 2D context unavailable')
-    this.ctx = ctx
+    this.#ctx = ctx
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
-    this.applyInputUse()
-    this.analysePicture()
-    this.seed = opts.seed
+    this.#applyInputUse()
+    this.#analysePicture()
+    this.#seed = opts.seed
     const fr = opts.focusRing ?? true
-    this.ring = fr === false ? null : { color: (fr !== true && fr.color) || '#1a73e8', width: (fr !== true && fr.width) || 3 }
-    this.buildFocusList()
-    if (this.seed !== undefined) { this.rand = seededRandom(this.seed); this.drawRand = seededRandom(this.seed ^ 0x5bd1e995) }
-    this.maxDpr = opts.maxPixelRatio && opts.maxPixelRatio > 0 ? opts.maxPixelRatio : Infinity
-    this.hasModifiers = docHasModifiers(this.doc)
-    this.hasSymbolTimelines = this.doc.symbols.some((s) => !!s.timeline)
-    this.buildGrabZones()
-    this.traceOutputs = traceOutputNames(this.doc)
-    this.loop = opts.loop ?? true
-    this.pad = opts.padding ?? 0
-    this.audioOn = opts.audio ?? true
-    this.onEvent = opts.onEvent
-    this.renderOn = opts.render ?? true
-    this.imageProvider = opts.image
+    this.#ring = fr === false ? null : { color: (fr !== true && fr.color) || '#1a73e8', width: (fr !== true && fr.width) || 3 }
+    this.#buildFocusList()
+    if (this.#seed !== undefined) { this.#rand = seededRandom(this.#seed); this.#drawRand = seededRandom(this.#seed ^ 0x5bd1e995) }
+    this.#maxDpr = opts.maxPixelRatio && opts.maxPixelRatio > 0 ? opts.maxPixelRatio : Infinity
+    this.#hasModifiers = docHasModifiers(this.doc)
+    this.#hasSymbolTimelines = this.doc.symbols.some((s) => !!s.timeline)
+    this.#buildGrabZones()
+    this.#traceOutputs = traceOutputNames(this.doc)
+    this.#loop = opts.loop ?? true
+    this.#pad = opts.padding ?? 0
+    this.#audioOn = opts.audio ?? true
+    this.#onEvent = opts.onEvent
+    this.#renderOn = opts.render ?? true
+    this.#imageProvider = opts.image
     // Default resolver: embedded `data:` URIs only (no remote fetch) — the secure default.
-    this.resolveAsset = opts.resolveAsset ?? ((a) => (isEmbeddedData(a.data) ? a.data : null))
-    this.vars = cloneVars(doc.variables)
-    this.buildFunctions()
-    this.reseedDerivedState() // …once `vars` exists: a seeded trace/scratch comes back where it was
-    this.preloadAudio()
-    this.measure()
+    this.#resolveAsset = opts.resolveAsset ?? ((a) => (isEmbeddedData(a.data) ? a.data : null))
+    this.#vars = cloneVars(doc.variables)
+    this.#buildFunctions()
+    this.#reseedDerivedState() // …once `vars` exists: a seeded trace/scratch comes back where it was
+    this.#preloadAudio()
+    this.#measure()
     this.render()
-    this.fireLoad()
-    window.addEventListener('resize', this.onResize)
-    this.fontSet()?.addEventListener?.('loadingdone', this.onFontsLoaded)
+    this.#fireLoad()
+    window.addEventListener('resize', this.#onResize)
+    this.#fontSet()?.addEventListener?.('loadingdone', this.#onFontsLoaded)
     if (opts.input ?? true) { // false (gallery preview): plays the anim but does not attach the inputs
-      globalThis.addEventListener('keydown', this.onKeyDown)
-      globalThis.addEventListener('keyup', this.onKeyUp)
-      globalThis.addEventListener('blur', this.onBlur) // alt-tab: no keyup is delivered -> release the held keys
-      if (this.focusList.length) {
+      globalThis.addEventListener('keydown', this.#onKeyDown)
+      globalThis.addEventListener('keyup', this.#onKeyUp)
+      globalThis.addEventListener('blur', this.#onBlur) // alt-tab: no keyup is delivered -> release the held keys
+      if (this.#focusList.length) {
         // The canvas takes part in the page's tab order: Tab reaches it, then walks the scene's objects.
-        if (this.canvas.tabIndex < 0) this.canvas.tabIndex = 0
-        this.canvas.addEventListener('focus', this.onCanvasFocus)
-        this.canvas.addEventListener('blur', this.onCanvasBlur)
+        if (this.#canvas.tabIndex < 0) this.#canvas.tabIndex = 0
+        this.#canvas.addEventListener('focus', this.#onCanvasFocus)
+        this.#canvas.addEventListener('blur', this.#onCanvasBlur)
       }
-      this.canvas.addEventListener('pointermove', this.onPointerMove)
-      this.canvas.addEventListener('pointerdown', this.onPointerDown)
-      this.canvas.addEventListener('pointerup', this.onPointerUp)
-      this.canvas.addEventListener('pointercancel', this.onPointerCancel)
-      this.canvas.addEventListener('pointerleave', this.onPointerLeave)
-      this.canvas.addEventListener('wheel', this.onWheel, { passive: false }) // non-passive: may preventDefault when the scene reads mouse.wheel
-      this.scheduleHitWarm() // pre-flatten hittable paths on idle → the FIRST move/click isn't a cold-start jolt
+      this.#canvas.addEventListener('pointermove', this.#onPointerMove)
+      this.#canvas.addEventListener('pointerdown', this.#onPointerDown)
+      this.#canvas.addEventListener('pointerup', this.#onPointerUp)
+      this.#canvas.addEventListener('pointercancel', this.#onPointerCancel)
+      this.#canvas.addEventListener('pointerleave', this.#onPointerLeave)
+      this.#canvas.addEventListener('wheel', this.#onWheel, { passive: false }) // non-passive: may preventDefault when the scene reads mouse.wheel
+      this.#scheduleHitWarm() // pre-flatten hittable paths on idle → the FIRST move/click isn't a cold-start jolt
     }
     // A `pause` run by `when loaded` HOLDS the playhead: autoplay runs the scene, the head stays put.
     if (opts.autoplay) this.play()
@@ -1188,11 +1192,11 @@ export class FlatPlayer {
    * with a representative local frame. NB (v1): single playhead -> the symbol
    * actions share the global state; gotoFrame/play acts on the root.
    */
-  private activeSymbolTimelines(rootFrame: number): { tl: Timeline; frame: number }[] {
+  #activeSymbolTimelines(rootFrame: number): { tl: Timeline; frame: number }[] {
     // The walk can only ever report a symbol that HAS a timeline. When the library declares none — the
     // common case for a scene whose symbols are plain drawings — the answer is empty without walking, and
     // this runs once per rendered frame plus once per simulation step.
-    if (!this.hasSymbolTimelines) return []
+    if (!this.#hasSymbolTimelines) return []
     const out: { tl: Timeline; frame: number }[] = []
     const seenSym = new Set<string>()
     const walk = (layers: Layer[], frame: number, seen: Set<string>) => {
@@ -1218,15 +1222,15 @@ export class FlatPlayer {
   }
 
   /** Actions on load (onLoad): root + active symbols. */
-  private fireLoad(): void {
+  #fireLoad(): void {
     let changed = false
     if (this.doc.timeline?.onLoad?.length) {
-      this.run(this.doc.timeline.onLoad)
+      this.#run(this.doc.timeline.onLoad)
       changed = true
     }
-    for (const s of this.activeSymbolTimelines(0)) {
+    for (const s of this.#activeSymbolTimelines(0)) {
       if (s.tl.onLoad?.length) {
-        this.run(s.tl.onLoad)
+        this.#run(s.tl.onLoad)
         changed = true
       }
     }
@@ -1235,114 +1239,114 @@ export class FlatPlayer {
 
   /** (Re)compiles the available functions: imported packages (`use ...`) + doc functions (`fn ...`,
    *  which TAKE PRECEDENCE on a name clash). -> procedures + value functions. */
-  private buildFunctions(): void {
-    this.procs.clear()
-    this.valueFuncs = []
+  #buildFunctions(): void {
+    this.#procs.clear()
+    this.#valueFuncs = []
     for (const f of [...importedFunctions(this.doc.imports), ...(this.doc.functions ?? [])]) {
-      if (f.kind === 'proc') this.procs.set(f.name, { params: f.params, body: f.body })
-      else this.valueFuncs.push({ name: f.name, params: f.params, comp: compileCached(f.expr) })
+      if (f.kind === 'proc') this.#procs.set(f.name, { params: f.params, body: f.body })
+      else this.#valueFuncs.push({ name: f.name, params: f.params, comp: compileCached(f.expr) })
     }
-    this.funcNames = new Set(this.valueFuncs.map((f) => f.name))
-    this.ctxCache = null // function set changed → drop the cached context
+    this.#funcNames = new Set(this.#valueFuncs.map((f) => f.name))
+    this.#ctxCache = null // function set changed → drop the cached context
   }
 
   /** Writes a variable AND keeps the per-frame ctx cache in sync (write-through), so `exprCtx` never has to
    *  re-copy every variable on each eval. Reserved names (time/frame/clock/value) and function names are
    *  never overwritten in the ctx. */
-  private setVarLive(name: string, value: number | number[]): void {
-    if (this.vars.get(name) !== value && this.reads.has(name)) {
+  #setVarLive(name: string, value: number | number[]): void {
+    if (this.#vars.get(name) !== value && this.#reads.has(name)) {
       // A NUMBER that has moved by less than can be seen since it was last PAINTED does not repaint: an
       // exponential decay (`flash = flash * 0.86`) changes every step until it underflows, a minute later.
       // Compared to the painted value, not the previous step's, so a slow drift still adds up and shows.
-      const painted = this.painted.get(name)
-      if (typeof value !== 'number' || painted === undefined || Math.abs(value - painted) > PAINT_EPSILON) { this.dirty = true; this.moving = true }
+      const painted = this.#painted.get(name)
+      if (typeof value !== 'number' || painted === undefined || Math.abs(value - painted) > PAINT_EPSILON) { this.#dirty = true; this.#moving = true }
     }
-    this.vars.set(name, value)
-    if (this.ctxCache && !this.funcNames.has(name) && !RESERVED.has(name)) this.ctxCache[name] = value
+    this.#vars.set(name, value)
+    if (this.#ctxCache && !this.#funcNames.has(name) && !RESERVED.has(name)) this.#ctxCache[name] = value
     // A continuous `trace` keeps its progress across grabs, so the ONLY way to restart the exercise is the
     // one an author would write anyway: assign the progress variable (`avance = 0`). The variable stays the
     // source of truth — without this, `avance = 0` would blank the ink and the next touch would jump back
     // to where the finger had got to.
-    if (this.traceOutputs.size && this.traceOutputs.has(name) && typeof value === 'number') this.syncTraceState(name, value)
+    if (this.#traceOutputs.size && this.#traceOutputs.has(name) && typeof value === 'number') this.#syncTraceState(name, value)
     // Same rule for a scratch: the `cells` array is the truth, in BOTH directions. Writing it WHOLE
     // (`grid = fill(n, 0)` to blank a reopened board, or a host seeding a saved one) re-seats the coverage
     // — otherwise the zeroed array would be silently repopulated from the grid on the next grab.
     // Element writes (`grid[i] = …`) are left alone: the gesture itself makes thousands of them.
-    if (Array.isArray(value)) for (const it of this.doc.interactors ?? []) if (it.axis === 'reveal' && it.cells === name) this.reseatReveal(it, value)
+    if (Array.isArray(value)) for (const it of this.doc.interactors ?? []) if (it.axis === 'reveal' && it.cells === name) this.#reseatReveal(it, value)
   }
   /** Rebuild a `reveal`'s ticked cells from its `cells` array, and recompute the fraction from them. The
    *  mask the renderer holds is the same `Set`, so `erase` follows without anything to invalidate. */
-  private reseatReveal(it: Interactor, cells: number[]): void {
-    const st = this.revealGridFor(it.targetId, it)
+  #reseatReveal(it: Interactor, cells: number[]): void {
+    const st = this.#revealGridFor(it.targetId, it)
     if (!('revealGrid' in st) || !st.revealGrid) return
     const total = st.revealGrid.cols * st.revealGrid.rows
     st.revealCells.clear()
     for (let i = 0; i < cells.length && i < total; i++) if (cells[i]) st.revealCells.add(i)
     // The renderer stamps cells INCREMENTALLY (append-only). Rebuilding the set breaks that assumption, so
     // say it: the mask is restamped from scratch on the next paint instead of gaining a few discs.
-    const mask = this.scratched.get(it.targetId)
+    const mask = this.#scratched.get(it.targetId)
     if (mask) mask.version = (mask.version ?? 0) + 1
-    if (it.varX) this.setVarLive(it.varX, st.revealCells.size / total)
+    if (it.varX) this.#setVarLive(it.varX, st.revealCells.size / total)
   }
   /** Re-seat every continuous trace whose progress variable is `name` on the value the scene just wrote. */
-  private syncTraceState(name: string, value: number): void {
+  #syncTraceState(name: string, value: number): void {
     const p = value < 0 ? 0 : value > 1 ? 1 : value
     for (const it of this.doc.interactors ?? []) {
       if (it.axis !== 'trace' || it.step === undefined || it.varX !== name) continue
-      const st = this.traceStates.get(it.targetId)
-      this.traceStates.set(it.targetId, { progress: p, dir: p === 0 ? 0 : (st?.dir ?? 0) }) // back to 0 ⇒ the entry end is open again
+      const st = this.#traceStates.get(it.targetId)
+      this.#traceStates.set(it.targetId, { progress: p, dir: p === 0 ? 0 : (st?.dir ?? 0) }) // back to 0 ⇒ the entry end is open again
       if (it.pointX && it.pointY && it.confine) {
-        const path = this.tracePathFor(it.confine)
-        if (path?.subpaths.length) this.writeTracePoint(it, path, this.tracePos(it.targetId, it, p))
+        const path = this.#tracePathFor(it.confine)
+        if (path?.subpaths.length) this.#writeTracePoint(it, path, this.#tracePos(it.targetId, it, p))
       }
     }
   }
 
   /** Calls a procedure `fn name(p) { ... }`: binds the params (save/restore), bounds the recursion. */
-  private callProc(name: string, args: number[]): void {
-    const f = this.procs.get(name)
-    if (!f || this.funcDepth > 64) return
-    this.withLocals(f.params, () => {
-      f.params.forEach((p, i) => this.setVarLive(p, args[i] ?? 0))
-      this.funcDepth++
-      this.run(f.body)
-      this.funcDepth--
+  #callProc(name: string, args: number[]): void {
+    const f = this.#procs.get(name)
+    if (!f || this.#funcDepth > 64) return
+    this.#withLocals(f.params, () => {
+      f.params.forEach((p, i) => this.#setVarLive(p, args[i] ?? 0))
+      this.#funcDepth++
+      this.#run(f.body)
+      this.#funcDepth--
     })
   }
   /** Procedure parameters and range-loop variables: saved, then given back (or removed) afterwards. */
-  private withLocals(names: string[], body: () => void): void {
-    const saved = names.map((p) => [p, this.vars.get(p)] as const)
+  #withLocals(names: string[], body: () => void): void {
+    const saved = names.map((p) => [p, this.#vars.get(p)] as const)
     body()
     for (const [p, v] of saved) {
-      if (v === undefined) { this.vars.delete(p); if (this.ctxCache) delete this.ctxCache[p] }
-      else this.setVarLive(p, v)
+      if (v === undefined) { this.#vars.delete(p); if (this.#ctxCache) delete this.#ctxCache[p] }
+      else this.#setVarLive(p, v)
     }
   }
 
   /** Runtime context for expressions: variables (flattened), mouse, keys, random, value functions,
    *  + scene objects by name (`Hero.x`, cf. sceneRefs). */
-  private exprCtx(vars: Map<string, number | number[]> = this.vars): ExprContext {
-    const interp = vars !== this.vars // interpolated render context -> we do not touch the memo (frame unchanged)
+  #exprCtx(vars: Map<string, number | number[]> = this.#vars): ExprContext {
+    const interp = vars !== this.#vars // interpolated render context -> we do not touch the memo (frame unchanged)
     // FAST PATH: same frame, no handler `self`, real vars → reuse the cached ctx, refreshing only the live
     // variables (intra-frame `setVar`s). The costly parts (named-channel copy, func closures) are reused.
     // `funcNames` keep priority over a same-named var (matches the build order funcs-after-vars).
-    const cacheable = !interp && !this.selfChannels && !this.selfParent
+    const cacheable = !interp && !this.#selfChannels && !this.#selfParent
     // Cache HIT: the variables are kept in sync by `setVarLive` (write-through on every setVar), so we hand
     // back the cached ctx as-is — no per-call refresh loop (that was O(vars) on EVERY eval, hundreds/frame).
-    if (cacheable && this.ctxCache && this.ctxFrame === this.frame && this.ctxMono === this.mono && this.namedFrame === this.frame && this.namedMono === this.mono) return this.ctxCache
+    if (cacheable && this.#ctxCache && this.#ctxFrame === this.#frame && this.#ctxMono === this.#mono && this.#namedFrame === this.#frame && this.#namedMono === this.#mono) return this.#ctxCache
     // `time`/`frame`/`clock` baked in (per-frame constants) so `evalNumber` can evaluate against this ctx
     // DIRECTLY — no `exprScope` copy per statement (object construction dominated the sim profile). They are
     // reserved (never shadowed by a same-named variable), so the var loops skip them.
-    const ctx: ExprContext = { mouse: this.mouse, keys: this.keyProxy, random: this.random, clock: this.mono / this.fps, time: this.frame / this.fps, frame: this.frame }
+    const ctx: ExprContext = { mouse: this.#mouse, keys: this.#keyProxy, random: this.#random, clock: this.#mono / this.fps, time: this.#frame / this.fps, frame: this.#frame }
     for (const [k, v] of vars) if (!RESERVED.has(k)) ctx[k] = v
-    for (const vf of this.valueFuncs) { // fn name(p) = expr -> closure (the body sees globals + math + time + params)
+    for (const vf of this.#valueFuncs) { // fn name(p) = expr -> closure (the body sees globals + math + time + params)
       ctx[vf.name] = (...args: number[]) => {
-        if (this.funcDepth > 64 || !vf.comp.ok) return Number.NaN
-        const local = exprScope(ctx, this.frame / this.fps, this.frame)
+        if (this.#funcDepth > 64 || !vf.comp.ok) return Number.NaN
+        const local = exprScope(ctx, this.#frame / this.fps, this.#frame)
         vf.params.forEach((p, i) => { local[p] = args[i] ?? 0 })
-        this.funcDepth++
+        this.#funcDepth++
         const r = evalExpr(vf.comp.node, local, Number.NaN)
-        this.funcDepth--
+        this.#funcDepth--
         return r
       }
     }
@@ -1353,31 +1357,31 @@ export class FlatPlayer {
     // consistent with the "one level" resolution; bustNamed() refreshes it on mouse/keyboard/seek/load).
     if (interp) {
       // Interpolated render: we recompute the named channels from the interpolated vars (no memo).
-      const named = this.pictureSide(() => namedChannels(this.doc, this.frame, ctx, this.fps))
+      const named = this.#pictureSide(() => namedChannels(this.doc, this.#frame, ctx, this.fps))
       for (const name in named) if (!(name in ctx)) ctx[name] = named[name]
     } else {
-      if (!this.namedCache || this.namedFrame !== this.frame || this.namedMono !== this.mono) {
-        this.namedCache = this.pictureSide(() => namedChannels(this.doc, this.frame, ctx, this.fps))
-        this.namedFrame = this.frame
-        this.namedMono = this.mono
+      if (!this.#namedCache || this.#namedFrame !== this.#frame || this.#namedMono !== this.#mono) {
+        this.#namedCache = this.#pictureSide(() => namedChannels(this.doc, this.#frame, ctx, this.fps))
+        this.#namedFrame = this.#frame
+        this.#namedMono = this.#mono
       }
-      for (const name in this.namedCache) if (!(name in ctx)) ctx[name] = this.namedCache[name]
+      for (const name in this.#namedCache) if (!(name in ctx)) ctx[name] = this.#namedCache[name]
     }
     // `self` set during a handler's execution (cf. fireEvent); in a channel binding, cel/timeline
     // re-inject it with the binding's object (priority). Absent (null) outside a handler -> no `self`.
-    if (this.selfChannels) ctx.self = this.selfChannels
+    if (this.#selfChannels) ctx.self = this.#selfChannels
     // World<->local conversions relative to the handler's object (cf. RFC coordinate-spaces): a WORLD point
     // (mouse.x, Hero.x) -> the object's PARENT space (where its x/y live), and inverse.
-    if (this.selfParent) Object.assign(ctx, spaceConversions(this.selfParent))
-    if (cacheable) { this.ctxCache = ctx; this.ctxFrame = this.frame; this.ctxMono = this.mono } // reuse this build for the rest of the frame
+    if (this.#selfParent) Object.assign(ctx, spaceConversions(this.#selfParent))
+    if (cacheable) { this.#ctxCache = ctx; this.#ctxFrame = this.#frame; this.#ctxMono = this.#mono } // reuse this build for the rest of the frame
     return ctx
   }
-  private evalNumber(src: string): number {
+  #evalNumber(src: string): number {
     const c = compileCached(src)
     if (!c.ok) return 0
     // Evaluate against the per-frame ctx DIRECTLY (it already carries time/frame/clock; math resolves via
     // evalNode's MATH_CTX fallback) — no `exprScope` copy per call. This is the hot `every frame` path.
-    return evalExpr(c.node, this.exprCtx(), 0)
+    return evalExpr(c.node, this.#exprCtx(), 0)
   }
 
   /**
@@ -1387,8 +1391,8 @@ export class FlatPlayer {
    * record fields <= MAX_SEND_FIELDS with conforming keys. The host receives a VETTED object.
    * If the host callback throws, we catch and log -- the player does not break.
    */
-  private emit(name: string, value?: number | string, fields?: Record<string, number>): void {
-    if (!this.onEvent || !SEND_EVENT_NAME.test(name)) return
+  #emit(name: string, value?: number | string, fields?: Record<string, number>): void {
+    if (!this.#onEvent || !SEND_EVENT_NAME.test(name)) return
     let v = value
     if (typeof v === 'number') { if (!Number.isFinite(v)) v = 0 }
     else if (typeof v === 'string' && v.length > MAX_SEND_TEXT) v = v.slice(0, MAX_SEND_TEXT)
@@ -1409,21 +1413,21 @@ export class FlatPlayer {
       const ev: SendEvent = { name }
       if (v !== undefined) ev.value = v
       if (f !== undefined) ev.fields = f
-      this.onEvent(ev)
+      this.#onEvent(ev)
     } catch (e) {
       console.error('FlatPlayer: the onEvent callback threw an exception', e)
     }
   }
 
   /** Live content of a Text item resolved by id OR name (for `text("...")`). `''` + warning if absent. */
-  private textContent(key: string): string {
-    const t = this.findText(key)
+  #textContent(key: string): string {
+    const t = this.#findText(key)
     if (!t) {
       console.warn(`FlatPlayer: text("${key}") -- no Text item "${key}" (id or name) in the document`)
       return ''
     }
     // A bound text sends what the screen shows, not its template (flatink/flatink#67).
-    const shown = t.bind ? formatBoundText(t, this.evalNumber(t.bind)) : t.content
+    const shown = t.bind ? formatBoundText(t, this.#evalNumber(t.bind)) : t.content
     return shown.length > MAX_SEND_TEXT ? shown.slice(0, MAX_SEND_TEXT) : shown
   }
 
@@ -1432,7 +1436,7 @@ export class FlatPlayer {
    * Resolves by `id` first (stable id set via `text "..." as "<id>"`), then by `name` as a fallback --
    * like the rest of the text format references by name (`object "x"`, `instance "Sym" as "y"`).
    */
-  private findText(key: string): Text | undefined {
+  #findText(key: string): Text | undefined {
     const scan = (layers: Layer[], match: (t: Text) => boolean): Text | undefined => {
       for (const layer of layers) {
         for (const it of layer.items) {
@@ -1453,18 +1457,18 @@ export class FlatPlayer {
 
   /** Plays an audio clip (asset) as a one-shot (`sound "id"` DSL). No-op if audio is off / asset absent. */
   private playSound(assetId: string): void {
-    if (!this.audioOn || !hasAudio()) return
+    if (!this.#audioOn || !hasAudio()) return
     const buf = playerAudioBuffers.get(assetId)
     if (!buf || buf === 'loading') {
       // Still decoding (asked for right at load, or no decode-ahead on this browser): play it when it
       // lands. It used to be dropped — "audible on the next trigger" — so the first sound was never heard.
-      const pending = this.decodeAudio(assetId)
-      if (!pending || this.awaitedSounds.has(assetId)) return // asked again meanwhile: one play, not a pile-up
-      this.awaitedSounds.add(assetId)
+      const pending = this.#decodeAudio(assetId)
+      if (!pending || this.#awaitedSounds.has(assetId)) return // asked again meanwhile: one play, not a pile-up
+      this.#awaitedSounds.add(assetId)
       const asked = performance.now()
       void pending.then(() => {
-        this.awaitedSounds.delete(assetId)
-        if (!this.destroyed && performance.now() - asked <= LATE_SOUND_MS && typeof playerAudioBuffers.get(assetId) === 'object') this.playSound(assetId)
+        this.#awaitedSounds.delete(assetId)
+        if (!this.#destroyed && performance.now() - asked <= LATE_SOUND_MS && typeof playerAudioBuffers.get(assetId) === 'object') this.playSound(assetId)
       })
       return
     }
@@ -1473,9 +1477,9 @@ export class FlatPlayer {
     const src = c.createBufferSource()
     src.buffer = buf
     src.connect(c.destination)
-    src.onended = () => { this.activeSources = this.activeSources.filter((s) => s !== src) } // frees the finished one-shot (anti-leak if `sound` is spammed)
+    src.onended = () => { this.#activeSources = this.#activeSources.filter((s) => s !== src) } // frees the finished one-shot (anti-leak if `sound` is spammed)
     src.start()
-    this.activeSources.push(src)
+    this.#activeSources.push(src)
   }
 
   get fps(): number {
@@ -1485,11 +1489,11 @@ export class FlatPlayer {
     return Math.max(1, this.doc.timeline?.durationFrames ?? 1)
   }
   get currentFrame(): number {
-    return this.frame
+    return this.#frame
   }
   /** The TIMELINE is playing: the player runs and the scene does not hold its playhead. */
   get isPlaying(): boolean {
-    return this.playing && !this.held
+    return this.#playing && !this.#held
   }
 
   /**
@@ -1497,47 +1501,47 @@ export class FlatPlayer {
    * Returns a COPY of the arrays (the host cannot mutate the internal state by reference).
    */
   getVar(name: string): number | number[] | undefined {
-    const v = this.vars.get(name)
+    const v = this.#vars.get(name)
     return Array.isArray(v) ? [...v] : v
   }
 
   /** Snapshot (copied) of all the state variables -- for debugging / the headless harness. */
   allVars(): Record<string, number | number[]> {
     const out: Record<string, number | number[]> = {}
-    for (const [k, v] of this.vars) out[k] = Array.isArray(v) ? [...v] : v
+    for (const [k, v] of this.#vars) out[k] = Array.isArray(v) ? [...v] : v
     return out
   }
 
   // -- Gesture recording (`--record`) --
   /** Starts recording (clears the previous one). Play the activity by hand, then `stopRecording()`. */
-  startRecording(): void { this.recording = []; this.recordFrame = this.frame }
+  startRecording(): void { this.#recording = []; this.#recordFrame = this.#frame }
   /** Stops recording and returns the gesture script (replayable by `--play` / `playHeadless`). */
-  stopRecording(): Gesture[] { const r = this.recording ?? []; this.recording = null; return r }
-  get isRecording(): boolean { return this.recording != null }
+  stopRecording(): Gesture[] { const r = this.#recording ?? []; this.#recording = null; return r }
+  get isRecording(): boolean { return this.#recording != null }
 
   /** Center (RESOLVED origin, expressions included) of a named object, in world coords -- for the
    *  semantic gestures `drag`/`tap` by name. `null` if the object does not exist. */
   objectCenter(name: string): Point | null {
     // Fresh, not the per-frame snapshot: a gesture asks where the object is NOW, and what moved it may
     // have run since the snapshot was taken without the frame advancing (a `when loaded`, a handler).
-    this.bustNamed()
-    this.exprCtx()
-    const ch = this.namedCache?.[name]
+    this.#bustNamed()
+    this.#exprCtx()
+    const ch = this.#namedCache?.[name]
     return ch ? { x: ch.x, y: ch.y } : null
   }
   /** Which object a press at `p` (scene coordinates) would GRAB — its id, or null. Changes nothing: it is
    *  the question a replayed gesture asks before pressing, so that a press that misses is reported. */
   grabTargetAt(p: Point): string | null {
-    const chains = hitChains(this.doc, this.frame, this.exprCtx(), p, this.grabZones, this.paramsOf)
-    return this.pickTarget(chains, GRAB_EVENTS) ?? this.pickInteractor(chains) ?? null
+    const chains = hitChains(this.doc, this.#frame, this.#exprCtx(), p, this.#grabZones, this.#paramsOf)
+    return this.#pickTarget(chains, GRAB_EVENTS) ?? this.#pickInteractor(chains) ?? null
   }
   /** Captures a gesture (no-op outside recording). Inserts a `wait` = frames elapsed since the last gesture. */
-  private record(type: 'down' | 'move' | 'up' | 'cancel', p: Point, id: number): void {
-    if (!this.recording) return
-    const dframes = Math.round(this.frame - this.recordFrame)
-    if (dframes > 0) { this.recording.push({ type: 'wait', frames: dframes }); this.recordFrame = this.frame }
+  #record(type: 'down' | 'move' | 'up' | 'cancel', p: Point, id: number): void {
+    if (!this.#recording) return
+    const dframes = Math.round(this.#frame - this.#recordFrame)
+    if (dframes > 0) { this.#recording.push({ type: 'wait', frames: dframes }); this.#recordFrame = this.#frame }
     const r = (n: number) => Math.round(n * 100) / 100
-    this.recording.push({ type, x: r(p.x), y: r(p.y), ...(id !== 1 ? { id } : {}) })
+    this.#recording.push({ type, x: r(p.x), y: r(p.y), ...(id !== 1 ? { id } : {}) })
   }
 
   /**
@@ -1549,8 +1553,8 @@ export class FlatPlayer {
     // used to differ, and the difference was invisible from outside — a host restoring a continuous trace's
     // progress got the right number, the right inked stroke, and a pen-tip marker still sitting at the
     // start, because only the scene-side path re-seated the derived state.
-    this.setVarLive(name, Array.isArray(value) ? [...value] : value) // (arrays cloned: the host keeps its own)
-    this.bustNamed() // host-driven change -> named objects bound to this variable must be refreshed
+    this.#setVarLive(name, Array.isArray(value) ? [...value] : value) // (arrays cloned: the host keeps its own)
+    this.#bustNamed() // host-driven change -> named objects bound to this variable must be refreshed
     this.render()
   }
 
@@ -1561,11 +1565,11 @@ export class FlatPlayer {
    * `"Space"`). A pressed key STAYS held until released: pair every `true` with a `false`.
    */
   setKey(name: string, down: boolean): void {
-    this.holdKey(name, down)
+    this.#holdKey(name, down)
     // The same keys walk and click the focusable objects (a headless `key` gesture, an on-screen control).
-    if (down && this.focusList.length) {
+    if (down && this.#focusList.length) {
       if (name === 'Tab') this.focusNext(1)
-      else if (name === 'Enter' || name === ' ' || name === 'Space') this.clickFocused()
+      else if (name === 'Enter' || name === ' ' || name === 'Space') this.#clickFocused()
     }
     this.render()
   }
@@ -1573,7 +1577,7 @@ export class FlatPlayer {
   // -- Keyboard focus --
   /** (Re)reads the `focusable` objects of the scene, in TAB ORDER: the ranked ones (`order <n>`, lower
    *  first), then the others in document order. Load-time only. */
-  private buildFocusList(): void {
+  #buildFocusList(): void {
     const found: { item: Item; name: string; noRing: boolean; order: number | undefined; seq: number }[] = []
     const walk = (layers: Layer[]): void => {
       for (const l of layers) for (const it of l.items) {
@@ -1583,52 +1587,52 @@ export class FlatPlayer {
     }
     walk(this.doc.layers)
     found.sort((a, b) => (a.order === undefined ? (b.order === undefined ? a.seq - b.seq : 1) : b.order === undefined ? -1 : a.order - b.order || a.seq - b.seq))
-    this.focusList = found
+    this.#focusList = found
   }
   /** Name of the object that holds the keyboard focus, or `null`. */
   get focused(): string | null {
-    return this.focusList.find((f) => f.item.id === this.focusId)?.name ?? null
+    return this.#focusList.find((f) => f.item.id === this.#focusId)?.name ?? null
   }
-  private canvasHasFocus(): boolean {
-    return typeof document === 'undefined' || document.activeElement === this.canvas
+  #canvasHasFocus(): boolean {
+    return typeof document === 'undefined' || document.activeElement === this.#canvas
   }
   /** Can this object take the focus right now? Not while it is out of the picture or faded out: a button
    *  of a screen that is not shown must not be a stop. */
-  private canFocus(id: string): boolean {
-    const ch = objectChannelsById(this.doc, id, this.frame, this.exprCtx(), this.fps)
+  #canFocus(id: string): boolean {
+    const ch = objectChannelsById(this.doc, id, this.#frame, this.#exprCtx(), this.fps)
     return !!ch && (ch.opacity ?? 1) > 0.01
   }
   /** Moves the keyboard focus to the next (`1`) or previous (`-1`) focusable object. Returns `false` when
    *  there is none left that way: the focus is then released, for the host to move it on. */
   focusNext(dir: 1 | -1 = 1): boolean {
-    const list = this.focusList
-    let i = list.findIndex((f) => f.item.id === this.focusId)
+    const list = this.#focusList
+    let i = list.findIndex((f) => f.item.id === this.#focusId)
     if (i < 0) i = dir > 0 ? -1 : list.length
-    for (i += dir; i >= 0 && i < list.length; i += dir) if (this.canFocus(list[i].item.id)) { this.setFocus(list[i].item.id); return true }
-    this.setFocus(null)
+    for (i += dir; i >= 0 && i < list.length; i += dir) if (this.#canFocus(list[i].item.id)) { this.#setFocus(list[i].item.id); return true }
+    this.#setFocus(null)
     return false
   }
-  private setFocus(id: string | null): void {
-    if (id === this.focusId) return
-    this.focusId = id
-    this.bustNamed() // `self.focused` feeds channel expressions
-    if (!this.playing && !this.transRaf) this.render() // else: the running loop paints the next frame
+  #setFocus(id: string | null): void {
+    if (id === this.#focusId) return
+    this.#focusId = id
+    this.#bustNamed() // `self.focused` feeds channel expressions
+    if (!this.#playing && !this.#transRaf) this.render() // else: the running loop paints the next frame
   }
   /** Enter / Space on the focused object: its `when clicked`. `false` when nothing is focused. */
-  private clickFocused(): boolean {
-    if (!this.focusId) return false
-    this.fireEvent(this.focusId, 'click')
+  #clickFocused(): boolean {
+    if (!this.#focusId) return false
+    this.#fireEvent(this.#focusId, 'click')
     this.render()
     return true
   }
-  private readonly onCanvasFocus = () => {
+  readonly #onCanvasFocus = () => {
     // Reached with Tab: the first object takes the focus — the last one when the page came backwards.
-    if (!this.pointerDown && !this.focusId) this.focusNext(this.tabBack ? -1 : 1)
+    if (!this.#pointerDown && !this.#focusId) this.focusNext(this.#tabBack ? -1 : 1)
   }
-  private readonly onCanvasBlur = () => this.setFocus(null)
+  readonly #onCanvasBlur = () => this.#setFocus(null)
   /** World rectangle of the focus ring around an object: its `hitbox` if it has one, else its content. */
-  private focusBox(item: Item): { minX: number; minY: number; maxX: number; maxY: number } | null {
-    const t = objectWorldById(this.doc, item.id, this.frame, this.exprCtx(), this.fps)
+  #focusBox(item: Item): { minX: number; minY: number; maxX: number; maxY: number } | null {
+    const t = objectWorldById(this.doc, item.id, this.#frame, this.#exprCtx(), this.fps)
     if (!t || !('transform' in item)) return null
     const hb = (isGroup(item) || isInstance(item)) ? item.hitbox : undefined
     let corners: Point[]
@@ -1643,11 +1647,11 @@ export class FlatPlayer {
     return { minX: Math.min(...w.map((p) => p.x)), minY: Math.min(...w.map((p) => p.y)), maxX: Math.max(...w.map((p) => p.x)), maxY: Math.max(...w.map((p) => p.y)) }
   }
   /** Draws the default focus ring (in scene units, the view transform being set). */
-  private drawFocusRing(ctx: CanvasRenderingContext2D): void {
-    if (!this.ring || !this.focusId) return
-    const f = this.focusList.find((x) => x.item.id === this.focusId)
+  #drawFocusRing(ctx: CanvasRenderingContext2D): void {
+    if (!this.#ring || !this.#focusId) return
+    const f = this.#focusList.find((x) => x.item.id === this.#focusId)
     if (!f || f.noRing) return
-    const b = this.focusBox(f.item)
+    const b = this.#focusBox(f.item)
     if (!b) return
     const pad = 4, x = b.minX - pad, y = b.minY - pad, w = b.maxX - b.minX + 2 * pad, h = b.maxY - b.minY + 2 * pad
     ctx.save()
@@ -1655,64 +1659,64 @@ export class FlatPlayer {
     ctx.lineJoin = 'round'
     ctx.beginPath()
     if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, w, h, 6); else ctx.rect(x, y, w, h)
-    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = this.ring.width + 3; ctx.stroke() // a light edge: the ring reads on any background
-    ctx.strokeStyle = this.ring.color; ctx.lineWidth = this.ring.width; ctx.stroke()
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = this.#ring.width + 3; ctx.stroke() // a light edge: the ring reads on any background
+    ctx.strokeStyle = this.#ring.color; ctx.lineWidth = this.#ring.width; ctx.stroke()
     ctx.restore()
   }
 
   /** Replaces the played document (resets the framing + the variables, keeps the frame). */
   load(doc: Doc): void {
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
-    this.applyInputUse()
-    this.analysePicture()
-    if (this.seed !== undefined) { this.rand = seededRandom(this.seed); this.drawRand = seededRandom(this.seed ^ 0x5bd1e995) } // a new document starts the sequence again
-    this.vars = cloneVars(doc.variables)
-    this.namedCache = null // new document -> named-objects cache stale
-    this.ctxCache = null // new document -> cached expr context stale (vars Map replaced just above)
-    this.filterCache.clear() // new document -> filter bitmaps stale
-    this.revealStates.clear() // new document -> reveal coverage resets
-    this.traceStates.clear() // …and so does a continuous trace's progress
-    this.scratched.clear() // …and so does what the renderer rubs out (`erase`)
+    this.#applyInputUse()
+    this.#analysePicture()
+    if (this.#seed !== undefined) { this.#rand = seededRandom(this.#seed); this.#drawRand = seededRandom(this.#seed ^ 0x5bd1e995) } // a new document starts the sequence again
+    this.#vars = cloneVars(doc.variables)
+    this.#namedCache = null // new document -> named-objects cache stale
+    this.#ctxCache = null // new document -> cached expr context stale (vars Map replaced just above)
+    this.#filterCache.clear() // new document -> filter bitmaps stale
+    this.#revealStates.clear() // new document -> reveal coverage resets
+    this.#traceStates.clear() // …and so does a continuous trace's progress
+    this.#scratched.clear() // …and so does what the renderer rubs out (`erase`)
     // Every by-document lookup, dropped BEFORE anything below can consult it — `reseedDerivedState` asks
     // for a `trace`'s path to place its pen tip, and answering that from the PREVIOUS document is exactly
     // the kind of bug a cache introduces.
-    this.instNameCache = undefined // new document -> name→instance lookup stale
-    this.assetCache = undefined // …and so is the asset lookup
-    this.tracePathCache.clear() // …and the `trace` target geometry
-    this.handlerIndex = undefined // …and the handler/interactor indexes
-    this.interactorIndex = undefined
-    this.traceOutputs = traceOutputNames(this.doc)
-    this.buildGrabZones() // new document -> new geometry for the `reveal` grab zones
-    this.focusId = null
-    this.buildFocusList()
-    this.dropGestures() // …and whatever was being held belonged to the old one
-    this.reseedDerivedState() // …then the seeded variables put the derived state back (trace progress, scratched grid)
-    this.paramRt.clear() // new document -> per-instance param transitions reset
-    this.stringRt.clear()
-    this.channelState.clear() // new document -> modifier integrator state resets
-    this.drawnMods.clear()
-    this.velocityState.clear()
-    this.modAcc = 0
-    this.hasModifiers = docHasModifiers(this.doc)
-    this.hasSymbolTimelines = this.doc.symbols.some((s) => !!s.timeline)
-    if (this.transRaf) { cancelAnimationFrame(this.transRaf); this.transRaf = 0 }
-    this.bustNamed()
-    this.buildFunctions()
-    this.preloadAudio()
-    this.measure()
+    this.#instNameCache = undefined // new document -> name→instance lookup stale
+    this.#assetCache = undefined // …and so is the asset lookup
+    this.#tracePathCache.clear() // …and the `trace` target geometry
+    this.#handlerIndex = undefined // …and the handler/interactor indexes
+    this.#interactorIndex = undefined
+    this.#traceOutputs = traceOutputNames(this.doc)
+    this.#buildGrabZones() // new document -> new geometry for the `reveal` grab zones
+    this.#focusId = null
+    this.#buildFocusList()
+    this.#dropGestures() // …and whatever was being held belonged to the old one
+    this.#reseedDerivedState() // …then the seeded variables put the derived state back (trace progress, scratched grid)
+    this.#paramRt.clear() // new document -> per-instance param transitions reset
+    this.#stringRt.clear()
+    this.#channelState.clear() // new document -> modifier integrator state resets
+    this.#drawnMods.clear()
+    this.#velocityState.clear()
+    this.#modAcc = 0
+    this.#hasModifiers = docHasModifiers(this.doc)
+    this.#hasSymbolTimelines = this.doc.symbols.some((s) => !!s.timeline)
+    if (this.#transRaf) { cancelAnimationFrame(this.#transRaf); this.#transRaf = 0 }
+    this.#bustNamed()
+    this.#buildFunctions()
+    this.#preloadAudio()
+    this.#measure()
     this.render()
-    this.held = false
-    this.fireLoad()
+    this.#held = false
+    this.#fireLoad()
   }
 
-  private measure(): void {
-    const r = this.canvas.getBoundingClientRect()
-    this.dpr = Math.min(window.devicePixelRatio || 1, this.maxDpr)
-    this.cssW = r.width
-    this.cssH = r.height
-    this.canvas.width = Math.max(1, Math.round(r.width * this.dpr))
-    this.canvas.height = Math.max(1, Math.round(r.height * this.dpr))
-    this.view = fit(r.width, r.height, this.doc.width, this.doc.height, this.pad)
+  #measure(): void {
+    const r = this.#canvas.getBoundingClientRect()
+    this.#dpr = Math.min(window.devicePixelRatio || 1, this.#maxDpr)
+    this.#cssW = r.width
+    this.#cssH = r.height
+    this.#canvas.width = Math.max(1, Math.round(r.width * this.#dpr))
+    this.#canvas.height = Math.max(1, Math.round(r.height * this.#dpr))
+    this.#view = fit(r.width, r.height, this.doc.width, this.doc.height, this.#pad)
   }
 
   /** Draws the current frame (pure, without advancing time). */
@@ -1722,17 +1726,17 @@ export class FlatPlayer {
    * picture at the end (a renderer after a gesture script painted the whole scene at every synthetic move).
    */
   withoutPainting<T>(f: () => T): T {
-    this.paintHeld++
-    try { return f() } finally { this.paintHeld-- }
+    this.#paintHeld++
+    try { return f() } finally { this.#paintHeld-- }
   }
-  private paintHeld = 0
+  #paintHeld = 0
   render(): void {
-    if (!this.renderOn) return // headless: no painting (no Canvas API required)
-    if (this.paintHeld > 0) { this.dirty = true; return }
-    this.dirty = false
-    const { ctx, doc, view, dpr } = this
+    if (!this.#renderOn) return // headless: no painting (no Canvas API required)
+    if (this.#paintHeld > 0) { this.#dirty = true; return }
+    this.#dirty = false
+    const ctx = this.#ctx, doc = this.doc, view = this.#view, dpr = this.#dpr
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.clearRect(0, 0, this.cssW, this.cssH)
+    ctx.clearRect(0, 0, this.#cssW, this.#cssH)
     ctx.save()
     ctx.translate(view.tx, view.ty)
     ctx.scale(view.scale, view.scale)
@@ -1745,63 +1749,63 @@ export class FlatPlayer {
     ctx.clip()
     // Anti-judder: during a game's playback (sim active), we draw the motion at the INTERPOLATED
     // position between the two last sim steps (the mouse/playhead themselves stay at the current instant).
-    const expr = this.playing && this.simActive && this.prevSimVars && this.simAlpha < 1
-      ? this.exprCtx(lerpVars(this.prevSimVars, this.vars, this.simAlpha))
-      : this.exprCtx()
-    for (const name of this.reads) { const v = this.vars.get(name); if (typeof v === 'number') this.painted.set(name, v) }
-    renderLayers(ctx, doc, doc.layers, this.frame, null, new Set(), { fps: this.fps, expr, image: (id) => this.imageFor(id), filterCache: this.filterCache, imageEpoch: this.imageEpoch, itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), stringsFor: this.stringsOf, monoTime: this.mono / this.fps, ...(this.scratched.size ? { scratched: this.scratched } : {}), ...(this.hasModifiers ? { statePath: '', channelValue: (key: string, ch: string) => this.channelValueFor(key, ch) } : {}) })
-    this.drawFocusRing(ctx)
+    const expr = this.#playing && this.#simActive && this.#prevSimVars && this.#simAlpha < 1
+      ? this.#exprCtx(lerpVars(this.#prevSimVars, this.#vars, this.#simAlpha))
+      : this.#exprCtx()
+    for (const name of this.#reads) { const v = this.#vars.get(name); if (typeof v === 'number') this.#painted.set(name, v) }
+    renderLayers(ctx, doc, doc.layers, this.#frame, null, new Set(), { fps: this.fps, expr, image: (id) => this.#imageFor(id), filterCache: this.#filterCache, imageEpoch: this.#imageEpoch, itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), stringsFor: this.#stringsOf, monoTime: this.#mono / this.fps, ...(this.#scratched.size ? { scratched: this.#scratched } : {}), ...(this.#hasModifiers ? { statePath: '', channelValue: (key: string, ch: string) => this.#channelValueFor(key, ch) } : {}) })
+    this.#drawFocusRing(ctx)
     ctx.restore()
   }
 
   /** Interaction state of an item for `self.hovered`/`self.grabbed`/`self.pressed` in its channel exprs.
    *  Returns undefined when the item is neither hovered nor grabbed (the cheap, common path → flags 0). */
   private itemStateFor(id: string): { hovered: number; grabbed: number; pressed: number; focused?: number } | undefined {
-    const hovered = this.hoverIds.has(id) ? 1 : 0
-    const grabbed = this.isGrabbed(id) ? 1 : 0
-    const focused = this.focusId === id ? 1 : 0
+    const hovered = this.#hoverIds.has(id) ? 1 : 0
+    const grabbed = this.#isGrabbed(id) ? 1 : 0
+    const focused = this.#focusId === id ? 1 : 0
     return hovered || grabbed || focused ? { hovered, grabbed, pressed: grabbed, ...(focused ? { focused } : {}) } : undefined
   }
 
   /** Integrated value of a stateful channel modifier for `statePath+itemId` (key) + channel — read by the
    *  render pass. Undefined (random access / no state yet) → the channel snaps to its target (rest pose). */
-  private channelValueFor(key: string, ch: string): number | undefined {
-    return this.channelState.get(key + '|' + ch)?.pos
+  #channelValueFor(key: string, ch: string): number | undefined {
+    return this.#channelState.get(key + '|' + ch)?.pos
   }
 
   /** Advance every stateful channel modifier by `steps` FIXED steps toward its current target (gathered by a
    *  render-free scene walk that composes the per-instance state path). NOT gated by `onEnterFrame`/input —
    *  an asset's own "feel" must animate even with no scene behavior (this is the whole point of the feature). */
-  private advanceChannelModifiers(steps: number): void {
-    if (!this.hasModifiers || steps <= 0) return
-    const rctx: RenderCtx = { fps: this.fps, expr: this.exprCtx(), itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), stringsFor: this.stringsOf, monoTime: this.mono / this.fps, statePath: '' }
+  #advanceChannelModifiers(steps: number): void {
+    if (!this.#hasModifiers || steps <= 0) return
+    const rctx: RenderCtx = { fps: this.fps, expr: this.#exprCtx(), itemState: (id) => this.itemStateFor(id), paramsFor: (id) => this.paramsForInstance(id), stringsFor: this.#stringsOf, monoTime: this.#mono / this.fps, statePath: '' }
     // `velocity(arg)` resolver for this tick: per-(key,channel) prev values, delta PER SECOND (dt = real time
     // advanced this tick). A fresh closure per target carries its own occurrence index → one slot per velocity().
     const dt = steps * SIM_STEP
     const velocityFor = (key: string, ch: string) => {
       const k = key + '|' + ch
-      let prev = this.velocityState.get(k)
-      if (!prev) { prev = []; this.velocityState.set(k, prev) }
+      let prev = this.#velocityState.get(k)
+      if (!prev) { prev = []; this.#velocityState.set(k, prev) }
       const slots = prev
       let i = 0
       return (arg: number): number => { const last = slots[i]; slots[i] = arg; i++; return last === undefined || dt <= 0 ? 0 : (arg - last) / dt }
     }
-    for (const t of collectModifierTargets(this.doc, this.frame, rctx, velocityFor)) {
+    for (const t of collectModifierTargets(this.doc, this.#frame, rctx, velocityFor)) {
       const k = t.key + '|' + t.ch
-      const cur = this.channelState.get(k) ?? restState(t.target)
+      const cur = this.#channelState.get(k) ?? restState(t.target)
       const next = advanceModifier(t.mod, cur, t.target, steps)
-      this.channelState.set(k, next)
+      this.#channelState.set(k, next)
       // Repaint once the channel has drifted from the value last PAINTED (not from the previous step: a
       // slow settle would add up unseen). A spring at rest stops costing a paint.
-      const drawn = this.drawnMods.get(k)
-      if (drawn === undefined || Math.abs(next.pos - drawn) > MOD_EPSILON) { this.drawnMods.set(k, next.pos); this.dirty = true }
+      const drawn = this.#drawnMods.get(k)
+      if (drawn === undefined || Math.abs(next.pos - drawn) > MOD_EPSILON) { this.#drawnMods.set(k, next.pos); this.#dirty = true }
     }
   }
 
   // ── Per-instance exposed params (P3 states) ───────────────────────────────────
   /** Scene instance (id + symbol) by NAME; first carrier wins (document order), groups recursed. Cached. */
-  private instanceByName(name: string): { id: string; symbolId: string } | undefined {
-    if (!this.instNameCache) {
+  #instanceByName(name: string): { id: string; symbolId: string } | undefined {
+    if (!this.#instNameCache) {
       const m = new Map<string, { id: string; symbolId: string }>()
       const walk = (layers: Layer[]) => {
         for (const l of layers) for (const it of l.items) {
@@ -1810,9 +1814,9 @@ export class FlatPlayer {
         }
       }
       walk(this.doc.layers)
-      this.instNameCache = m
+      this.#instNameCache = m
     }
-    return this.instNameCache.get(name)
+    return this.#instNameCache.get(name)
   }
 
   /** `Door.door = open`: set an instance's exposed param. Resolves a state NAME via the symbol's state
@@ -1829,24 +1833,24 @@ export class FlatPlayer {
    * declares no such param or state, or when the value is not of the param's kind. Paints the change.
    */
   setParam(instance: string, param: string, value: number | boolean | string): boolean {
-    const inst = this.instanceByName(instance)
+    const inst = this.#instanceByName(instance)
     if (!inst) return false
     const sym = getSymbol(this.doc, inst.symbolId)
     const def = sym?.params?.find((p) => p.name === param)
     const sm = stateMachineByParam(sym?.states, param)
     if (!def && !sm) return false
-    if (def?.type === 'text') return this.applyParam(instance, param, '', String(value))
-    if (def?.type === 'color') return typeof value === 'string' && this.applyParam(instance, param, value)
-    if (typeof value === 'boolean') return this.applyParam(instance, param, value ? '1' : '0')
+    if (def?.type === 'text') return this.#applyParam(instance, param, '', String(value))
+    if (def?.type === 'color') return typeof value === 'string' && this.#applyParam(instance, param, value)
+    if (typeof value === 'boolean') return this.#applyParam(instance, param, value ? '1' : '0')
     // A string is a state name, or a number written out — never an expression: that is the scene's language.
     if (typeof value === 'string' && !(sm?.states.some((st) => st.name === value.trim())) && !(value.trim() !== '' && Number.isFinite(Number(value)))) return false
     if (typeof value === 'number' && !Number.isFinite(value)) return false
-    return this.applyParam(instance, param, String(value))
+    return this.#applyParam(instance, param, String(value))
   }
   /** The write behind `Inst.param = value` (a scene action, `raw` in the scene's language) and behind
    *  `setParam` (the host; `text` = a text param's value as it is). Returns whether the value was taken. */
-  private applyParam(target: string, param: string, raw: string, text?: string): boolean {
-    const inst = this.instanceByName(target)
+  #applyParam(target: string, param: string, raw: string, text?: string): boolean {
+    const inst = this.#instanceByName(target)
     if (!inst) return false // unknown instance → no-op
     const sym = getSymbol(this.doc, inst.symbolId)
     const sm = stateMachineByParam(sym?.states, param)
@@ -1861,49 +1865,49 @@ export class FlatPlayer {
         : text !== undefined ? text
         : (/^"(?:[^"\\]|\\.)*"$/.test(trimmed) ? trimmed.slice(1, -1).replace(/\\(.)/g, (_m, c: string) => (c === 'n' ? '\n' : c)) : undefined)
       if (value === undefined) return false
-      let st = this.stringRt.get(inst.id)
-      if (!st) { st = { color: {}, text: {} }; this.stringRt.set(inst.id, st) }
+      let st = this.#stringRt.get(inst.id)
+      if (!st) { st = { color: {}, text: {} }; this.#stringRt.set(inst.id, st) }
       if (st[typed.type as 'color' | 'text'][param] === value) return true
       st[typed.type as 'color' | 'text'][param] = value
-      this.imageEpoch++ // a baked (tinted/filtered) composite of this instance is stale
-      this.dirty = true
-      if (this.actionDepth === 0) this.render()
+      this.#imageEpoch++ // a baked (tinted/filtered) composite of this instance is stale
+      this.#dirty = true
+      if (this.#actionDepth === 0) this.render()
       return true
     }
     // A number written out, or `true` / `false` (accepted at a call site, so in an assignment too), is read
     // as such — not compiled: a host driving a param with a slider sends a new value every frame, and each
     // distinct source compiled was kept for good.
     const literal = trimmed === 'true' ? 1 : trimmed === 'false' ? 0 : trimmed !== '' ? Number(trimmed) : Number.NaN
-    let targetVal = sm && sm.states.some((s) => s.name === trimmed) ? stateValueOf(sm, trimmed) : Number.isFinite(literal) ? literal : this.evalNumber(raw)
+    let targetVal = sm && sm.states.some((s) => s.name === trimmed) ? stateValueOf(sm, trimmed) : Number.isFinite(literal) ? literal : this.#evalNumber(raw)
     if (!Number.isFinite(targetVal)) return false
     // Clamp a declared number param to its range (consistent with call-site/default resolution).
     const def = sym?.params?.find((p) => p.name === param && p.type === 'number')
     if (def?.min != null && def.max != null && def.min <= def.max) targetVal = Math.max(def.min, Math.min(def.max, targetVal))
-    let params = this.paramRt.get(inst.id)
+    let params = this.#paramRt.get(inst.id)
     // Writing the value a param is ALREADY heading to changes nothing: mirroring a variable into a state
     // from `every frame` used to restart the transition on every step (from the current value, with zero
     // elapsed time), so an ease with a flat start never left its origin.
     if (params?.get(param)?.target === targetVal) return true
-    if (!params) { params = new Map(); this.paramRt.set(inst.id, params) }
+    if (!params) { params = new Map(); this.#paramRt.set(inst.id, params) }
     const cur = params.get(param)?.value ?? (sm ? initialStateValue(sm) : 0)
     const dur = Math.max(0, sm?.transition ?? 0)
     params.set(param, { value: dur > 0 ? cur : targetVal, from: cur, target: targetVal, elapsed: 0, dur, ease: sm?.ease })
-    this.dirty = true
-    this.ensureTransitions()
+    this.#dirty = true
+    this.#ensureTransitions()
     // No paint here: a param is written from actions, and whoever runs actions paints when they are done
     // (the tick, a sim step, a pointer handler). Painting per write made N writes cost N full renders — a
     // scene driving twenty components each frame drew itself twenty-one times. Nor is the named-objects
     // cache dropped: it resolves the scene without the instances' runtime params, so a write cannot change it.
-    if (this.actionDepth === 0) this.render()
+    if (this.#actionDepth === 0) this.render()
     return true
   }
 
   /** Current values of an instance's params (for drawScene → drives the local frame + the subtree scope). */
-  private readonly stringRt = new Map<string, { color: Record<string, string>; text: Record<string, string> }>() // runtime color/text params, per instance
-  private readonly stringsOf = (id: string) => this.stringRt.get(id)
-  private readonly paramsOf = (id: string): Record<string, number> | undefined => this.paramsForInstance(id)
+  readonly #stringRt = new Map<string, { color: Record<string, string>; text: Record<string, string> }>() // runtime color/text params, per instance
+  readonly #stringsOf = (id: string) => this.#stringRt.get(id)
+  readonly #paramsOf = (id: string): Record<string, number> | undefined => this.paramsForInstance(id)
   private paramsForInstance(id: string): Record<string, number> | undefined {
-    const params = this.paramRt.get(id)
+    const params = this.#paramRt.get(id)
     if (!params || params.size === 0) return undefined
     const out: Record<string, number> = {}
     for (const [k, st] of params) out[k] = st.value
@@ -1912,12 +1916,12 @@ export class FlatPlayer {
 
   /** Advance in-progress param transitions by `deltaFrames`; eased from→target over `dur`. Returns whether
    *  any transition is still running (so the caller can keep ticking). */
-  private advanceParams(deltaFrames: number): boolean {
+  #advanceParams(deltaFrames: number): boolean {
     let active = false
-    for (const params of this.paramRt.values()) {
+    for (const params of this.#paramRt.values()) {
       for (const st of params.values()) {
         if (st.elapsed >= st.dur) { st.value = st.target; continue }
-        this.dirty = true // a transition moved (its last step included, which lands on the target)
+        this.#dirty = true // a transition moved (its last step included, which lands on the target)
         st.elapsed = Math.min(st.dur, st.elapsed + Math.max(0, deltaFrames))
         const p = st.dur > 0 ? st.elapsed / st.dur : 1
         st.value = st.from + (st.target - st.from) * applyEasing(p, st.ease)
@@ -1930,47 +1934,47 @@ export class FlatPlayer {
 
   /** While the playhead is NOT playing, drive active transitions on their own rAF (handed back to the
    *  main tick once playback resumes). No-op without requestAnimationFrame (headless → advanced via stepSim). */
-  private ensureTransitions(): void {
-    if (this.playing || this.transRaf || typeof requestAnimationFrame !== 'function') return
+  #ensureTransitions(): void {
+    if (this.#playing || this.#transRaf || typeof requestAnimationFrame !== 'function') return
     let any = false
-    for (const ps of this.paramRt.values()) for (const st of ps.values()) if (st.elapsed < st.dur) { any = true; break }
+    for (const ps of this.#paramRt.values()) for (const st of ps.values()) if (st.elapsed < st.dur) { any = true; break }
     if (!any) return
     let prev = 0
     const step = (now: number) => {
-      if (this.playing) { this.transRaf = 0; return } // the main tick takes over
+      if (this.#playing) { this.#transRaf = 0; return } // the main tick takes over
       const dt = prev ? Math.min((now - prev) / 1000, 0.25) : 0
       prev = now
-      const stillActive = this.advanceParams(dt * this.fps)
+      const stillActive = this.#advanceParams(dt * this.fps)
       this.render()
-      this.transRaf = stillActive ? requestAnimationFrame(step) : 0
+      this.#transRaf = stillActive ? requestAnimationFrame(step) : 0
     }
-    this.transRaf = requestAnimationFrame(step)
+    this.#transRaf = requestAnimationFrame(step)
   }
 
   /** WORLD path of a `trace` target, by name (see `tracePathCache`). */
-  private tracePathFor(name: string): Path | null {
-    let p = this.tracePathCache.get(name)
-    if (p === undefined) { p = tracePathByName(this.doc, name); this.tracePathCache.set(name, p) }
+  #tracePathFor(name: string): Path | null {
+    let p = this.#tracePathCache.get(name)
+    if (p === undefined) { p = tracePathByName(this.doc, name); this.#tracePathCache.set(name, p) }
     return p
   }
   /** Assets by id. The renderer asks for an image's source on EVERY frame it draws it, and a scan of the
    *  asset list per image per frame is the kind of cost that only shows up on the scenes that have many of
    *  both. Built lazily, dropped on `load` (a new document brings new assets). */
-  private assetById(id: string): Asset | undefined {
-    if (!this.assetCache) this.assetCache = new Map((this.doc.assets ?? []).map((a) => [a.id, a]))
-    return this.assetCache.get(id)
+  #assetById(id: string): Asset | undefined {
+    if (!this.#assetCache) this.#assetCache = new Map((this.doc.assets ?? []).map((a) => [a.id, a]))
+    return this.#assetCache.get(id)
   }
   // Decoded image of an asset (module cache). `null` while not loaded -> re-render on decode.
-  private imageFor(assetId: string): CanvasImageSource | null {
-    if (this.imageProvider) return this.imageProvider(assetId) // headless backend (skia): pre-decoded images
-    const a = this.assetById(assetId)
+  #imageFor(assetId: string): CanvasImageSource | null {
+    if (this.#imageProvider) return this.#imageProvider(assetId) // headless backend (skia): pre-decoded images
+    const a = this.#assetById(assetId)
     if (!a) return null
-    const url = this.resolveAsset(a) // host-trusted url (default: data: URIs only, no remote fetch)
+    const url = this.#resolveAsset(a) // host-trusted url (default: data: URIs only, no remote fetch)
     if (url == null) return null
     let img = playerImgCache.get(a.id)
     if (!img) {
       img = new Image()
-      img.onload = () => { this.imageEpoch++; this.render() } // asset loaded -> invalidate the filter cache
+      img.onload = () => { this.#imageEpoch++; this.render() } // asset loaded -> invalidate the filter cache
       img.src = url
       playerImgCache.set(a.id, img)
     }
@@ -1978,19 +1982,19 @@ export class FlatPlayer {
   }
 
   seek(frame: number): void {
-    this.frame = Math.max(0, Math.min(this.duration, frame))
-    this.lastFrameInt = Math.floor(this.frame) // a seek does not trigger the frame-actions (anti-loop)
-    this.seekCount++
-    this.channelState.clear() // random access: modifiers re-init at rest on their target (snap, no transient)
-    this.drawnMods.clear()
-    this.velocityState.clear() // velocity() re-inits → 0 (no spurious jolt from a stale delta)
-    this.modAcc = 0
+    this.#frame = Math.max(0, Math.min(this.duration, frame))
+    this.#lastFrameInt = Math.floor(this.#frame) // a seek does not trigger the frame-actions (anti-loop)
+    this.#seekCount++
+    this.#channelState.clear() // random access: modifiers re-init at rest on their target (snap, no transient)
+    this.#drawnMods.clear()
+    this.#velocityState.clear() // velocity() re-inits → 0 (no spurious jolt from a stale delta)
+    this.#modAcc = 0
     // While PLAYING, `mono` free-runs across loop wraps (kept monotone by the sim/rAF) → an `independent`
     // clip keeps its phase. A seek while NOT playing is a SCRUB / static render: anchor `mono` to the
     // scrubbed frame so MovieClip clips (independent/once) resolve deterministically (phase = frame mod dur)
     // — this is what makes a headless `seek`+`render` and `--render --frame N` reproducible.
-    if (this.playing) { if (!this.held) this.startAudio(this.frame) } // resyncs the audio
-    else this.mono = this.frame
+    if (this.#playing) { if (!this.#held) this.#startAudio(this.#frame) } // resyncs the audio
+    else this.#mono = this.#frame
     this.render()
   }
 
@@ -2003,47 +2007,47 @@ export class FlatPlayer {
   stepSim(steps: number): void {
     const rootSim = this.doc.timeline?.onEnterFrame
     for (let i = 0; i < Math.max(0, Math.floor(steps)); i++) {
-      let f = this.held ? this.frame : this.frame + SIM_STEP * this.fps // a script `pause` holds it, as in the player
-      this.mono += SIM_STEP * this.fps // monotone clock: accumulate BEFORE the loop wrap
-      if (f >= this.duration) { if (this.loop) f %= this.duration; else { f = this.duration; this.held = true } }
-      this.frame = f
-      this.advanceParams(SIM_STEP * this.fps) // P3: advance per-instance state transitions in lockstep with the sim
-      const symSims = this.activeSymbolTimelines(f).filter((s) => s.tl.onEnterFrame?.length)
-      if (rootSim?.length) this.run(rootSim)
-      for (const s of symSims) this.run(s.tl.onEnterFrame!)
-      this.mouse.dx = 0 // movement consumed by this step (same contract as the real tick)
-      this.mouse.dy = 0
-      this.mouse.wheel = 0
-      this.fireFrameActions()
+      let f = this.#held ? this.#frame : this.#frame + SIM_STEP * this.fps // a script `pause` holds it, as in the player
+      this.#mono += SIM_STEP * this.fps // monotone clock: accumulate BEFORE the loop wrap
+      if (f >= this.duration) { if (this.#loop) f %= this.duration; else { f = this.duration; this.#held = true } }
+      this.#frame = f
+      this.#advanceParams(SIM_STEP * this.fps) // P3: advance per-instance state transitions in lockstep with the sim
+      const symSims = this.#activeSymbolTimelines(f).filter((s) => s.tl.onEnterFrame?.length)
+      if (rootSim?.length) this.#run(rootSim)
+      for (const s of symSims) this.#run(s.tl.onEnterFrame!)
+      this.#mouse.dx = 0 // movement consumed by this step (same contract as the real tick)
+      this.#mouse.dy = 0
+      this.#mouse.wheel = 0
+      this.#fireFrameActions()
     }
-    this.advanceChannelModifiers(Math.max(0, Math.floor(steps))) // modifiers unfold in lockstep (headless determinism)
+    this.#advanceChannelModifiers(Math.max(0, Math.floor(steps))) // modifiers unfold in lockstep (headless determinism)
     this.render()
   }
 
   // -- Audio --
   get audioEnabled(): boolean {
-    return this.audioOn
+    return this.#audioOn
   }
   /** Enables/disables audio (cuts immediately if off; (re)starts if on and playing). */
   setAudio(on: boolean): void {
-    if (on === this.audioOn) return
-    this.audioOn = on
-    if (!on) this.stopAudio()
-    else if (this.isPlaying) this.startAudio(this.frame)
+    if (on === this.#audioOn) return
+    this.#audioOn = on
+    if (!on) this.#stopAudio()
+    else if (this.isPlaying) this.#startAudio(this.#frame)
   }
-  private stopAudio(): void {
-    for (const s of this.activeSources) { try { s.stop() } catch { /* already stopped */ } }
-    this.activeSources = []
+  #stopAudio(): void {
+    for (const s of this.#activeSources) { try { s.stop() } catch { /* already stopped */ } }
+    this.#activeSources = []
   }
   /** Starts (or joins) the decode of a sound asset. Returns the decode in flight, `undefined` when there
    *  is nothing to wait for (already decoded, unknown asset, or a source the host does not trust). */
-  private decodeAudio(assetId: string): Promise<void> | undefined {
+  #decodeAudio(assetId: string): Promise<void> | undefined {
     const inFlight = playerAudioDecoding.get(assetId)
     if (inFlight) return inFlight
     if (playerAudioBuffers.has(assetId)) return undefined
-    const a = this.assetById(assetId)
+    const a = this.#assetById(assetId)
     if (!a) return undefined
-    const url = this.resolveAsset(a) // host-trusted url (default: data: URIs only, no remote fetch)
+    const url = this.#resolveAsset(a) // host-trusted url (default: data: URIs only, no remote fetch)
     if (url == null) return undefined
     playerAudioBuffers.set(assetId, 'loading')
     const Offline = offlineAudio()
@@ -2057,16 +2061,16 @@ export class FlatPlayer {
   /** Decodes every sound of the document ahead of time, so the first `sound "x"` neither stalls the frame
    *  that plays it nor goes unheard. Only where decoding does not need the audible context (see
    *  `offlineAudio`); elsewhere a sound is decoded the first time it is asked for, as before. */
-  private preloadAudio(): void {
-    if (!this.audioOn || !hasAudio() || !offlineAudio()) return
-    for (const a of this.doc.assets ?? []) if ((a.kind as string) === 'audio' || (a.kind as string) === 'sound') void this.decodeAudio(a.id)
+  #preloadAudio(): void {
+    if (!this.#audioOn || !hasAudio() || !offlineAudio()) return
+    for (const a of this.doc.assets ?? []) if ((a.kind as string) === 'audio' || (a.kind as string) === 'sound') void this.#decodeAudio(a.id)
   }
   /** (Re)schedules the audio clips for a playback starting from `fromFrame`. */
-  private startAudio(fromFrame: number): void {
-    this.stopAudio()
-    const gen = ++this.audioGen
+  #startAudio(fromFrame: number): void {
+    this.#stopAudio()
+    const gen = ++this.#audioGen
     const sounds = this.doc.timeline?.sounds
-    if (!this.audioOn || !sounds?.length || !hasAudio()) return
+    if (!this.#audioOn || !sounds?.length || !hasAudio()) return
     const c = getAudioCtx()
     if (c.state === 'suspended') void c.resume()
     const now = c.currentTime + 0.03
@@ -2082,14 +2086,14 @@ export class FlatPlayer {
       g.gain.value = sch.clip.gain ?? 1
       src.connect(g).connect(c.destination)
       src.start(sch.when, Math.max(0, sch.offset))
-      this.activeSources.push(src)
+      this.#activeSources.push(src)
     }
     // Clips whose asset is still decoding: reschedule from the playhead once they are in, rather than
     // leave them silent until the timeline loops. Only if a decode actually SUCCEEDED — a broken asset
     // must not restart the audio forever.
-    const decodes = waiting.map((id) => this.decodeAudio(id)).filter((p) => p !== undefined)
+    const decodes = waiting.map((id) => this.#decodeAudio(id)).filter((p) => p !== undefined)
     if (decodes.length) void Promise.all(decodes).then(() => {
-      if (!this.destroyed && this.isPlaying && gen === this.audioGen && waiting.some((id) => typeof playerAudioBuffers.get(id) === 'object')) this.startAudio(this.frame)
+      if (!this.#destroyed && this.isPlaying && gen === this.#audioGen && waiting.some((id) => typeof playerAudioBuffers.get(id) === 'object')) this.#startAudio(this.#frame)
     })
   }
 
@@ -2097,11 +2101,11 @@ export class FlatPlayer {
    *  the one it landed on and the ones it stepped over (a 120 fps timeline stepped at 60 Hz, a slow
    *  display, a stall), across the loop wrap too. A `go to` or a `pause` run by one of them ends the walk:
    *  the playhead is no longer where the rest were heading. */
-  private fireFrameActions(): void {
-    const fi = Math.floor(this.frame)
-    const from = this.lastFrameInt
+  #fireFrameActions(): void {
+    const fi = Math.floor(this.#frame)
+    const from = this.#lastFrameInt
     if (fi === from) return
-    this.lastFrameInt = fi
+    this.#lastFrameInt = fi
     const fa = this.doc.timeline?.frameActions
     if (!fa?.length) return
     const last = Math.ceil(this.duration) - 1
@@ -2109,119 +2113,119 @@ export class FlatPlayer {
     const frames: number[] = []
     if (fi > from) for (let k = from + 1; k <= fi; k++) frames.push(k)
     else { for (let k = from + 1; k <= last; k++) frames.push(k); for (let k = 0; k <= fi; k++) frames.push(k) }
-    const seeks = this.seekCount, wasPlaying = this.playing
+    const seeks = this.#seekCount, wasPlaying = this.#playing
     for (const k of frames) {
-      for (const e of fa) if (e.frame === k) this.run(e.actions)
-      if (this.seekCount !== seeks || this.held || (wasPlaying && !this.playing)) return
+      for (const e of fa) if (e.frame === k) this.#run(e.actions)
+      if (this.#seekCount !== seeks || this.#held || (wasPlaying && !this.#playing)) return
     }
   }
 
   play(): void {
-    if (this.playing) return
-    if (this.transRaf) { cancelAnimationFrame(this.transRaf); this.transRaf = 0 } // the main tick becomes the sole transition driver
-    this.playing = true
-    this.dirty = true
-    this.last = performance.now()
-    this.simAcc = 0
-    this.prevSimVars = null; this.simAlpha = 1; this.simActive = false // restart from a clean interpolation state
-    this.mouse.dx = 0; this.mouse.dy = 0; this.mouse.wheel = 0 // discard pointer deltas banked while paused (no jump on resume)
-    if (!this.held) this.startAudio(this.frame)
+    if (this.#playing) return
+    if (this.#transRaf) { cancelAnimationFrame(this.#transRaf); this.#transRaf = 0 } // the main tick becomes the sole transition driver
+    this.#playing = true
+    this.#dirty = true
+    this.#last = performance.now()
+    this.#simAcc = 0
+    this.#prevSimVars = null; this.#simAlpha = 1; this.#simActive = false // restart from a clean interpolation state
+    this.#mouse.dx = 0; this.#mouse.dy = 0; this.#mouse.wheel = 0 // discard pointer deltas banked while paused (no jump on resume)
+    if (!this.#held) this.#startAudio(this.#frame)
     const tick = (now: number) => {
-      if (!this.playing) return
-      const dt = Math.min((now - this.last) / 1000, 0.25) // clamp the big gaps (backgrounded tab) -> no explosive catch-up
-      this.last = now
+      if (!this.#playing) return
+      const dt = Math.min((now - this.#last) / 1000, 0.25) // clamp the big gaps (backgrounded tab) -> no explosive catch-up
+      this.#last = now
 
       // 1) PLAYHEAD: based on real time (smooth, independent of refresh rate) + looping — unless the scene
       // holds it. `clock` runs on either way.
-      let f = this.held ? this.frame : this.frame + dt * this.fps
-      this.mono += dt * this.fps // monotone clock: accumulate BEFORE the loop wrap
+      let f = this.#held ? this.#frame : this.#frame + dt * this.fps
+      this.#mono += dt * this.fps // monotone clock: accumulate BEFORE the loop wrap
       if (f >= this.duration) {
-        if (this.loop) { f %= this.duration; this.startAudio(f) } // restarts the audio on loop
-        else { f = this.duration; this.hold() } // the end of a one-shot timeline holds it, the scene lives on
+        if (this.#loop) { f %= this.duration; this.#startAudio(f) } // restarts the audio on loop
+        else { f = this.duration; this.#hold() } // the end of a one-shot timeline holds it, the scene lives on
       }
-      this.frame = f
-      this.advanceParams(dt * this.fps) // P3: advance in-progress per-instance state transitions
+      this.#frame = f
+      this.#advanceParams(dt * this.fps) // P3: advance in-progress per-instance state transitions
 
       // 2) onEnterFrame at a FIXED step (60 Hz) -> framerate-independent physics. The set of active
       // symbols is frozen for this tick (the frame does not move between steps, except a gotoFrame from an action).
-      const symTLs = this.activeSymbolTimelines(f)
+      const symTLs = this.#activeSymbolTimelines(f)
       const rootSim = this.doc.timeline?.onEnterFrame
       const symSims = symTLs.filter((s) => s.tl.onEnterFrame?.length)
       // What the picture reads may have moved during the LAST steps: it is then drawn interpolated between
       // them, so it keeps changing until a step has run that moves nothing — and once more to land.
-      const wasMoving = this.moving
+      const wasMoving = this.#moving
       if (rootSim?.length || symSims.length) {
-        this.simActive = true
-        const { steps, acc } = simSteps(this.simAcc, dt, SIM_STEP, SIM_MAX_STEPS)
-        this.simAcc = acc
-        if (steps > 0) this.moving = false
-        for (let i = 0; i < steps && this.playing; i++) { // an action can pause -> we stop
-          this.prevSimVars = cloneVarMap(this.vars) // state BEFORE the step -> interpolation target
-          if (rootSim?.length) this.run(rootSim) // root
-          for (const s of symSims) this.run(s.tl.onEnterFrame!) // active symbols
+        this.#simActive = true
+        const { steps, acc } = simSteps(this.#simAcc, dt, SIM_STEP, SIM_MAX_STEPS)
+        this.#simAcc = acc
+        if (steps > 0) this.#moving = false
+        for (let i = 0; i < steps && this.#playing; i++) { // an action can pause -> we stop
+          this.#prevSimVars = cloneVarMap(this.#vars) // state BEFORE the step -> interpolation target
+          if (rootSim?.length) this.#run(rootSim) // root
+          for (const s of symSims) this.#run(s.tl.onEnterFrame!) // active symbols
         }
         // Remaining step fraction -> we draw between `prevSimVars` and the current state (0..1).
-        this.simAlpha = Math.min(1, this.simAcc / SIM_STEP)
+        this.#simAlpha = Math.min(1, this.#simAcc / SIM_STEP)
       } else {
-        this.simAcc = 0 // "pure tween" demo: no simulation, we do not hoard backlog
-        this.simActive = false
-        this.prevSimVars = null
-        this.moving = false // nothing to interpolate between
+        this.#simAcc = 0 // "pure tween" demo: no simulation, we do not hoard backlog
+        this.#simActive = false
+        this.#prevSimVars = null
+        this.#moving = false // nothing to interpolate between
       }
       // 2b) stateful channel modifiers (smooth/spring): advance at the SAME fixed step but UNGATED by
       // onEnterFrame (its own accumulator) -> an asset's "feel" animates even with zero scene behavior.
-      if (this.hasModifiers) {
-        const m = simSteps(this.modAcc, dt, SIM_STEP, SIM_MAX_STEPS)
-        this.modAcc = m.acc
-        this.advanceChannelModifiers(m.steps)
+      if (this.#hasModifiers) {
+        const m = simSteps(this.#modAcc, dt, SIM_STEP, SIM_MAX_STEPS)
+        this.#modAcc = m.acc
+        this.#advanceChannelModifiers(m.steps)
       }
-      this.mouse.dx = 0 // movement consumed by this frame (onEnterFrame) -> the "mouse at rest" hands control back to the keyboard
-      this.mouse.dy = 0
-      this.mouse.wheel = 0
+      this.#mouse.dx = 0 // movement consumed by this frame (onEnterFrame) -> the "mouse at rest" hands control back to the keyboard
+      this.#mouse.dy = 0
+      this.#mouse.wheel = 0
 
       // 3) frame-actions (on the current frame) + single render — when there is something new to show.
-      this.fireFrameActions() // can change frame/playing (gotoFrame, pause...)
-      if (this.timeDriven || this.dirty || wasMoving || this.moving) this.render()
+      this.#fireFrameActions() // can change frame/playing (gotoFrame, pause...)
+      if (this.#timeDriven || this.#dirty || wasMoving || this.#moving) this.render()
       // A held scene with nothing left alive stops asking for frames: the old full pause, no idle loop.
-      if (this.held && !this.aliveWhileHeld()) { this.pause(); return }
-      if (this.playing) this.raf = requestAnimationFrame(tick)
+      if (this.#held && !this.#aliveWhileHeld()) { this.pause(); return }
+      if (this.#playing) this.#raf = requestAnimationFrame(tick)
     }
-    this.raf = requestAnimationFrame(tick)
+    this.#raf = requestAnimationFrame(tick)
   }
 
   /** What a script's `pause` does: hold the playhead (and its audio); the scene keeps living. */
-  private hold(): void {
-    if (this.held) return
-    this.held = true
-    this.stopAudio()
+  #hold(): void {
+    if (this.#held) return
+    this.#held = true
+    this.#stopAudio()
   }
   /** What a script's `play` does: release the playhead, and run the player if it is not running. */
-  private release(): void {
-    const was = this.held
-    this.held = false
-    if (!this.playing) this.play()
-    else if (was) this.startAudio(this.frame)
+  #release(): void {
+    const was = this.#held
+    this.#held = false
+    if (!this.#playing) this.play()
+    else if (was) this.#startAudio(this.#frame)
   }
   /** Something still moves while the playhead is held: a simulation, a spring, a picture reading `clock`. */
-  private aliveWhileHeld(): boolean {
-    return !!this.doc.timeline?.onEnterFrame?.length || this.activeSymbolTimelines(this.frame).some((s) => s.tl.onEnterFrame?.length) || this.hasModifiers || this.reads.has('clock')
+  #aliveWhileHeld(): boolean {
+    return !!this.doc.timeline?.onEnterFrame?.length || this.#activeSymbolTimelines(this.#frame).some((s) => s.tl.onEnterFrame?.length) || this.#hasModifiers || this.#reads.has('clock')
   }
 
   /** The HOST's pause: freezes the whole player — playhead, `every frame`, `clock`, springs. */
   pause(): void {
-    this.playing = false
-    this.simActive = false // no more playback -> the render goes back to the real values (not interpolated)
-    cancelAnimationFrame(this.raf)
-    this.stopAudio()
-    this.ensureTransitions() // hand any in-progress state transition off to its own driver (keeps animating)
+    this.#playing = false
+    this.#simActive = false // no more playback -> the render goes back to the real values (not interpolated)
+    cancelAnimationFrame(this.#raf)
+    this.#stopAudio()
+    this.#ensureTransitions() // hand any in-progress state transition off to its own driver (keeps animating)
   }
   toggle(): void {
-    if (this.playing) this.pause()
+    if (this.#playing) this.pause()
     else this.play()
   }
   stop(): void {
     this.pause()
-    this.held = false
+    this.#held = false
     this.seek(0)
   }
 
@@ -2229,42 +2233,42 @@ export class FlatPlayer {
   // The hit-test flattens each region's Bezier path to polygons on demand (cached by path identity). On a
   // cold cache the FIRST pointermove/pointerdown flattens the whole scene at once — a one-time jolt. Warm it
   // on idle after the first paint so that jolt lands during load, not on the user's first gesture.
-  private scheduleHitWarm(): void {
+  #scheduleHitWarm(): void {
     const ric = (globalThis as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback
     if (!ric) return // no idle scheduler (headless / older browser) → host can call `warmHitCache()` instead
-    this.hitWarmId = ric(() => { this.hitWarmId = 0; warmHitPaths(this.doc) }, { timeout: 2000 })
+    this.#hitWarmId = ric(() => { this.#hitWarmId = 0; warmHitPaths(this.doc) }, { timeout: 2000 })
   }
   /** Pre-flatten the hittable paths NOW (and cancel the scheduled idle warm). For a host that wants to hide
    *  the one-time cost behind its own loading state, or runs in a browser without `requestIdleCallback`. */
   warmHitCache(): void {
-    this.cancelHitWarm()
+    this.#cancelHitWarm()
     warmHitPaths(this.doc)
   }
-  private cancelHitWarm(): void {
-    if (!this.hitWarmId) return
-    ;(globalThis as { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback?.(this.hitWarmId)
-    this.hitWarmId = 0
+  #cancelHitWarm(): void {
+    if (!this.#hitWarmId) return
+    ;(globalThis as { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback?.(this.#hitWarmId)
+    this.#hitWarmId = 0
   }
 
   /** Releases the listeners. To be called when the player is no longer used. */
   destroy(): void {
-    this.destroyed = true
+    this.#destroyed = true
     this.pause()
-    this.cancelHitWarm()
-    if (this.transRaf) { cancelAnimationFrame(this.transRaf); this.transRaf = 0 } // stop the transition driver on a torn-down player
-    window.removeEventListener('resize', this.onResize)
-    this.fontSet()?.removeEventListener?.('loadingdone', this.onFontsLoaded)
-    globalThis.removeEventListener('keydown', this.onKeyDown)
-    globalThis.removeEventListener('keyup', this.onKeyUp)
-    globalThis.removeEventListener('blur', this.onBlur)
-    this.canvas.removeEventListener('focus', this.onCanvasFocus)
-    this.canvas.removeEventListener('blur', this.onCanvasBlur)
-    this.canvas.removeEventListener('pointermove', this.onPointerMove)
-    this.canvas.removeEventListener('pointerdown', this.onPointerDown)
-    this.canvas.removeEventListener('pointerup', this.onPointerUp)
-    this.canvas.removeEventListener('pointercancel', this.onPointerCancel)
-    this.canvas.removeEventListener('pointerleave', this.onPointerLeave)
-    this.canvas.removeEventListener('wheel', this.onWheel)
-    this.dropGestures()
+    this.#cancelHitWarm()
+    if (this.#transRaf) { cancelAnimationFrame(this.#transRaf); this.#transRaf = 0 } // stop the transition driver on a torn-down player
+    window.removeEventListener('resize', this.#onResize)
+    this.#fontSet()?.removeEventListener?.('loadingdone', this.#onFontsLoaded)
+    globalThis.removeEventListener('keydown', this.#onKeyDown)
+    globalThis.removeEventListener('keyup', this.#onKeyUp)
+    globalThis.removeEventListener('blur', this.#onBlur)
+    this.#canvas.removeEventListener('focus', this.#onCanvasFocus)
+    this.#canvas.removeEventListener('blur', this.#onCanvasBlur)
+    this.#canvas.removeEventListener('pointermove', this.#onPointerMove)
+    this.#canvas.removeEventListener('pointerdown', this.#onPointerDown)
+    this.#canvas.removeEventListener('pointerup', this.#onPointerUp)
+    this.#canvas.removeEventListener('pointercancel', this.#onPointerCancel)
+    this.#canvas.removeEventListener('pointerleave', this.#onPointerLeave)
+    this.#canvas.removeEventListener('wheel', this.#onWheel)
+    this.#dropGestures()
   }
 }
