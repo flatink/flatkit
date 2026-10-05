@@ -1,5 +1,21 @@
 # @flatkit/engine
 
+## 0.42.0
+
+### Minor Changes
+
+- [`f1022d8`](https://github.com/flatink/flatkit/commit/f1022d89d50c5b0df822473346d12a780249905f) Thanks [@kaelhem](https://github.com/kaelhem)! - flatink/flatink#62: a `.flatpack` may leave out the fields at their default value. Loading a document
+  (`sanitizeDoc`, which the player runs) now puts back the ones some readers did not default (layer
+  `visible` / `locked` / `opacity`, an identity `transform`); before, a missing `visible` read as a hidden
+  layer. `compactDoc(doc)` (engine), `packToJSON(doc, { compact: true })` and `flatc --compact` write the
+  lighter form, which needs a player on this version or later. Measured on our corpora: about 3% of the
+  document without media, every render identical.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @flatkit/types@0.42.0
+
 ## 0.41.0
 
 ### Minor Changes
