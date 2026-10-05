@@ -208,24 +208,42 @@ function expandPlace(name: string, body: string, theme: Theme, ctx: GestureConte
 
 function expandCompose(name: string, body: string, theme: Theme, ctx: GestureContext): Expansion {
   const { prefix: p, index: b, doneVar } = ctx
-  let target = 0
-  const chips: { value: string; x: string; y: string }[] = []
+  let target = 0, total = ''
+  const chips: { value: string; label?: string; x: string; y: string }[] = []
   let prompt = ''
   let shuffle = false
+  let unit = ''
+  let counter: { x: string; y: string } | undefined
+  // flatink/flatink#55: decimal values (money without counting in cents), a label or a unit on the chips, and
+  // an opt-in `counter` showing where the learner stands.
+  const NUM = '(\\d+(?:\\.\\d+)?)'
   for (const line of lines('compose', name, body)) {
     let x: RegExpMatchArray | null
     if ((x = line.match(/^prompt\s+"(.*)"$/))) prompt = x[1]
     else if (line === 'shuffle') shuffle = true
-    else if ((x = line.match(/^total\s+(\d+)$/))) target = Number(x[1])
-    else if ((x = line.match(/^chip\s+(\d+)\s+at\s+(-?[\d.]+),(-?[\d.]+)$/))) chips.push({ value: x[1], x: x[2], y: x[3] })
+    else if ((x = line.match(new RegExp(`^total\\s+${NUM}$`)))) { total = x[1]; target = Number(x[1]) }
+    else if ((x = line.match(new RegExp(`^chip\\s+${NUM}(?:\\s+"([^"]*)")?\\s+at\\s+(-?[\\d.]+),(-?[\\d.]+)$`)))) chips.push({ value: x[1], ...(x[2] !== undefined ? { label: x[2] } : {}), x: x[3], y: x[4] })
+    else if ((x = line.match(/^unit\s+"(.*)"$/))) unit = x[1]
+    else if ((x = line.match(/^counter\s+at\s+(-?[\d.]+),(-?[\d.]+)$/))) counter = { x: x[1], y: x[2] }
     else throw new Error(`compose "${name}": unrecognised line: ${line}`)
   }
+  // Decimals add up in floating point (0.1 + 0.2 is not 0.3): the running total is rounded to the places the
+  // author wrote, and reaching / overshooting the total is decided with that rounding.
+  const places = Math.max(0, ...[total, ...chips.map((c) => c.value)].map((v) => (v.split('.')[1] ?? '').length))
+  const k = 10 ** places
   if (!target) throw new Error(`compose "${name}": no \`total <n>\` — there is nothing to reach`)
   if (!chips.length) throw new Error(`compose "${name}": no chip — nothing for the learner to tap`)
 
   const vars = [`// ${p}— compose "${q(name)}"`, ...(prompt ? [`// prompt: ${q(prompt)}`] : []), `var ${p}total = 0`, `var ${doneVar} = 0`]
   const layers = [`  layer "${p}chips" {`]
-  chips.forEach((c, i) => layers.push(...container(`${p}C${i}`, c.x, c.y, theme.draw('chip', c.value), theme.size('chip'))))
+  chips.forEach((c, i) => layers.push(...container(`${p}C${i}`, c.x, c.y, theme.draw('chip', c.label ?? (unit ? `${c.value} ${unit}` : c.value)), theme.size('chip'))))
+  if (counter) {
+    // The theme draws the counter; its text shows the running total where it writes `{}`. A theme that
+    // predates the role draws nothing — the group is still there for a skin.
+    const size = theme.size('counter') ?? { w: 180, h: 56 }
+    const art = (theme.draw('counter', `{} / ${total}${unit ? ` ${unit}` : ''}`, size) ?? []).map((l) => (l.startsWith('text ') ? `${l} bind "${p}total"${places ? ` decimals ${places}` : ''}` : l))
+    layers.push(...container(`${p}Total`, counter.x, counter.y, art))
+  }
   layers.push('  }')
 
   const sh = shuffle ? shuffler(p, chips) : null
@@ -234,11 +252,12 @@ function expandCompose(name: string, body: string, theme: Theme, ctx: GestureCon
   if (sh) behavior.push('when loaded {', ...sh.load, '}', '')
   chips.forEach((c, i) => {
     behavior.push(`object "${p}C${i}" {`, `  focusable order ${focusBase(b) + 1}`, ...(sh ? [`  x = ${sh.x(i)}`, `  y = ${sh.y(i)}`] : []), '  when clicked {', `    if ${doneVar} < 0.5 {`)
-    behavior.push(`      if ${p}total + ${c.value} > ${target} {`)
+    const sum = places ? `round((${p}total + ${c.value}) * ${k}) / ${k}` : `${p}total + ${c.value}`
+    behavior.push(`      if ${sum} > ${total} {`)
     behavior.push(`        ${p}total = 0`, `        send "incorrect", { block = ${b}, item = ${i} }`)
     behavior.push('      } else {')
-    behavior.push(`        ${p}total = ${p}total + ${c.value}`, `        send "correct", { block = ${b}, item = ${i} }`)
-    behavior.push(`        if ${p}total == ${target} {`, `          ${doneVar} = 1`, `          send "part", { block = ${b} }`, '        }')
+    behavior.push(`        ${p}total = ${sum}`, `        send "correct", { block = ${b}, item = ${i} }`)
+    behavior.push(`        if ${p}total == ${total} {`, `          ${doneVar} = 1`, `          send "part", { block = ${b} }`, '        }')
     behavior.push('      }', '    }', '  }', '}', '')
   })
   return {
@@ -321,7 +340,7 @@ export function gestures(opts: GestureOptions = {}): Gesture[] {
     },
     {
       keyword: 'compose',
-      summary: `compose <name> { prompt "…"  [shuffle]  total <n>  chip <v> at x,y }  — tap values until they add up; overshooting resets. Footprint: chip ${footprint(theme, 'chip')}`,
+      summary: `compose <name> { prompt "…"  [shuffle]  [unit "…"]  total <n>  chip <v> ["label"] at x,y  [counter at x,y] }  — tap values until they add up (decimals allowed); overshooting resets; \`counter\` shows the running total. Footprint: chip ${footprint(theme, 'chip')}`,
       expand: (name, body, _doc, ctx) => expandCompose(name, body, theme, ctx),
     },
     {

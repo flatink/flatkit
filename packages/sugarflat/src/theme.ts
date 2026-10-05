@@ -17,6 +17,7 @@ export type Role =
   | 'target' // where an item belongs
   | 'card' // a panel the learner reads and taps
   | 'chip' // a small tappable value
+  | 'counter' // a running value the learner reads (`compose … counter at x,y`); its text shows `{}`
 
 export type Theme = {
   readonly name: string
@@ -28,13 +29,14 @@ export type Theme = {
 }
 
 /** Every role, in a stable order — for a reference card, or to sweep a theme. */
-export const ROLES: Role[] = ['item', 'target', 'card', 'chip']
+export const ROLES: Role[] = ['item', 'target', 'card', 'chip', 'counter']
 
 const SIZES: Record<Role, { w: number; h: number }> = {
   item: { w: 92, h: 92 },
   target: { w: 208, h: 118 },
   card: { w: 180, h: 140 },
   chip: { w: 96, h: 96 },
+  counter: { w: 180, h: 56 },
 }
 
 /**
@@ -72,6 +74,8 @@ export const GREYBOX: Theme = {
         return [`${plate(w, h, 16)} fill #2b3447`, `${plate(w, h, 16)} nofill stroke #44516a 2`, text(15, w - 20, h - 40, '#d7deea', -h / 2 + 26)]
       case 'chip':
         return [`circle 0 0 ${w / 2 - 8} fill #e8c46b`, `circle 0 0 ${w / 2 - 8} nofill stroke #b8923f 3`, text(22, w - 16, 28, '#4a3a1e', -13)]
+      case 'counter':
+        return [`${plate(w, h, 12)} fill #2b3447`, text(24, w - 16, 30, '#d7deea', -15)]
     }
   },
 }

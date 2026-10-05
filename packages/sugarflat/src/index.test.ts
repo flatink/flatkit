@@ -442,6 +442,31 @@ describe('the gestures, played — flatink/flatink #55 #56 #58', async () => {
     expect(() => desugar('place p {\n  target A at 100,300 size big\n  item a -> A at 100,100\n}\n')).toThrow(/size/)
   })
 
+  // #55 — `compose`: decimals were refused ("unrecognised line: total 3.7"), a chip could only show its raw
+  // value, and nothing told the learner where they stood.
+  it('compose: decimal values add up exactly, float noise included', () => {
+    const src = 'compose c {\n  total 0.3\n  chip 0.1 at 100,100\n  chip 0.2 at 300,100\n}\n'
+    const r = run(src, [{ type: 'tap', target: 'c_C0' }, { type: 'tap', target: 'c_C1' }])
+    expect(r.sends.map((s) => s.name)).toEqual(['correct', 'correct', 'part', 'completed']) // 0.1 + 0.2 is not 0.3 in floats
+    const over = run(src, [{ type: 'tap', target: 'c_C1' }, { type: 'tap', target: 'c_C1' }])
+    expect(over.sends.map((s) => s.name)).toEqual(['correct', 'incorrect'])
+  })
+  it('compose: a chip shows its label, or its value with the block\'s unit', () => {
+    const out = desugar('compose c {\n  unit "c"\n  total 250\n  chip 200 "2 €" at 100,100\n  chip 50 at 300,100\n}\n').flatink
+    expect(out).toMatch(/text "2 €"/)
+    expect(out).toMatch(/text "50 c"/)
+  })
+  it('compose: `counter at x,y` shows the running total, which the theme draws (and BLANK does not)', () => {
+    const src = 'compose c {\n  total 2.5\n  chip 0.5 at 100,100\n  chip 2 at 300,100\n  counter at 400,300\n}\n'
+    const out = desugar(src).flatink
+    expect(out).toMatch(/group "c_Total" at 400,300/)
+    expect(out).toMatch(/text "\{\} \/ 2.5"[^\n]*bind "c_total" decimals 1/)
+    expect(checkProgram(ensureHeader(out)).errors).toBe(0)
+    const blank = desugar(src, { gestures: gestures({ theme: BLANK }) }).flatink
+    expect(blank).toMatch(/group "c_Total"/)
+    expect(blank).not.toMatch(/text |#[0-9a-f]{3}/)
+  })
+
   // #58 — a step tapped out of order did nothing and sent nothing: an activity could not count mistakes.
   it('steps: a step AHEAD of the current one sends `incorrect`; a step already done stays silent', () => {
     const r = run(steps, [{ type: 'tap', target: 's_S2' }, { type: 'tap', target: 's_S0' }, { type: 'tap', target: 's_S0' }, { type: 'tap', target: 's_S1' }, { type: 'tap', target: 's_S2' }, { type: 'tap', target: 's_S1' }])

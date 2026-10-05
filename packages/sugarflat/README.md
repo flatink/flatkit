@@ -120,7 +120,7 @@ learner makes a mistake and the activity stops responding, at the exact moment t
 | | |
 |---|---|
 | `place <name> { prompt "…"  target <T> at x,y [size w,h]  item <i> -> <T> at x,y }` | drag items onto where they belong (`targets size w,h` sizes every target of the block) |
-| `compose <name> { prompt "…"  total <n>  chip <v> at x,y }` | tap values until they add up; overshooting resets |
+| `compose <name> { prompt "…"  total <n>  chip <v> ["label"] at x,y }` | tap values until they add up; overshooting resets. Decimals allowed; `unit "€"` labels every chip; `counter at x,y` shows the running total |
 | `steps <name> { prompt "…"  step "…" at x,y }` | a gated sequence; a step tapped ahead of its turn moves nothing but sends `incorrect` |
 
 All three are played **with the keyboard** as well as a pointer: every element is `focusable` (Tab reaches
