@@ -240,8 +240,9 @@ function expandCompose(name: string, body: string, theme: Theme, ctx: GestureCon
 }
 
 // ── steps ────────────────────────────────────────────────────────────────────
-// A gated sequence: step i only responds when it is the current one. Tapping out of order does nothing
-// at all -- no error, no penalty, which is what makes it usable as an escape-room stage.
+// A gated sequence: step i only responds when it is the current one. A step AHEAD of the current one is a
+// mistake the host may count (`incorrect`, like `place` and `compose` — flatink/flatink#58); nothing else
+// moves, so the sequence stays usable as an escape-room stage. A step already done stays silent.
 
 function expandSteps(name: string, body: string, theme: Theme, ctx: GestureContext): Expansion {
   const { prefix: p, index: b, doneVar } = ctx
@@ -271,7 +272,9 @@ function expandSteps(name: string, body: string, theme: Theme, ctx: GestureConte
     // `order`: Tab walks the cards in the order of the SEQUENCE, wherever they stand (`shuffle` moves them).
     behavior.push(`object "${p}S${i}" {`, `  focusable order ${focusBase(b) + 1 + i}`, ...(sh ? [`  x = ${sh.x(i)}`, `  y = ${sh.y(i)}`] : []), '  when clicked {', `    if ${p}step == ${i} {`, `      ${p}step = ${p}step + 1`, `      send "step", { block = ${b}, item = ${i} }`)
     if (i === steps.length - 1) behavior.push(`      ${doneVar} = 1`, `      send "part", { block = ${b} }`)
-    behavior.push('    }', '  }')
+    behavior.push('    }')
+    if (i > 0) behavior.push(`    if ${p}step < ${i} {`, `      send "incorrect", { block = ${b}, item = ${i} }`, '    }')
+    behavior.push('  }')
     // The only thing the gesture says about looks: a step that is not current is dimmed, because
     // "which one is live" is STATE, not decoration. A theme that disagrees rebinds opacity itself.
     behavior.push(`  opacity = ${p}step == ${i} ? 1 : 0.45`, '}', '')
@@ -313,7 +316,7 @@ export function gestures(opts: GestureOptions = {}): Gesture[] {
     },
     {
       keyword: 'steps',
-      summary: `steps <name> { prompt "…"  [shuffle]  step "…" at x,y }  — a gated sequence; out-of-order taps do nothing. Footprint: card ${footprint(theme, 'card')}`,
+      summary: `steps <name> { prompt "…"  [shuffle]  step "…" at x,y }  — a gated sequence; a step tapped ahead of its turn sends "incorrect". Footprint: card ${footprint(theme, 'card')}`,
       expand: (name, body, _doc, ctx) => expandSteps(name, body, theme, ctx),
     },
   ]

@@ -93,13 +93,13 @@ export const CONTRACTS: Contract[] = [
 }
 `,
     script: [
-      { type: 'tap', target: 'escape_S1' }, // out of order: gated, must do nothing at all
+      { type: 'tap', target: 'escape_S1' }, // out of order: gated, nothing moves — but the host hears `incorrect` (flatink/flatink#58)
       { type: 'tap', target: 'escape_S0' },
       { type: 'tap', target: 'escape_S1' },
       { type: 'tap', target: 'escape_S2' },
       { type: 'wait', frames: 1 },
     ],
-    sends: ['step', 'step', 'step', 'part', 'completed'],
+    sends: ['incorrect', 'step', 'step', 'step', 'part', 'completed'],
     vars: { escape_step: 3 },
   },
   {

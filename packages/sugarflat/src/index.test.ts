@@ -417,3 +417,18 @@ describe('place / steps / compose — picking and the Tab order', async () => {
     expect(order('s_S0')).toBeLessThan(order('s_S1')) // a sequence keeps its cards in order
   })
 })
+
+describe('the gestures, played — flatink/flatink #55 #56 #58', async () => {
+  const { playHeadless } = await import('@flatkit/player/debug')
+  const run = (src: string, g: unknown[]) => {
+    const c = checkProgram(ensureHeader(desugar(src).flatink))
+    expect(c.errors).toBe(0)
+    return playHeadless(c.doc!, g as never)
+  }
+  const steps = 'steps s {\n  step "one" at 100,300\n  step "two" at 300,300\n  step "three" at 500,300\n}\n'
+  // #58 — a step tapped out of order did nothing and sent nothing: an activity could not count mistakes.
+  it('steps: a step AHEAD of the current one sends `incorrect`; a step already done stays silent', () => {
+    const r = run(steps, [{ type: 'tap', target: 's_S2' }, { type: 'tap', target: 's_S0' }, { type: 'tap', target: 's_S0' }, { type: 'tap', target: 's_S1' }, { type: 'tap', target: 's_S2' }, { type: 'tap', target: 's_S1' }])
+    expect(r.sends.map((s) => `${s.name}${s.fields?.item !== undefined ? ':' + s.fields.item : ''}`)).toEqual(['incorrect:2', 'step:0', 'step:1', 'step:2', 'part', 'completed'])
+  })
+})
