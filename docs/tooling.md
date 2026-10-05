@@ -31,6 +31,7 @@ flatc game.flatink hero.flat -o game.flatpack
 
 ```
 flatc <program.flatink> [-o out.flatpack]   # writes the pack even with errors, but then exits ≠0
+flatc <program.flatink> --compact    # leave out default-valued fields (identity transforms, visible…): needs a player >= 0.42
 flatc <program.flatink> --check      # semantic lint only (exits ≠0 on ERROR; warnings don't block)
 flatc <program.flatink> --check --no-libs    # …without pulling in the .flat files sitting next to it
 flatc <program.flatink> --watch      # recompile on every change in the folder

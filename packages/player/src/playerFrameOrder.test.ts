@@ -114,3 +114,23 @@ describe('a range loop variable is the loop\'s own', () => {
     expect([v.s, v.i]).toEqual([6, 7])
   })
 })
+
+// flatink/flatink#62 — a compact `.flatpack` (default-valued fields left out) plays exactly like the full one:
+// the player puts the defaults back on the way in. A missing `visible` used to read as a HIDDEN layer.
+describe('a compact document plays like the full one', async () => {
+  const { compactDoc } = await import('@flatkit/engine/validateDoc')
+  const src = ['size 200 200', 'var hits = 0', 'var hidden = 0',
+    'scene {', '  layer "c" {', '    group "B" at 100,100 { layer "a" { circle 0 0 30 fill #3366cc } }', '  }',
+    '  layer "ghost" hidden {', '    group "G" at 20,20 { layer "a" { circle 0 0 15 fill #cc3333 } }', '  }', '}',
+    'object "B" { when clicked { hits = hits + 1 } }', 'object "G" { when clicked { hidden = hidden + 1 } }'].join('\n')
+  const g: Gesture[] = [{ type: 'tap', x: 100, y: 100 }, { type: 'tap', x: 20, y: 20 }, { type: 'tap', target: 'B' }]
+  it('same variables, same events — and the hidden layer stays hidden', () => {
+    const doc = parseProgramFull(src) as unknown as Doc
+    const compact = JSON.parse(JSON.stringify(compactDoc(doc))) as Doc
+    expect(JSON.stringify(compact)).not.toMatch(/"visible":true/)
+    const a = playHeadless(doc, g), b = playHeadless(compact, g)
+    expect(b.vars).toEqual(a.vars)
+    expect(b.sends).toEqual(a.sends)
+    expect(a.vars.hits).toBe(2)
+  })
+})

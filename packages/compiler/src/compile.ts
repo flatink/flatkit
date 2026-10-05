@@ -13,6 +13,7 @@
 import type { Doc, Item, Layer } from '@flatkit/types'
 import { parseFlatLib, parseProgramFull } from '@flatkit/engine/flatFormat'
 import { isGroup, isInstance } from '@flatkit/engine/layers'
+import { compactDoc } from '@flatkit/engine/validateDoc'
 
 /** Resolves `symbolId: '@Name'` instances into real ids (recursive, across groups). */
 function resolveRefs(layers: Layer[], byName: Map<string, string>): void {
@@ -72,4 +73,6 @@ export function compileFlatpack(programSrc: string, assetSrcs: string[] = [], me
 }
 
 /** Serialize the `.flatpack` v1 (JSON of the compiled Doc). */
-export const packToJSON = (doc: Doc): string => JSON.stringify(doc)
+/** A Doc as `.flatpack` JSON. `compact` leaves out the fields at their default value (about 10% of a heavy
+ *  document, flatink/flatink#62) — readable by a player on FlatKit 0.42 or later, which puts them back. */
+export const packToJSON = (doc: Doc, opts: { compact?: boolean } = {}): string => JSON.stringify(opts.compact ? compactDoc(doc) : doc)

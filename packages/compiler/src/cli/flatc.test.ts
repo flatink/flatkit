@@ -86,6 +86,25 @@ describe('flatc — CLI', () => {
     }
   })
 
+  // flatink/flatink#62 — `--compact` leaves out the default-valued fields (~10% of a heavy document); a
+  // player on 0.42+ puts them back when it loads the pack.
+  it('--compact writes a smaller pack that loads back to the same document', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flatc-compact-'))
+    const full = join(dir, 'full.flatpack'), small = join(dir, 'small.flatpack')
+    const outSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try {
+      expect(run(['node', 'flatc', join(cli, 'scene.flatink'), '-o', full])).toBe(0)
+      expect(run(['node', 'flatc', join(cli, 'scene.flatink'), '-o', small, '--compact'])).toBe(0)
+      const a = readFileSync(full, 'utf8'), b = readFileSync(small, 'utf8')
+      expect(b.length).toBeLessThan(a.length)
+      expect(b).not.toMatch(/"visible":true|"locked":false/)
+      expect(a).toMatch(/"visible":true/)
+    } finally {
+      outSpy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   // flatink/flatink#64 — a plain compile printed `error: …`, wrote the `.flatpack` and exited 0: a script or
   // a CI that trusts the exit code published a broken program. The pack is still written (an editor's
   // watch loop wants it), but the code says the truth.

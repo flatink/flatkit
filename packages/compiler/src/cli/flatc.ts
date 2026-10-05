@@ -67,6 +67,7 @@ Usage:
   --assets MODE     media baking: 'inline' (default, base64 in the .flatpack) or 'external'
                     (sidecar <out>.assets/ folder; asset.data = relative key — serve the folder and
                     play with sameOriginAssetResolver(<flatpackUrl>))
+  --compact         leave out the fields at their default value (~10% lighter); needs a player >= 0.42
   --check           semantic lint only (no .flatpack); exits ≠0 on ERROR (warnings do not stop). Lints a
                     program .flatink OR an asset library .flat (per-symbol; several .flat are merged)
   --fix             apply the MECHANICAL repairs the diagnostics carry (missing separator, run-on line)
@@ -195,7 +196,7 @@ function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], 
 }
 
 /** Compile once (write or --check). Returns the exit code. */
-function compileOnce(programPath: string, explicitFlats: string[], out: string, checkOnly: boolean, assetMode: AssetMode = 'inline', noLibs = false, doFix = false): number {
+function compileOnce(programPath: string, explicitFlats: string[], out: string, checkOnly: boolean, assetMode: AssetMode = 'inline', noLibs = false, doFix = false, compact = false): number {
   const outPath = out ? resolve(out) : join(dirname(programPath), basename(programPath, extname(programPath)) + '.flatpack')
   // External mode: sidecar folder next to the .flatpack, e.g. `game.flatpack` → `game.assets/`.
   const assetsDir = assetMode === 'external' ? basename(outPath, extname(outPath)) + '.assets' : ''
@@ -258,7 +259,7 @@ function compileOnce(programPath: string, explicitFlats: string[], out: string, 
     } else {
       writeFileSync(programPath, text) // ONE write, of a text this loop has already re-checked
       process.stderr.write(`flatc: --fix: ${total} repair(s) applied to ${basename(programPath)} · errors ${first} → ${before}\n`)
-      return compileOnce(programPath, explicitFlats, out, checkOnly, assetMode, noLibs, false)
+      return compileOnce(programPath, explicitFlats, out, checkOnly, assetMode, noLibs, false, compact)
     }
   }
   if (checkOnly) {
@@ -274,7 +275,7 @@ function compileOnce(programPath: string, explicitFlats: string[], out: string, 
   // Compile anyway — an editor's watch loop wants the pack — but an `error` still fails the exit code: a
   // script or a CI trusting it must not publish a broken program (flatink/flatink#64).
   if (report) process.stderr.write(report + '\n')
-  writeFileSync(outPath, packToJSON(doc))
+  writeFileSync(outPath, packToJSON(doc, { compact }))
   const outDir = dirname(outPath)
   for (const c of built.mediaCopies) {
     const dest = join(outDir, ...c.key.split('/'))
@@ -663,6 +664,7 @@ export function run(argv: string[]): number | Promise<number> {
   let since = ''
   let bboxMode: 'all' | 'frame0' = 'all'
   let assetMode: AssetMode = 'inline'
+  let compact = false
   const vars: Record<string, number> = {}
   const setSpec: Record<string, string> = {} // `--set param=value` (state name or number) for --preview
   const positional: string[] = []
@@ -674,6 +676,7 @@ export function run(argv: string[]): number | Promise<number> {
     else if (a === '--check') checkOnly = true
     else if (a === '--fix') { doFix = true; checkOnly = true }
     else if (a === '--no-libs') noLibs = true
+    else if (a === '--compact') compact = true
     else if (a === '--watch') doWatch = true
     else if (a === '--play') doPlay = true
     else if (a === '--trace') doTrace = true
@@ -708,7 +711,7 @@ export function run(argv: string[]): number | Promise<number> {
   // (the following positionals are more `.flat` libs to merge). Every other path is unchanged.
   const action: () => number = checkOnly && filePath.endsWith('.flat')
     ? () => checkFlatLibs([filePath, ...explicitFlats])
-    : () => compileOnce(filePath, explicitFlats, out, checkOnly, assetMode, noLibs, doFix)
+    : () => compileOnce(filePath, explicitFlats, out, checkOnly, assetMode, noLibs, doFix, compact)
   if (doWatch) {
     const code = action()
     const baseDir = dirname(filePath)
