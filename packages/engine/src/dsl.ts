@@ -59,6 +59,8 @@ export type Diagnostic = { line: number; col: number; message: string; severity?
 export type Site =
   | { kind: 'expr'; text: string; line: number; col: number }
   | { kind: 'label-ref'; name: string; line: number; col: number }
+  /** A procedure call statement `name(args)`: the linter checks the name and the argument count. */
+  | { kind: 'call-ref'; name: string; argc: number; line: number; col: number }
 
 export type ParseResult = { units: ScriptUnit[]; diagnostics: Diagnostic[]; sites: Site[] }
 
@@ -685,12 +687,14 @@ class Parser {
       if (!suffix || this.peek() !== '(') { this.err('"(" expected for a qualified call "pkg.proc(…)" or "=" for "Name.param = value"', m); this.skipLine(); return null }
       const args = this.callArgs()
       for (const a of args) this.exprSite(a, m)
+      this.sites.push({ kind: 'call-ref', name: name + '.' + suffix, argc: args.length, line: m.line, col: m.col })
       this.endStatement()
       return { do: 'call', name: name + '.' + suffix, args }
     }
     if (this.peek() === '(') { // procedure call: name(args)
       const args = this.callArgs()
       for (const a of args) this.exprSite(a, m)
+      this.sites.push({ kind: 'call-ref', name, argc: args.length, line: m.line, col: m.col })
       this.endStatement()
       return { do: 'call', name, args }
     }

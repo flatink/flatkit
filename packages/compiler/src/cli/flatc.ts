@@ -13,7 +13,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, watch, mkdirSync,
 import { resolve, dirname, basename, extname, join, relative, isAbsolute } from 'node:path'
 import { compileFlatpack, packToJSON, type MediaMap } from '../compile'
 import { parseProgramFull, parseFlatLib } from '@flatkit/engine/flatFormat'
-import { hasPackage } from '@flatkit/engine/stdlib'
+import { hasPackage, PACKAGES } from '@flatkit/engine/stdlib'
 import { parseUnits } from '@flatkit/engine/dsl'
 import { sanitizeDoc } from '@flatkit/engine/validateDoc'
 import { unitsToFunctions } from '@flatkit/engine/scriptDoc'
@@ -24,7 +24,7 @@ import { parsePathData } from '@flatkit/engine/svgPath'
 import { softVertexCount, smoothingDeviation } from '@flatkit/engine/path'
 import { ringsBBox } from '@flatkit/engine/bbox'
 import { lintDocReport, docHasErrors } from '../programDoc'
-import { applyFixes, formatDiagnostics, programDiagnostics, repairLoop } from '../check'
+import { applyFixes, formatDiagnostics, programDiagnostics, repairLoop, type CheckDiagnostic } from '../check'
 import { FlatSyntaxError } from '@flatkit/engine/flatFormat'
 import { playHeadless, type Gesture } from '@flatkit/player/debug'
 import type { FuncDef } from '@flatkit/engine/actions'
@@ -122,7 +122,7 @@ Media referenced by 'asset "id" "path" kind' are embedded (paths relative to the
 /** How media is baked: `inline` = base64 data-URI in the .flatpack; `external` = relative key + sidecar files. */
 type AssetMode = 'inline' | 'external'
 type MediaCopy = { src: string; key: string } // external mode: source file → relative key (forward slashes)
-type BuildResult = { doc: Doc; flatLibs: number; packages: number; media: number; mediaCopies: MediaCopy[]; src: string }
+type BuildResult = { doc: Doc; flatLibs: number; packages: number; media: number; mediaCopies: MediaCopy[]; src: string; missingPackages: string[] }
 
 /**
  * Reads a `.flatink`, resolves libs/packages/media, compiles → standalone Doc. Throws on compile error.
@@ -145,6 +145,7 @@ function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], 
   // PACKAGES: non-stdlib `use "x"` → local files inlined (x.flatink = functions, x.flat = symbols).
   const pkgFunctions: FuncDef[] = []
   const localResolved = new Set<string>()
+  const missingPackages: string[] = []
   for (const name of prog.imports ?? []) {
     if (hasPackage(name)) continue // stdlib → left as a reference
     const fink = join(baseDir, name + '.flatink')
@@ -154,7 +155,7 @@ function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], 
     if (existsSync(fink)) { for (const f of unitsToFunctions(parseUnits(readFileSync(fink, 'utf8')).units)) pkgFunctions.push(f, { ...f, name: `${name}.${f.name}` }); found = true }
     if (existsSync(fflat)) { flatPaths.add(fflat); found = true }
     if (found) localResolved.add(name)
-    else process.stderr.write(`flatc: package not found: "${name}" (neither stdlib, nor ${name}.flatink / ${name}.flat)\n`)
+    else missingPackages.push(name) // an error diagnostic on its `use` line, below
   }
   // Parse each lib HERE so a failure names the FILE. Libs are auto-discovered from the folder, so the one
   // that fails is often a neighbour the author never mentioned — a bare "compile error: …" sent them hunting
@@ -190,7 +191,7 @@ function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], 
   doc = { ...doc, imports: stdImports.length ? stdImports : undefined }
   // The source travels with the Doc: the source-level passes (`programDiagnostics`) need the author's text,
   // since a parse-level drop and an `object` block binding to nothing leave no trace in the compiled Doc.
-  return { doc, flatLibs: flatPaths.size, packages: localResolved.size, media: Object.keys(media).length, mediaCopies, src: programSrc }
+  return { doc, flatLibs: flatPaths.size, packages: localResolved.size, media: Object.keys(media).length, mediaCopies, src: programSrc, missingPackages }
 }
 
 /** Compile once (write or --check). Returns the exit code. */
@@ -228,7 +229,13 @@ function compileOnce(programPath: string, explicitFlats: string[], out: string, 
   // The SAME pass the `checkProgram` API runs — source-level diagnostics (statements the parser dropped,
   // `object` blocks binding to nothing) merged with the semantic lint of the Doc. Shared on purpose: a
   // check that lives only in the CLI is a check an integrator has to shell out for.
-  const diagnostics = programDiagnostics(doc, built.src)
+  // A `use` resolving to nothing was a stderr line, and `--check` passed when nothing of it was called
+  // (flatink/flatink#64): an error, on the `use` line.
+  const diagnostics = [...built.missingPackages.map((name): CheckDiagnostic => {
+    const at = new RegExp(`^[ \\t]*use[ \\t]+"${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`, 'm').exec(built.src)
+    const line = at ? built.src.slice(0, at.index).split('\n').length : 1
+    return { scope: 'scene', line, col: 1, severity: 'error', message: `package not found: "${name}" — neither a stdlib package (${PACKAGES.join(', ')}) nor ${name}.flatink / ${name}.flat next to the program` }
+  }), ...programDiagnostics(doc, built.src)]
   const report = formatDiagnostics(diagnostics)
   const hasErrors = diagnostics.some((d) => d.severity === 'error')
   // `--fix` applies the MECHANICAL repairs the diagnostics carry (a missing separator, a run-on line),

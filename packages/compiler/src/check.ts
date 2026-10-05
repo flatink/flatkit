@@ -15,7 +15,9 @@
 //  `checkProgram(src)` runs the WHOLE pass — source in, diagnostics out, no filesystem, no subprocess.
 //  The CLI calls the same function, so the two cannot drift.
 // ─────────────────────────────────────────────────────────────────────────────
-import type { Doc } from '@flatkit/types'
+import type { Doc, Layer } from '@flatkit/types'
+import { isGroup, isText } from '@flatkit/engine/layers'
+import { forEachAction } from './docWalk'
 import type { TextEdit } from '@flatkit/engine/dsl'
 import { FlatSyntaxError, behaviorDiagnostics, duplicateBindingDiagnostics, objectTargetDiagnostics, sceneOnlyUnitDiagnostics, itemOnlyUnitDiagnostics } from '@flatkit/engine/flatFormat'
 import { compileFlatpack, type MediaMap } from './compile'
@@ -112,6 +114,45 @@ function missingSizeDiagnostic(src: string, doc: Doc): CheckDiagnostic | null {
   }
 }
 
+/** 1-based line of the first match of `re` in `src`, or 1. */
+const lineOf = (src: string, re: RegExp): number => { const m = re.exec(src); return m ? src.slice(0, m.index).split('\n').length : 1 }
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * Behavior that compiles and can never happen (flatink/flatink#67): an `at frame` the playhead never
+ * enters (between two whole frames, or past the last one), a `sound` of an asset nobody declared, a
+ * `text("…")` naming no text (it sent `""`).
+ */
+function unreachableBehaviorDiagnostics(doc: Doc, src: string): CheckDiagnostic[] {
+  const out: CheckDiagnostic[] = []
+  for (const t of [doc.timeline, ...doc.symbols.map((s) => s.timeline)]) {
+    if (!t) continue
+    const last = Math.ceil(t.durationFrames) - 1
+    for (const fa of t.frameActions ?? []) {
+      const why = !Number.isInteger(fa.frame) ? 'the playhead only enters WHOLE frames' : fa.frame > last ? `the last frame is ${last} (frames count from 0 on a ${t.durationFrames}-frame timeline)` : ''
+      if (why) out.push({ scope: 'scene', line: lineOf(src, new RegExp(`^[ \\t]*at[ \\t]+frame[ \\t]+${escapeRe(String(fa.frame))}\\b`, 'm')), col: 1, severity: 'warning', message: `\`at frame ${fa.frame}\` never runs: ${why}` })
+    }
+  }
+  const assets = new Set((doc.assets ?? []).map((a) => a.id))
+  const texts = new Set<string>()
+  const walk = (layers: Layer[]) => { for (const l of layers) for (const it of l.items) { if (isText(it)) { texts.add(it.id); texts.add(it.name) } if (isGroup(it)) walk(it.layers) } }
+  walk(doc.layers)
+  for (const sym of doc.symbols) walk(sym.layers)
+  const seen = new Set<string>()
+  forEachAction(doc, (a) => {
+    if (a.do === 'sound' && !assets.has(a.assetId) && !seen.has(`s${a.assetId}`)) {
+      seen.add(`s${a.assetId}`)
+      out.push({ scope: 'scene', line: lineOf(src, new RegExp(`\\bsound[ \\t]+"${escapeRe(a.assetId)}"`)), col: 1, severity: 'error', message: `sound "${a.assetId}": no asset "${a.assetId}" is declared — it plays nothing. Declare it: \`asset "${a.assetId}" "<file>.mp3" sound\`` })
+    }
+    if (a.do === 'send' && a.payload?.kind === 'text' && !texts.has(a.payload.itemId) && !seen.has(`t${a.payload.itemId}`)) {
+      const id = a.payload.itemId
+      seen.add(`t${id}`)
+      out.push({ scope: 'scene', line: lineOf(src, new RegExp(`\\btext\\(\\s*"${escapeRe(id)}"`)), col: 1, severity: 'error', message: `text("${id}"): no text "${id}" (id or name) in the scene or its symbols — it would send "". Name the text: \`text "…" at x,y as "${id}"\`` })
+    }
+  })
+  return out
+}
+
 /**
  * Every diagnostic of a program that HAS compiled: the source-level passes, then the semantic lint of the
  * whole Doc (read against `src`, so positions point into the author's file). Exact-duplicate lines are
@@ -124,7 +165,8 @@ export function programDiagnostics(doc: Doc, src: string): CheckDiagnostic[] {
   for (const d of sourceDiagnostics(src)) push(d)
   const noSize = missingSizeDiagnostic(src, doc)
   if (noSize) push(noSize)
-  for (const { scope, diag } of duplicateBindingDiagnostics(src)) push({ scope, line: diag.line, col: diag.col, severity: 'warning', message: diag.message })
+  for (const { scope, diag } of duplicateBindingDiagnostics(src)) push({ scope, line: diag.line, col: diag.col, severity: diag.severity === 'error' ? 'error' : 'warning', message: diag.message })
+  for (const d of unreachableBehaviorDiagnostics(doc, src)) push(d)
   for (const { scope, diag } of lintDoc(doc, src)) push({ scope, line: diag.line, col: diag.col, severity: diag.severity === 'warning' ? 'warning' : 'error', message: diag.message, ...(diag.fix ? { fix: diag.fix } : {}) })
   // Collapse LAST: the same "unexpected statement" is reported by the source pass and by the Doc lint,
   // so folding one of them alone leaves the other's copy behind.

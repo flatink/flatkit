@@ -13,8 +13,8 @@
 //  by the caller (document global variables). Labels are only checked
 //  if the caller provides their list (otherwise we don't know the universe).
 // ─────────────────────────────────────────────────────────────────────────────
-import { analyzeExpr, STD_CONSTANTS, STD_FUNCTIONS, STD_IDS, STD_OBJECTS } from '@flatkit/engine/expr'
-import { packageFunctionNames } from '@flatkit/engine/stdlib'
+import { analyzeExpr, MATH_CTX, STD_CONSTANTS, STD_FUNCTIONS, STD_IDS, STD_OBJECTS } from '@flatkit/engine/expr'
+import { packageFunctionNames, resolvePackage } from '@flatkit/engine/stdlib'
 import { parseUnits, type Diagnostic, type ScriptUnit, type TextEdit } from '@flatkit/engine/dsl'
 import type { Action } from '@flatkit/engine/actions'
 
@@ -27,6 +27,24 @@ export type LintContext = {
   functions?: Iterable<string>
   /** Scene objects referenceable by name (`Hero.x`) — in addition to mouse/keys. */
   objects?: Iterable<string>
+  /** Parameter count of the caller's functions (`functions`), so a call to one is counted too. */
+  arities?: Record<string, number>
+}
+
+/** Arguments a built-in takes: a count, or `'1+'` for the variadic ones. Arguments were never counted —
+ *  `round(3.14159, 2)` is 3, `clamp(a, 0)` is 0, `random(10)` stays in 0..1 (flatink/flatink#65). */
+const VARIADIC = new Set(['min', 'max', 'hypot'])
+const BUILTIN_ARITY: Record<string, number | '1+'> = {
+  ...Object.fromEntries(Object.entries(MATH_CTX).filter(([, v]) => typeof v === 'function').map(([k, v]) => [k, VARIADIC.has(k) ? '1+' : (v as (...a: number[]) => number).length])),
+  random: 0, toLocalX: 2, toLocalY: 2, toGlobalX: 2, toGlobalY: 2, velocity: 1,
+}
+const plural = (n: number) => (n === 0 ? 'no argument' : n === 1 ? '1 argument' : `${n} arguments`)
+/** The arity diagnostic of one call, or undefined when it is right (or the function is not counted). */
+function arityMessage(name: string, got: number, arities: Map<string, number | '1+'>): string | undefined {
+  const want = arities.get(name)
+  if (want === undefined) return undefined
+  if (want === '1+') return got >= 1 ? undefined : `"${name}" takes at least 1 argument, ${got === 0 ? 'none' : got} given`
+  return got === want ? undefined : `"${name}" takes ${plural(want)}, ${got} given`
 }
 
 /** Collects the names of ASSIGNED variables (setVar) + loop vars, inside action bodies. */
@@ -99,11 +117,17 @@ export function lint(src: string, ctx: LintContext = {}): Diagnostic[] {
   const knownIds = new Set<string>([...STD_IDS, ...STD_CONSTANTS, ...variables])
   const knownFns = new Set(STD_FUNCTIONS)
   knownFns.add('velocity') // valid inside a spring/smooth target (resolved by the modifier advance); NOT a stdlib
+  const arities = new Map<string, number | '1+'>(Object.entries(BUILTIN_ARITY))
+  const procs = new Set<string>() // what a `name(args)` statement may call
+  for (const [k, n] of Object.entries(ctx.arities ?? {})) arities.set(k, n)
+  for (const f of ctx.functions ?? []) { knownFns.add(f); procs.add(f) }
   for (const u of units) {
-    if (u.kind === 'func') knownFns.add(u.func.name) // user-defined functions
-    else if (u.kind === 'use') for (const name of packageFunctionNames(u.name)) knownFns.add(name) // package functions (bare + qualified)
+    if (u.kind === 'func') { knownFns.add(u.func.name); procs.add(u.func.name); arities.set(u.func.name, u.func.params.length) } // user-defined functions
+    else if (u.kind === 'use') {
+      for (const name of packageFunctionNames(u.name)) { knownFns.add(name); procs.add(name) } // package functions (bare + qualified)
+      for (const f of resolvePackage(u.name)) { arities.set(f.name, f.params.length); arities.set(`${u.name}.${f.name}`, f.params.length) }
+    }
   }
-  for (const f of ctx.functions ?? []) knownFns.add(f)
   const knownObjs = new Set(STD_OBJECTS)
   for (const o of ctx.objects ?? []) knownObjs.add(o) // scene objects (Hero.x…)
   const labels = ctx.labels ? new Set(ctx.labels) : null
@@ -131,6 +155,7 @@ export function lint(src: string, ctx: LintContext = {}): Diagnostic[] {
         continue
       }
       for (const fn of a.refs.calls) if (!knownFns.has(fn)) out.push({ line: s.line, col: s.col, message: `unknown function "${fn}"` })
+      for (const [fn, got] of a.refs.arity) { const m = arityMessage(fn, got, arities); if (m) out.push({ line: s.line, col: s.col, message: m }) }
       for (const o of a.refs.members)
         if (!knownObjs.has(o)) out.push({ line: s.line, col: s.col, message: `unknown object "${o}" (expected: ${[...knownObjs].join(', ')})` })
       for (const id of a.refs.ids)
@@ -141,6 +166,11 @@ export function lint(src: string, ctx: LintContext = {}): Diagnostic[] {
           // and the message repeated itself. (Both spellings mean the same thing at the top level of a
           // program; inside an `object` block a declaration is refused outright, with its own message.)
           out.push({ line: s.line, col: s.col, message: `unknown variable "${id}"${variables.size ? '' : ` — declare it at the top level of the program: \`var ${id} = 0\``}` })
+    } else if (s.kind === 'call-ref') {
+      // A call statement naming nothing was skipped at runtime, while the same name in an expression was
+      // already an error (flatink/flatink#65).
+      if (!procs.has(s.name)) out.push({ line: s.line, col: s.col, message: `unknown procedure "${s.name}" — declare it with \`fn ${s.name}() { … }\`` })
+      else { const m = arityMessage(s.name, s.argc, arities); if (m) out.push({ line: s.line, col: s.col, message: m }) }
     } else if (labels && !labels.has(s.name)) {
       out.push({ line: s.line, col: s.col, message: `unknown label "${s.name}"` })
     }

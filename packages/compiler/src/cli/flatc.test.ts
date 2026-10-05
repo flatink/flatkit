@@ -107,6 +107,24 @@ describe('flatc — CLI', () => {
     }
   })
 
+  // flatink/flatink#64 — `use "physics"` with no such package printed a stderr line and `--check` passed.
+  it('--check: a package that resolves to nothing is an error on its `use` line', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flatc-pkg-'))
+    const prog = join(dir, 'p.flatink')
+    writeFileSync(prog, 'size 100 100\nuse "collision"\nuse "physics"\nscene {\n  layer "L" { circle 0 0 5 fill #f00 }\n}\n')
+    const errs: string[] = []
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((s: string | Uint8Array) => { errs.push(String(s)); return true })
+    const outSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try {
+      expect(run(['node', 'flatc', prog, '--check'])).toBe(1)
+      expect(errs.join('')).toMatch(/3:1: error: package not found: "physics"/)
+    } finally {
+      spy.mockRestore()
+      outSpy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('--check: surfaces an unknown channel in an object block (dropped silently before the fix)', () => {
     const base = 'size 100 100\nscene {\n  layer "L" {\n    group "G" { layer "c" { circle 0 0 5 fill #f00 } }\n  }\n}\n'
     const bad = join(cli, '__check_bad.flatink')

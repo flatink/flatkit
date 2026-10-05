@@ -164,3 +164,30 @@ describe('lint — lintReport (repair loop)', () => {
     expect(r).toMatch(/^\d+:\d+: unknown function "wobble"/)
   })
 })
+
+// flatink/flatink#65 — arguments were never counted: `round(3.14159, 2)` is 3, `clamp(a, 0)` is 0 (NaN,
+// then the fallback), `random(10)` stays in 0..1, and a missing argument of a user / package function is 0.
+describe('lint — a call has the right number of arguments', () => {
+  const msgs = (src: string, ctx = {}) => lint(src, ctx).map((d) => d.message)
+  it('built-in functions', () => {
+    expect(msgs('let a = 0\nx = round(3.14159, 2)')).toEqual([expect.stringMatching(/round.*1 argument.*2/)])
+    expect(msgs('let a = 0\nx = clamp(a, 0)')).toEqual([expect.stringMatching(/clamp.*3 arguments.*2/)])
+    expect(msgs('x = random(10)')).toEqual([expect.stringMatching(/random.*no argument.*1/)])
+    expect(msgs('x = atan2(1)')).toEqual([expect.stringMatching(/atan2.*2 arguments/)])
+  })
+  it('variadic ones take one or more', () => {
+    expect(msgs('x = max(1, 2, 3) + min(4) + hypot(3, 4)')).toEqual([])
+    expect(msgs('x = max()')).toEqual([expect.stringMatching(/max.*at least 1/)])
+  })
+  it('user and package functions, and procedures', () => {
+    expect(msgs('fn f(a, b) = a + b\nx = f(1)')).toEqual([expect.stringMatching(/"f".*2 arguments.*1/)])
+    expect(msgs('use "collision"\nx = dist(3, 4)')).toEqual([expect.stringMatching(/dist.*4 arguments.*2/)])
+    expect(msgs('fn reset(n) {\n  score = n\n}\nwhen clicked {\n  reset()\n}')).toEqual([expect.stringMatching(/reset.*1 argument.*0/)])
+    expect(msgs('x = g(1)', { functions: ['g'], arities: { g: 2 } })).toEqual([expect.stringMatching(/"g".*2 arguments/)])
+  })
+  // `a = nothing(1)` was an error, the statement `nothing()` was not: it was skipped at runtime.
+  it('a procedure call names a known procedure', () => {
+    expect(msgs('when clicked {\n  nothing()\n}')).toEqual([expect.stringMatching(/unknown procedure "nothing"/)])
+    expect(msgs('fn hop() {\n  x = 1\n}\nwhen clicked {\n  hop()\n}')).toEqual([])
+  })
+})

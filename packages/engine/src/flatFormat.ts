@@ -1142,6 +1142,20 @@ export function duplicateBindingDiagnostics(src: string): { scope: string; diag:
   const lineAt = (off: number) => expanded.slice(0, off).split('\n').length
   const bound = new Map<string, Map<string, number>>() // item name -> channel -> line of the first binding
   const out: { scope: string; diag: Diagnostic }[] = []
+  // flatink/flatink#67 — an object has ONE interactor: a second one (in the same block or another block of
+  // the same object) silently replaced the first. And a `when dropped on` needs one to fire at all.
+  const gestures = new Map<string, number>(), dropAt = new Map<string, number>()
+  for (const ob of objects) {
+    const units = parseUnits(ob.body).units
+    const n = units.filter((u) => u.kind === 'interactor').length
+    const before = gestures.get(ob.name) ?? 0
+    if (n && before + n > 1) out.push({ scope: `object "${ob.name}"`, diag: { line: lineAt(ob.at), col: 1, severity: 'error',
+      message: `"${ob.name}" has more than one interactor (drag, turn, reveal, trace…) — an object takes ONE interactor, and only the last one would work. Split the gesture across two objects.` } })
+    gestures.set(ob.name, before + n)
+    if (units.some((u) => u.kind === 'drop') && !dropAt.has(ob.name)) dropAt.set(ob.name, lineAt(ob.at))
+  }
+  for (const [name, line] of dropAt) if (!gestures.get(name)) out.push({ scope: `object "${name}"`, diag: { line, col: 1, severity: 'warning',
+    message: `"${name}" has \`when dropped on\` but nothing makes it draggable — the drop never fires. Give it \`drag x, y\` (or another interactor).` } })
   for (const ob of objects) {
     const { expressions } = unitsToObject(parseUnits(ob.body).units)
     const seen = bound.get(ob.name) ?? new Map<string, number>()

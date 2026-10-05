@@ -25,7 +25,7 @@ import { bboxIntersects, ringsBBox } from '@flatkit/engine/bbox'
 import { lint, localVariables, type LintContext } from './lint'
 import { forEachAction, forEachExpression } from './docWalk'
 import { parseUnits } from '@flatkit/engine/dsl'
-import { MATH_CTX, STD_CONSTANTS, STD_IDS } from '@flatkit/engine/expr'
+import { MATH_CTX, STD_CONSTANTS, STD_FUNCTIONS, STD_IDS } from '@flatkit/engine/expr'
 import type { Image, Item, Layer, ParamDef, Region, SymbolDef, Text, Transform } from '@flatkit/types'
 
 /** Rebuilds the "program" text of a scope (imports + variables + functions + scene cycle
@@ -63,6 +63,7 @@ export function docLintContext(doc: Doc, editPath: EditFrame[] = [], extraVars?:
     variables: [...Object.keys(doc.variables ?? {}), ...(extraVars ?? []), ...scopeSymbolParams(doc, editPath)],
     labels: (getScopeTimeline(doc, editPath)?.labels ?? []).map((l) => l.name),
     functions: [...(doc.functions ?? []).map((f) => f.name), ...importedFunctions(doc.imports).map((f) => f.name)],
+    arities: Object.fromEntries([...importedFunctions(doc.imports), ...(doc.functions ?? [])].map((f) => [f.name, f.params.length])),
     objects: objectNames(contextLayers(doc, editPath)),
   }
 }
@@ -305,8 +306,15 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
     const by = hiddenBy(name) ?? (valueFns.has(name) ? `the function ${name}()` : undefined)
     if (by) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `variable "${name}" is hidden by ${by} — every read returns that, never the variable. Rename it` } })
   }
+  // (b ter, the other way round — flatink/flatink#65) A variable named like a function the PLAYER provides
+  // replaces it in the context: `var random = 3` made every `random()` return 0.
+  for (const name of names0) {
+    if (STD_FUNCTIONS.includes(name) && !Object.hasOwn(MATH_CTX, name)) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `${name}() is hidden by the variable "${name}" — ${name}() no longer works anywhere in the program. Rename the variable` } })
+  }
   for (const f of doc.functions ?? []) {
     if (f.name.includes('.')) continue // the qualified alias of a package function repeats the plain one
+    // …and a `fn` named like a math built-in is never called: the built-in is resolved first.
+    if (Object.hasOwn(MATH_CTX, f.name)) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `fn ${f.name} is hidden by the built-in ${f.name}() — every call goes to the built-in, never to this fn. Rename it` } })
     for (const p of f.params) {
       // A VALUE function binds its parameters over the reserved names (`fn dbl(value) = value * 2` reads
       // its argument); only math names, resolved first everywhere, hide one there.

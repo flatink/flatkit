@@ -480,3 +480,36 @@ describe('flatc --fix — one write, or none', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })
+
+// flatink/flatink#67 — behaviors that compiled, passed `--check`, and could never happen.
+describe('checkProgram — a behavior that can never happen is named', () => {
+  const prog = (behavior: string, head = '') => [
+    'size 200 200', 'timeline 24 60', 'var px = 0', 'var py = 0', 'var qx = 0', 'var n = 0', head,
+    'scene {', '  layer "art" {',
+    '    group "Box" at 100,100 { layer "c" { rect 0 0 10 10 fill #ff0000 } }',
+    '    group "Zone" at 10,10 { layer "c" { rect 0 0 30 30 fill #00ff00 } }',
+    '    text "Hello" as "msg" at 10,150',
+    '  }', '}', behavior, ''].join('\n')
+  const about = (src: string, re: RegExp) => checkProgram(src).diagnostics.filter((d) => re.test(d.message)).map((d) => `${d.severity} ${d.line}: ${d.message}`)
+
+  it('two interactors in one object: only the last one worked', () => {
+    expect(about(prog('object "Box" {\n  drag px, py\n  dragX qx\n}'), /interactor/)).toEqual([expect.stringMatching(/^error 15: .*"Box".*one interactor/)])
+    expect(about(prog('object "Box" {\n  drag px, py\n}\nobject "Box" {\n  dragX qx\n}'), /interactor/)).toHaveLength(1)
+    expect(about(prog('object "Box" {\n  drag px, py\n}'), /interactor/)).toEqual([])
+  })
+  it('`at frame` between two whole frames, or past the last one', () => {
+    expect(about(prog('at frame 59.5 { n = 1 }'), /at frame/)).toEqual([expect.stringMatching(/^warning 15: .*59\.5.*whole/i)])
+    expect(about(prog('at frame 75 { n = 1 }'), /at frame/)).toEqual([expect.stringMatching(/^warning 15: .*75.*last frame is 59/)])
+    expect(about(prog('at frame 59 { n = 1 }'), /at frame/)).toEqual([])
+  })
+  it('`when dropped on` with nothing to drag', () => {
+    expect(about(prog('object "Box" {\n  when dropped on Zone { n = 1 }\n}'), /dropped on/)).toEqual([expect.stringMatching(/^warning 15: .*"Box".*drag/)])
+    expect(about(prog('object "Box" {\n  drag px, py\n  when dropped on Zone { n = 1 }\n}'), /dropped on/)).toEqual([])
+  })
+  it('`sound` of an undeclared asset, `text("…")` of a missing text', () => {
+    expect(about(prog('object "Box" {\n  when clicked {\n    sound "boom"\n  }\n}'), /boom/)).toEqual([expect.stringMatching(/^error 17: .*no asset "boom"/)])
+    expect(about(prog('object "Box" {\n  when clicked {\n    sound "boom"\n  }\n}', 'asset "boom" "boom.mp3" sound'), /boom/)).toEqual([])
+    expect(about(prog('object "Box" {\n  when clicked {\n    send "answer", text("absent")\n  }\n}'), /absent/)).toEqual([expect.stringMatching(/^error 17: .*no text "absent"/)])
+    expect(about(prog('object "Box" {\n  when clicked {\n    send "answer", text("msg")\n  }\n}'), /msg/)).toEqual([])
+  })
+})

@@ -58,6 +58,13 @@ describe('programDoc — lintDoc', () => {
     expect(report).toMatch(/\[scene\].*unknown variable "speed"/)
     expect(lintDoc(d).length).toBe(1)
   })
+  // flatink/flatink#65 — the document's own functions are counted too, wherever they are called.
+  it('a call to a document function with the wrong number of arguments', () => {
+    const d: Doc = { width: 100, height: 100, symbols: [], layers: [layer([group('hero', 'Hero')])], interactions: [click('hero', 'f(1)')],
+      functions: [{ name: 'f', kind: 'value', params: ['a', 'b'], expr: 'a + b' }], imports: ['collision'] }
+    expect(lintDocReport(d)).toMatch(/"f" takes 2 arguments, 1 given/)
+    expect(lintDocReport({ ...d, interactions: [click('hero', 'dist(3, 4)')] })).toMatch(/"dist" takes 4 arguments, 2 given/)
+  })
   it('correct Doc -> empty report', () => {
     const d: Doc = { width: 100, height: 100, symbols: [], layers: [layer([group('hero', 'Hero')])], interactions: [click('hero', 'mouse.x')] }
     expect(lintDocReport(d)).toBe('')
@@ -1056,6 +1063,18 @@ describe('programDoc — a variable hidden by a built-in name', () => {
   })
   it('an ordinary name is left alone', () => {
     expect(hidden(`size 200 200\nvar score = 0\nfn twice(n) = n * 2\n${scene}`)).toEqual([])
+  })
+  // flatink/flatink#65 — the other direction: the variable breaks the RUNTIME function (`var random = 3`
+  // made `random()` return 0), and a `fn` named like a built-in is ignored (the built-in is resolved first).
+  it('a variable named like a runtime function breaks the function', () => {
+    const ws = hidden(`size 200 200\nvar random = 3\nvar toLocalX = 0\n${scene}`)
+    expect(ws).toHaveLength(2)
+    expect(ws[0]).toMatch(/"random".*random\(\) no longer/)
+  })
+  it('a fn named like a built-in is ignored, and says so', () => {
+    const ws = hidden(`size 200 200\nfn round(x) = 42\nfn sin(x) = x\n${scene}`)
+    expect(ws).toHaveLength(2)
+    expect(ws[0]).toMatch(/fn round.*built-in round\(\)/)
   })
 })
 
