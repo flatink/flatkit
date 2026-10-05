@@ -65,6 +65,8 @@ export interface ActionHost {
   textContent(itemId: string): string
   /** Plays an audio clip (asset) one-shot (`sound "id"`). No-op if audio is off / asset is missing. */
   playSound(assetId: string): void
+  /** Runs `body` with `names` as LOCAL variables: their previous values (or absence) come back after it. */
+  withLocals?(names: string[], body: () => void): void
 }
 
 function runAction(a: Action, host: ActionHost, budget: Budget): void {
@@ -125,10 +127,15 @@ function runAction(a: Action, host: ActionHost, budget: Budget): void {
       const from = Math.floor(host.evalNumber(a.from))
       const to = Math.floor(host.evalNumber(a.to))
       const n = Math.min(MAX_REPEAT, Math.max(0, to - from + 1))
-      for (let k = 0; k < n && budget.n < MAX_ACTIONS_PER_TICK; k++) {
-        host.setVar(a.var, from + k)
-        runList(a.body, host, budget)
+      const loop = () => {
+        for (let k = 0; k < n && budget.n < MAX_ACTIONS_PER_TICK; k++) {
+          host.setVar(a.var, from + k)
+          runList(a.body, host, budget)
+        }
       }
+      // The loop variable is the loop's own: a same-named global gets its value back after it.
+      if (host.withLocals) host.withLocals([a.var], loop)
+      else loop()
       break
     }
     case 'call':

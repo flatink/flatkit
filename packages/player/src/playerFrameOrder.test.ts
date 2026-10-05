@@ -97,3 +97,20 @@ describe('the order: handlers run when the event arrives, `every frame` at the n
     expect(play(src, [{ type: 'set', name: 'px', value: 50 }, { type: 'tap', x: 0, y: 0 }], { settle: 0 }).px).toBe(100)
   })
 })
+
+// flatink/flatink#65, decided: a `repeat i from A to B` variable belongs to its loop. It used to leak into
+// the document's variables (`--play` listed it, a host could read it) and overwrite a global of that name.
+describe('a range loop variable is the loop\'s own', () => {
+  const src = (head: string) => ['size 200 200', 'var s = 0', head,
+    'scene { layer "c" { group "G" at 100,100 { layer "a" { circle 0 0 10 fill #cc3333 } } } }',
+    'when loaded {', '  repeat i from 1 to 3 {', '    s = s + i', '  }', '}'].join('\n')
+  it('it does not outlive the loop', () => {
+    const v = play(src(''), [{ type: 'wait', frames: 1 }])
+    expect(v.s).toBe(6)
+    expect('i' in v).toBe(false)
+  })
+  it('a global of the same name gets its value back', () => {
+    const v = play(src('var i = 7'), [{ type: 'wait', frames: 1 }])
+    expect([v.s, v.i]).toEqual([6, 7])
+  })
+})

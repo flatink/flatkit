@@ -1120,6 +1120,7 @@ export class FlatPlayer {
     emit: (name, value, fields) => this.emit(name, value, fields),
     textContent: (itemId) => this.textContent(itemId),
     playSound: (assetId) => this.playSound(assetId),
+    withLocals: (names, body) => this.withLocals(names, body),
   }
 
   constructor(
@@ -1301,11 +1302,17 @@ export class FlatPlayer {
   private callProc(name: string, args: number[]): void {
     const f = this.procs.get(name)
     if (!f || this.funcDepth > 64) return
-    const saved = f.params.map((p) => [p, this.vars.get(p)] as const)
-    f.params.forEach((p, i) => this.setVarLive(p, args[i] ?? 0))
-    this.funcDepth++
-    this.run(f.body)
-    this.funcDepth--
+    this.withLocals(f.params, () => {
+      f.params.forEach((p, i) => this.setVarLive(p, args[i] ?? 0))
+      this.funcDepth++
+      this.run(f.body)
+      this.funcDepth--
+    })
+  }
+  /** Procedure parameters and range-loop variables: saved, then given back (or removed) afterwards. */
+  private withLocals(names: string[], body: () => void): void {
+    const saved = names.map((p) => [p, this.vars.get(p)] as const)
+    body()
     for (const [p, v] of saved) {
       if (v === undefined) { this.vars.delete(p); if (this.ctxCache) delete this.ctxCache[p] }
       else this.setVarLive(p, v)

@@ -63,7 +63,7 @@ go to "<label>" [and play|and pause]
 <arr>[<expr>] = <expr>                   # indexed assignment (nested indices ok: occ[sl[i]] = 0)
 if <cond> { … } [else if <cond> { … }] [else { … }]
 repeat <n> times { … }                   # runtime loop (bounded)
-repeat i from <a> to <b> { … }           # runtime range loop
+repeat i from <a> to <b> { … }           # runtime range loop (`i` is the loop's own: gone, or back to its value, after it)
 <fn>(<args>)                             # call a function
 send "<event>" [, <payload>]             # emit an event to the host (see below)
 sound "<assetId>"                        # one-shot audio
@@ -128,7 +128,12 @@ group `at 620,150` around 620 with no base to re-inject (and `dx`/`dy` add on to
 bound). Offsets are binding-only — no keyframe/`spring`/`smooth` form. See the
 [absolute-vs-offset gotcha](dsl-gotchas.md).
 
-`self.x`/`self.y`/… is the item's own current pose; `mouse.x`/`mouse.y` (and `mouse.wheel`, the per-frame
+`self.x`/`self.y`/… is the item's own current pose — in its OWN space (its parent's) in a binding, and in
+SCENE space in a handler, where it is compared with `mouse` and `Target.x`, which are scene space too
+(`when dropped on Goal { won = near(self.x, self.y, Goal.x, Goal.y, 30) }`). `toLocalX/Y(x, y)` turns a
+scene point into the object's own space and `toGlobalX/Y` back, in both: `px = toLocalX(mouse.x, mouse.y)`
+in a handler, for a binding `x = px`. Do not convert `self` in a handler — it is already scene space.
+`mouse.x`/`mouse.y` (and `mouse.wheel`, the per-frame
 scroll delta), `time`, `clock`, `frame`, variables and named objects (`Target.x`) are all available — see
 [Expressions](expressions-and-stdlib.md). Prefer **`clock`** (monotone) over `time` (restarts on every
 timeline loop) for free-running motion and for any instant you capture and compare later.

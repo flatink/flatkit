@@ -50,9 +50,9 @@ export type ManifestObject = {
  *  `drag` interactor, is just as real at runtime and is often the most interesting one to bind. */
 function stateVariables(doc: Doc): Set<string> {
   const out = new Set(Object.keys(doc.variables ?? {}))
+  // A range-loop variable is the loop's own (restored after it): not state, unless declared or written.
   forEachAction(doc, (a) => {
     if (a.do === 'setVar' || a.do === 'setIndex') out.add(a.name)
-    else if (a.do === 'repeatRange') out.add(a.var)
   })
   for (const i of doc.interactors ?? []) for (const v of [i.varX, i.varY, i.varT]) if (v) out.add(v)
   return out

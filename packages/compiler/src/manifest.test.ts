@@ -84,6 +84,17 @@ describe('manifest — the binding contract', () => {
     expect(manifestObjects(d)[0].reads).toEqual(['tx', 'ty'])
   })
 
+  // flatink/flatink#65, decided: a range-loop variable is the loop's own (restored after it), so it is
+  // not state a skin could hang anything on.
+  it('a range-loop variable is not state', () => {
+    const lit: Group = { ...group('Lamp'), expressions: { opacity: 'i + lit' } }
+    const d: Doc = {
+      width: 100, height: 100, symbols: [], variables: { lit: 0 }, layers: [layer([lit])],
+      timeline: { fps: 24, durationFrames: 1, tracks: [], onLoad: [{ do: 'repeatRange', var: 'i', from: '1', to: '3', body: [{ do: 'setVar', name: 'lit', value: 'lit + i' }] }] },
+    }
+    expect(manifestObjects(d)[0].reads).toEqual(['lit'])
+  })
+
   it('a modifier target counts as a read (spring/smooth are bindings too)', () => {
     const sprung: Group = { ...group('Needle'), modifiers: { rotation: { kind: 'spring', target: 'aim', stiffness: 8, damping: 0.5 } } }
     const d: Doc = { width: 100, height: 100, symbols: [], variables: { aim: 0 }, layers: [layer([sprung])] }
