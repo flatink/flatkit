@@ -1,5 +1,60 @@
 # @flatkit/compiler
 
+## 0.41.0
+
+### Minor Changes
+
+- [`e9544ab`](https://github.com/flatink/flatkit/commit/e9544ab35127697ae88a4af59f36f2fc1fa695f4) Thanks [@kaelhem](https://github.com/kaelhem)! - Fixes and checks from flatink/flatink#64 [#65](https://github.com/flatink/flatkit/issues/65) [#66](https://github.com/flatink/flatkit/issues/66) [#67](https://github.com/flatink/flatkit/issues/67).
+  
+  **Breaking:**
+  
+  - `flatc <program>` (plain compile) exits 1 when the program has an `error` (the `.flatpack` is still
+    written). Scripts that relied on exit 0 must check the report or fix the errors.
+  - The scene parser refuses what it used to swallow: an `asset` without a kind, `timeline` with one
+    number, an unknown easing or filter, an unknown `blend` / `cap` / `join` / `align` / `spin` word, a
+    colour that is not 3/4/6/8 hex digits, `clip` on a text or an image, a non-colour `background`, a
+    non-symbol line in a `.flat`, a `spring` without `stiffness` (a `smooth` without `k`).
+  - New `--check` errors: wrong argument counts, unknown procedure or package, two interactors on one
+    object, `sound` of an undeclared asset, `text()` of a missing text.
+  - A script `pause` holds the playhead only: `every frame`, `clock` and springs keep running. The host's
+    `play()` no longer releases a playhead the scene paused (the scene's `play` does); the host's `pause()`
+    still freezes everything. `isPlaying` is true when the timeline moves.
+  - `at frame N` now runs for frames the playhead steps over (120 fps timelines, slow displays).
+  - A `repeat i from A to B` variable is restored after the loop.
+  - `shake` is 4 degrees (was 4 radians); `text("id")` of a bound text sends the displayed value.
+  - FlatPlayer internals are ES private fields: reading one through a cast no longer works (public API
+    unchanged).
+  
+  Bugs: `at frame` runs for every whole frame the playhead crossed, not only the one it landed on; a plain
+  `flatc` compile with an error exits 1 (the pack is still written); `else` may open the line after the `}`
+  (its body used to run unconditionally); a var array reads each cell as a constant expression
+  (`[PI / 2, 1]`); compact SVG arc flags (`a10 10 0 0120 0`); `text("id")` of a bound text sends the
+  displayed value; `pause` in `when loaded` holds against `autoplay`; `shake` is 4 degrees, not 4 radians;
+  `ease bounce` no longer crashes the render.
+  
+  Stricter parsing (each used to compile and lose content or draw the default): a required asset kind
+  (file-type words such as `png` or `mp3` stand for it), two numbers after `timeline`, known easings,
+  filters, `blend`, `cap`, `join`, text `align`, pose `spin`, 3/4/6/8-digit colours, `clip` only on a group
+  or an instance, a solid `background`, symbols only in a `.flat`, `spring` / `smooth` with their own slots
+  and a required `stiffness` / `k`.
+  
+  New `--check` diagnostics: wrong argument counts, unknown procedure calls, an unknown package, two
+  interactors on one object, `when dropped on` with nothing draggable, an `at frame` that never runs,
+  `sound` of an undeclared asset, `text()` of a missing text, a `fn` or `var` hidden by a built-in, an
+  object name matching several items, no more false "never used" for a variable read by `each`.
+  
+  Decided: a script `pause` holds the playhead only (like Flash's `stop()`): `every frame`, `clock` and
+  springs go on, `--play` follows, and the host's `play()` no longer undoes it (its `pause()` still freezes
+  the player). A `repeat i from A to B` variable is the loop's own. `repeat 3 {` without `times` carries
+  its `--fix` repair. `self` in a handler stays in scene space (documented).
+
+### Patch Changes
+
+- Updated dependencies [[`e9544ab`](https://github.com/flatink/flatkit/commit/e9544ab35127697ae88a4af59f36f2fc1fa695f4)]:
+  - @flatkit/engine@0.41.0
+  - @flatkit/player@0.41.0
+  - @flatkit/types@0.41.0
+
 ## 0.40.0
 
 ### Minor Changes
