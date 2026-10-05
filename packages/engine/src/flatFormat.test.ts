@@ -2029,3 +2029,41 @@ describe('`spring` / `smooth` on a scene item — the driving slot is required',
     expect(() => parseProgram(g('smooth opacity "t" k 0.2'))).not.toThrow()
   })
 })
+
+// flatink/flatink#66 — words from a closed set were stored as written, and drew nothing (or the default).
+describe('`.flatink` — a closed-set word is checked where it is written', () => {
+  const sceneWith = (item: string, head = '') => ['size 100 100', head, 'scene {', '  layer "L" {', `    ${item}`, '  }', '}', ''].join('\n')
+  const shape = (attrs: string) => sceneWith(`path "M0 0L10 0L10 10Z" fill #000000 ${attrs}`)
+  it('blend, cap, join', () => {
+    const grp = (attr: string) => sceneWith(`group "G" at 0,0 ${attr} { layer "x" { path "M0 0L10 0L10 10Z" fill #000000 } }`)
+    expect(() => parseProgram(grp('blend sparkle'))).toThrow(/blend.*sparkle|sparkle.*blend/)
+    expect(() => parseProgram(grp('blend multiply'))).not.toThrow()
+    expect(() => parseProgram(shape('stroke #000000 2 cap pointy'))).toThrow(/pointy/)
+    expect(() => parseProgram(shape('stroke #000000 2 join wavy'))).toThrow(/wavy/)
+    expect(() => parseProgram(shape('stroke #000000 2 cap square join bevel'))).not.toThrow()
+  })
+  it('text `align`', () => {
+    expect(() => parseProgram(sceneWith('text "Hi" at 10,10 align "middle"'))).toThrow(/middle/)
+    expect(() => parseProgram(sceneWith('text "Hi" at 10,10 align "center"'))).not.toThrow()
+  })
+  it('pose `spin`', () => {
+    const cel = (spin: string) => ['size 100 100', 'scene {', '  layer "L" {', '    group "G" at 0,0 { layer "x" { path "M0 0L10 0L10 10Z" fill #000000 } }', '  }', '  layer "A" {',
+      '    cel 0 { pose "G" at 0,0 }', `    cel 10 tween { pose "G" at 0,0 ${spin} }`, '  }', '}', ''].join('\n')
+    expect(() => parseProgram(cel('spin up'))).toThrow(/up/)
+    expect(() => parseProgram(cel('spin cw'))).not.toThrow()
+  })
+  it('a colour has 3, 4, 6 or 8 hex digits', () => {
+    expect(() => parseProgram(shape('stroke #12 2'))).toThrow(/#12/)
+    expect(() => parseProgram(sceneWith('path "M0 0L10 0L10 10Z" fill #12345'))).toThrow(/#12345/)
+    expect(() => parseProgram(sceneWith('path "M0 0L10 0L10 10Z" fill #abc'))).not.toThrow()
+    expect(() => parseProgram(sceneWith('path "M0 0L10 0L10 10Z" fill #aabbcc80'))).not.toThrow()
+  })
+  it('`clip` on a text or an image is refused (it clipped nothing) — a group clips', () => {
+    expect(() => parseProgram(sceneWith('text "Hi" at 10,10 clip 0 0 5 5'))).toThrow(/clip/)
+    expect(() => parseProgram(sceneWith('image "a" 10 10 at 0,0 clip 0 0 5 5', 'asset "a" "a.png" image'))).toThrow(/clip/)
+  })
+  it('`background` is a solid colour', () => {
+    expect(() => parseProgram(sceneWith('path "M0 0L10 0L10 10Z" fill #000000', 'background linear(90, 0:#000000, 1:#ffffff)'))).toThrow(/background/)
+    expect(parseProgram(sceneWith('path "M0 0L10 0L10 10Z" fill #000000', 'background #102030')).background).toBe('#102030')
+  })
+})

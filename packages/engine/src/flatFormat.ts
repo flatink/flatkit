@@ -1326,6 +1326,8 @@ const FILE_TYPE_KIND: Record<string, string> = {
   mp3: 'sound', wav: 'sound', ogg: 'sound', m4a: 'sound', aac: 'sound', flac: 'sound',
   woff: 'font', woff2: 'font', ttf: 'font', otf: 'font', mp4: 'video', webm: 'video',
 }
+const CAPS = ['butt', 'round', 'square'] as const
+const JOINS = ['miter', 'round', 'bevel'] as const
 const EASINGS: ReadonlySet<string> = new Set(['linear', 'easeIn', 'easeOut', 'easeInOut'])
 const ANCHOR_POINTS: ReadonlySet<string> = new Set(['center', 'top', 'bottom', 'left', 'right', 'topleft', 'topright', 'bottomleft', 'bottomright'])
 
@@ -1408,7 +1410,25 @@ class FlatParser {
   private peek() { return this.t[this.p] }
   private next() {
     if (this.p >= this.t.length) this.fail('the text ends too early: something is missing at the end')
-    return this.t[this.p++]!
+    const k = this.t[this.p]!
+    // `#12` or `#12345` was stored as written and painted nothing predictable (flatink/flatink#66). A lone
+    // `#` is left to its own message (a comment written the wrong way).
+    if (k.k === 'color' && k.v.length > 1 && ![4, 5, 7, 9].includes(k.v.length)) this.fail(`"${k.v}" is not a colour — 3, 4, 6 or 8 hex digits: #f80, #f80c, #ff8800, #ff8800cc`)
+    this.p++
+    return k
+  }
+  /** `clip` belongs to a group or an instance: on a leaf it was parsed, then dropped (flatink/flatink#66). */
+  private groupOnly(a: ParsedAttrs, leaf: string): void {
+    if (a.clip) this.fail(`\`clip\` belongs to a group or an instance, ${leaf} cannot clip — wrap it: \`group "G" at … clip x y w h { layer "l" { … } }\``)
+  }
+  /** The next word, which must be one of `allowed` (flatink/flatink#66: closed-set words were stored as
+   *  written and drew the default, or nothing). */
+  private oneOf<T extends string>(what: string, allowed: readonly T[]): T {
+    const k = this.peek()
+    const v = k?.v ?? ''
+    if (!(allowed as readonly string[]).includes(v)) this.fail(`${what} is one of ${allowed.join(' | ')} — "${k ? v : 'end'}" found`)
+    this.p++
+    return v as T
   }
   private is(v: string) { const k = this.t[this.p]; return !!k && k.v === v }
   private eat(v: string) {
@@ -1542,7 +1562,12 @@ class FlatParser {
       // into the skip branch below and the scene silently stayed 800x600). Two numbers must follow, so a
       // `size` that is someone's variable name is left alone.
       if (this.is('size') && this.t[this.p + 1]?.k === 'num' && this.t[this.p + 2]?.k === 'num') { this.next(); width = this.num(); height = this.num(); this.cw = width; this.ch = height }
-      else if (this.is('background')) { this.next(); background = this.next().v }
+      else if (this.is('background')) {
+        this.next()
+        // A solid colour only: `linear(…)` compiled to a background named "linear" and painted nothing.
+        if (this.peek()?.k !== 'color') this.fail(`background is a solid colour (#rrggbb) — for a gradient, draw a full-canvas \`rect 0 0 W H fill linear(…)\` as the first item of the scene; "${this.peek()?.v ?? 'end'}" found`)
+        background = this.next().v
+      }
       else if (this.is('use')) { this.next(); imports.push(this.str()) }
       else if (this.is('var')) { this.next(); const name = this.next().v; this.eat('='); variables[name] = this.varValue() }
       else if (this.is('timeline')) { const tl = this.timeline(); stage = { fps: tl.fps, durationFrames: tl.durationFrames } }
@@ -1728,7 +1753,7 @@ class FlatParser {
       else if (this.is('scaleX')) { this.next(); scaleX = this.num() }
       else if (this.is('scaleY')) { this.next(); scaleY = this.num() }
       else if (this.is('tint')) { this.next(); tint = this.tintValue() }
-      else if (this.is('spin')) { this.next(); spin = this.next().v as 'cw' | 'ccw' }
+      else if (this.is('spin')) { this.next(); spin = this.oneOf('spin', ['cw', 'ccw'] as const) }
       else if (this.is('turns')) { this.next(); turns = this.num() }
       else if (this.is('filter')) { (filters ??= []).push(this.filter()) }
       else break
@@ -1832,8 +1857,8 @@ class FlatParser {
         const w = this.num()
         const st: NonNullable<Region['stroke']> = { width: w, paint: sp }
         for (;;) {
-          if (this.is('cap')) { this.next(); st.cap = this.next()!.v as NonNullable<Region['stroke']>['cap'] }
-          else if (this.is('join')) { this.next(); st.join = this.next()!.v as NonNullable<Region['stroke']>['join'] }
+          if (this.is('cap')) { this.next(); st.cap = this.oneOf('cap', CAPS) }
+          else if (this.is('join')) { this.next(); st.join = this.oneOf('join', JOINS) }
           else if (this.is('miter')) { this.next(); st.miterLimit = this.num() }
           else if (this.is('dash')) { this.next(); const ds: number[] = [this.num()]; while (this.is(',')) { this.eat(','); ds.push(this.num()) } st.dash = ds }
           else break
@@ -1944,7 +1969,7 @@ class FlatParser {
       else if (this.is('spacing')) { this.next(); if (this.peek()?.k === 'str') spacingExpr = this.str(); else spacing = this.num() }
       else if (this.is('font')) { this.next(); font = this.str() }
       else if (this.is('size')) { this.next(); size = this.num() }
-      else if (this.is('align')) { this.next(); align = this.str() as Text['align'] }
+      else if (this.is('align')) { this.next(); align = this.oneOf('align', ['left', 'center', 'right'] as const) }
       else if (this.is('line')) { this.next(); lineHeight = this.num() }
       else if (this.is('color')) { this.next(); color = this.next().v }
       else if (this.is('stroke')) {
@@ -1952,8 +1977,8 @@ class FlatParser {
         this.next(); const sp = this.paint(); const w = this.num()
         const st: NonNullable<Text['stroke']> = { width: w, paint: sp }
         for (;;) {
-          if (this.is('cap')) { this.next(); st.cap = this.next()!.v as NonNullable<Text['stroke']>['cap'] }
-          else if (this.is('join')) { this.next(); st.join = this.next()!.v as NonNullable<Text['stroke']>['join'] }
+          if (this.is('cap')) { this.next(); st.cap = this.oneOf('cap', CAPS) }
+          else if (this.is('join')) { this.next(); st.join = this.oneOf('join', JOINS) }
           else if (this.is('miter')) { this.next(); st.miterLimit = this.num() }
           else if (this.is('dash')) { this.next(); const ds: number[] = [this.num()]; while (this.is(',')) { this.eat(','); ds.push(this.num()) } st.dash = ds }
           else break
@@ -1969,6 +1994,7 @@ class FlatParser {
       else break
     }
     const a = this.poseAttrs()
+    this.groupOnly(a, 'a text')
     const t: Text = { id: id ?? uid('t'), kind: 'text', name: content || 'Text', ...(id !== undefined ? { idExplicit: true } : {}), transform: this.placed(transform, a), content, ...(contentParam ? { contentParam } : {}), font, size, align, lineHeight, color, ...(stroke ? { stroke } : {}), ...(weight ? { weight } : {}), ...(italic ? { italic } : {}), box, ...(wrap ? { wrap: true } : {}), ...(bind ? { bind } : {}), ...(decimals != null ? { decimals } : {}), ...leafAttrs(a), ...exprAttr(a), ...modAttr(a) }
     // text-on-path: inline `along path "<d>"` is baked here (literal — author owns orientation); a named
     // `along "<id>"` defers to resolveTextPaths (forward refs allowed). `side over`/`spacing 0` = defaults → dropped.
@@ -1984,6 +2010,7 @@ class FlatParser {
     const name = this.is('as') ? (this.next(), this.str()) : 'Image'
     const at = this.transform(name)
     const a = this.poseAttrs()
+    this.groupOnly(a, 'an image')
     const transform = this.placed(at, a)
     return { id: uid('im'), kind: 'image', name, transform, assetId, w, h, ...leafAttrs(a), ...exprAttr(a), ...modAttr(a) }
   }
@@ -2077,7 +2104,7 @@ class FlatParser {
       else if (this.is('spring')) { this.next(); this.refuseRotateChannel(this.peek()?.v ?? ''); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let stiffness = 0, damping = 0, driven = false; for (;;) { if (this.is('stiffness')) { this.next(); stiffness = this.num(); driven = true } else if (this.is('damping')) { this.next(); damping = this.num() } else break } if (!driven) this.fail(`a spring needs its "stiffness" (0..1) — without it the channel never moves: \`spring ${ch} "…" stiffness 0.1 damping 0.8\``); (a.modifiers ??= {})[ch] = { kind: 'spring', target, stiffness, damping } }
       else if (this.is('smooth')) { this.next(); this.refuseRotateChannel(this.peek()?.v ?? ''); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; if (!this.is('k')) this.fail(`a smooth needs its "k" (0..1) — without it the channel never moves: \`smooth ${ch} "…" k 0.2\``); this.next(); const k = this.num(); (a.modifiers ??= {})[ch] = { kind: 'smooth', target, k } }
       else if (this.is('nohit')) { this.next(); a.noHit = true }
-      else if (this.is('blend')) { this.next(); a.blend = this.next().v as BlendMode }
+      else if (this.is('blend')) { this.next(); a.blend = this.oneOf<BlendMode>('blend', ['add', 'screen', 'multiply']) }
       else if (this.is('hitbox')) { this.next(); const w = this.num(); const h = this.num(); a.hitbox = { w, h } }
       else if (this.is('clip')) { this.next(); const x = this.num(); const y = this.num(); const w = this.num(); const h = this.num(); a.clip = { x, y, w, h } }
       // Instance playback mode (Flash symbol models) — only meaningful on an `instance`; ignored elsewhere.
