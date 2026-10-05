@@ -76,7 +76,7 @@ sound "<assetId>"                        # one-shot audio
 ```
 send "win"                               # bare — just the event
 send "score", lives * 100                # a NUMBER (any expression)
-send "answer", text("txtCard")           # the live TEXT of a text item
+send "answer", text("txtCard")           # the TEXT a text item shows (a `bind` one: its displayed value)
 send "save", { x = px, y = py, doors }   # a RECORD: named numbers (a state patch)
 ```
 
@@ -522,7 +522,10 @@ How many steps run before each display depends on the display: none or one at 12
 30. When the display stalls (a tab in the background, a slow device) the player does **not** catch up: it
 counts at most 0.25 s per display and runs at most 30 steps, dropping the rest. The simulation then runs
 slower than the wall clock; it never jumps. Within a step, the scene's `every frame` runs first, then
-those of the active symbols; `at frame <n>` scripts come after, in the same step.
+those of the active symbols; `at frame <n>` scripts come after, in the same step. Every whole frame the
+playhead ENTERED runs its script, in order — the one it landed on and the ones it stepped over (a 120 fps
+timeline, a slow display), across the loop too; a `go to` or `pause` run by one of them ends the walk. A
+frame is a whole number between 0 and the timeline's length − 1: `--check` warns on any other.
 
 **3. The picture.** Channel bindings (`x = px`, `opacity = lit`) are not statements that run: they are
 read whenever something looks at the object — when it is drawn, when it is hit-tested, when a handler

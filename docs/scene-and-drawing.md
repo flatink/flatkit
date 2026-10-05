@@ -206,6 +206,9 @@ asset "logo" "logo.svg" image      // declare the media (top of file) — embedd
 scene { layer "c" { image "logo" 80 80 at -40,-40 } }   // the origin is the top-left → center with at -w/2,-h/2
 ```
 
+The kind after the file is required: `image`, `svg`, `font`, `sound` (or `audio`), `video`. A file-type
+word stands for its kind (`png`, `jpg`, `webp` → image; `mp3`, `wav`, `ogg` → sound; `woff2`, `ttf` → font).
+
 ## Transforms & placement
 
 On any group / instance / text / image:

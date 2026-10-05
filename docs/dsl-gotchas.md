@@ -36,10 +36,12 @@
 
 - **Comments are `//`, never `#`.** `#` starts a COLOR (`#ffcc00`), so a `# note` inside a program is a
   parse error, not a comment. (Reference listings in these docs annotate with `#`; runnable examples use `//`.)
-- **One single action or assignment per line.** `x = 1  y = 2` raises a clear error
-  ("one action per line — unexpected `=`"), with the column pointing at the second `=`.
-  A swallowed statement is named now — `score = score + 1  send "ok", 1` reports *"two statements on one
-  line — `send …` was swallowed into the expression before it"*, not `unexpected character """`.
+- **Assignments may share a line; any other action takes its own.** `a = 1  b = 2` is two assignments
+  (the expression of the first ends where the next `name =` begins). An ACTION after an assignment is
+  not: `score = score + 1  send "ok", 1` reports *"two statements on one line — `send …` was swallowed
+  into the expression before it"*, and `flatc --fix` splits it. When in doubt, one statement per line.
+- **`else` may open the line after the `}`** of its `if` (a comment in between is fine too). It used to
+  be read as an assignment to a variable `else`, and the recovery ran the `else` body every time.
 - **The space between a keyword and its literal is NOT significant.** `send"win"`, `send "win"` and
   `send\t"win"` are one and the same statement, and so are `object"R"` / `object "R"`, `layer"c"`,
   `text"Hi"`, `font"sans-serif"`. The grammar is tokenized: it never sees the whitespace. (Everything

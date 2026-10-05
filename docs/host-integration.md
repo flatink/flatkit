@@ -22,7 +22,7 @@ const player = new FlatPlayer(canvas, doc, {
 
 | Option | Default | What it does |
 |---|---|---|
-| `autoplay` | `false` | starts the timeline on mount |
+| `autoplay` | `false` | starts the timeline on mount — unless `when loaded` ran `pause`, which wins |
 | `loop` | `true` | loops the timeline |
 | `padding` | `0` | margin around the page, in CSS px |
 | `audio` | `true` | `false` mutes `sound "…"` and audio tracks. Sounds are decoded when the document loads, so the first one plays on time |

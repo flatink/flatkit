@@ -223,6 +223,8 @@ group "Aiguille" smooth rotationDeg "valeur * 270" k 0.18 { … }               
   `k` = slow/heavy; `k = 1` = instant (no lag).
 - `spring <channel> "<target>" stiffness <0..1> damping <0..1>` — 2nd-order spring: overshoots then settles.
   Lower `damping` = more bounce. (Both params are per fixed 60 Hz step; out-of-range values are clamped.)
+  `stiffness` (and `k` for `smooth`) is required: at 0 the channel would never move. Each modifier takes
+  only its own slots — `k` in a `spring` is an error.
 - `<target>` is an ordinary expression (params, `time`, `self.x`, …) — the resting value the channel chases.
   The channel is `rotation` (radians) or `rotationDeg` (degrees: the target is wrapped in `rad()`). Not
   `rotate`: on a declaration line `rotate <n>` is a fixed rotation in degrees, so `rotate` as a channel there
