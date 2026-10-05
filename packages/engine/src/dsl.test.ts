@@ -346,6 +346,13 @@ describe('dsl — parser (text → model)', () => {
     expect(bad.diagnostics.map((d) => d.line)).toEqual([8])
   })
 
+  // flatink/flatink#64, decided: `repeat 3 {` without `times` stays an error (one spelling), but its repair
+  // is mechanical, so the diagnostic carries it and `flatc --fix` applies it.
+  it('`repeat <n> {` without `times` carries the repair', () => {
+    const r = parseUnits('when clicked {\n  repeat n * 2 {\n    k = k + 1\n  }\n}')
+    expect(r.diagnostics).toEqual([expect.objectContaining({ line: 2, fix: { line: 2, col: 15, endLine: 2, endCol: 15, replacement: ' times' } })])
+  })
+
   it('accepts `let` inside a body (mapped to an assignment)', () => {
     const r = parseUnits('when loaded {\n  let x = 5\n}')
     expect(r.diagnostics).toEqual([])

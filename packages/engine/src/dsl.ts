@@ -968,7 +968,11 @@ class Parser {
     // Bounded form: `repeat <n> times`.
     let count = head
     if (/(^|\s)times$/.test(head)) count = head.replace(/\s*times\s*$/, '').trim()
-    else this.err('"<n> times" or "<i> from <A> to <B>" expected after "repeat"', m)
+    else {
+      // The bounded form missing its `times`: the repair is mechanical, so the diagnostic carries it.
+      const at = m.col + head.length
+      this.err('"<n> times" or "<i> from <A> to <B>" expected after "repeat"', m, /\bfrom\b/.test(head) ? undefined : { line: m.line, col: at, endLine: m.line, endCol: at, replacement: ' times' })
+    }
     if (count) {this.exprSite(count, m)} else {
       this.err('missing repetition count', m)
       count = '0'

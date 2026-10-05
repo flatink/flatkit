@@ -23,3 +23,8 @@ New `--check` diagnostics: wrong argument counts, unknown procedure calls, an un
 interactors on one object, `when dropped on` with nothing draggable, an `at frame` that never runs,
 `sound` of an undeclared asset, `text()` of a missing text, a `fn` or `var` hidden by a built-in, an
 object name matching several items, no more false "never used" for a variable read by `each`.
+
+Decided: a script `pause` holds the playhead only (like Flash's `stop()`): `every frame`, `clock` and
+springs go on, `--play` follows, and the host's `play()` no longer undoes it (its `pause()` still freezes
+the player). A `repeat i from A to B` variable is the loop's own. `repeat 3 {` without `times` carries
+its `--fix` repair. `self` in a handler stays in scene space (documented).
