@@ -296,7 +296,11 @@ function resolveBoundText(t: { content: string; bind?: string; decimals?: number
   if (!compiled.ok) return t.content // invalid expression → literal content (the UI reports the error)
   const fps = opts.fps ?? 24
   const time = fps > 0 ? frame / fps : frame
-  const v = evalExpr(compiled.node, leafOverlayFor(opts, time, frame), 0, opts.ctx)
+  return formatBoundText(t, evalExpr(compiled.node, leafOverlayFor(opts, time, frame), 0, opts.ctx))
+}
+/** What a bound text DISPLAYS for the value `v` of its `bind`: formatted, in the `{}` slot (or alone). One
+ *  spelling for the renderer and for `text("…")`, which sends what is on screen. */
+export function formatBoundText(t: { content: string; decimals?: number }, v: number): string {
   const s = fmtNum(v, t.decimals)
   return t.content.includes('{}') ? t.content.replaceAll('{}', s) : s
 }

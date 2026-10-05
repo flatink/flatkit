@@ -257,6 +257,12 @@ describe('lerpTransformPivot — interpolation around a pivot', () => {
 })
 
 describe('applyEasing', () => {
+  // flatink/flatink#66 — `ease bounce` reached the engine and crashed the render (`e.cubic` undefined). The
+  // parser refuses it now, but a `.flatpack` is JSON anyone can write: an unknown curve plays linear.
+  it('an unknown curve, or a malformed cubic, is linear instead of a crash', () => {
+    expect(applyEasing(0.25, 'bounce' as never)).toBe(0.25)
+    expect(applyEasing(0.25, { cubic: [1, 2] } as never)).toBe(0.25)
+  })
   it('linear = identity; bounds clamped', () => {
     expect(applyEasing(0.5, 'linear')).toBeCloseTo(0.5)
     expect(applyEasing(-1, 'easeInOut')).toBe(0)

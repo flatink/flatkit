@@ -86,6 +86,27 @@ describe('flatc — CLI', () => {
     }
   })
 
+  // flatink/flatink#64 — a plain compile printed `error: …`, wrote the `.flatpack` and exited 0: a script or
+  // a CI that trusts the exit code published a broken program. The pack is still written (an editor's
+  // watch loop wants it), but the code says the truth.
+  it('a plain compile with an `error` exits ≠0, and still writes the pack', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flatc-exit-'))
+    const prog = join(dir, 'p.flatink'), out = join(dir, 'p.flatpack')
+    writeFileSync(prog, 'size 100 100\nscene {\n  layer "L" {\n    group "G" { layer "c" { circle 0 0 5 fill #f00 } }\n  }\n}\nobject "G" {\n  scaleZ = 1\n}\n')
+    const errs: string[] = []
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((s: string | Uint8Array) => { errs.push(String(s)); return true })
+    const outSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try {
+      expect(run(['node', 'flatc', prog, '-o', out])).toBe(1)
+      expect(errs.join('')).toContain('unknown channel "scaleZ"')
+      expect(existsSync(out)).toBe(true)
+    } finally {
+      spy.mockRestore()
+      outSpy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('--check: surfaces an unknown channel in an object block (dropped silently before the fix)', () => {
     const base = 'size 100 100\nscene {\n  layer "L" {\n    group "G" { layer "c" { circle 0 0 5 fill #f00 } }\n  }\n}\n'
     const bad = join(cli, '__check_bad.flatink')

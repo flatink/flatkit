@@ -1318,6 +1318,15 @@ type ParsedAttrs = { opacity?: number; pivot?: { x: number; y: number }; tint?: 
 type PendingAlign = { tf: Transform; point: string; target: string; dx: number; dy: number; name?: string }
 // `text … along "<ref>"`: the shape outline is resolved + baked into `text.textPath` once the scene is parsed.
 type PendingTextPath = { text: Text; ref: string; start?: number; side?: 'over' | 'under'; spacing?: number; startExpr?: string; spacingExpr?: string }
+const ASSET_KINDS: ReadonlySet<string> = new Set(['image', 'svg', 'font', 'sound', 'audio', 'video'])
+/** A file-type word written where the kind goes — real programs say `asset "a" "a.png" png` — stands for
+ *  its kind. (An image's kind was never read, so `png` worked; an `mp3` one was never decoded.) */
+const FILE_TYPE_KIND: Record<string, string> = {
+  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', avif: 'image',
+  mp3: 'sound', wav: 'sound', ogg: 'sound', m4a: 'sound', aac: 'sound', flac: 'sound',
+  woff: 'font', woff2: 'font', ttf: 'font', otf: 'font', mp4: 'video', webm: 'video',
+}
+const EASINGS: ReadonlySet<string> = new Set(['linear', 'easeIn', 'easeOut', 'easeInOut'])
 const ANCHOR_POINTS: ReadonlySet<string> = new Set(['center', 'top', 'bottom', 'left', 'right', 'topleft', 'topright', 'bottomleft', 'bottomright'])
 
 /**
@@ -1397,7 +1406,10 @@ class FlatParser {
     return this.src.slice(off, nl === -1 ? this.src.length : nl)
   }
   private peek() { return this.t[this.p] }
-  private next() { return this.t[this.p++] }
+  private next() {
+    if (this.p >= this.t.length) this.fail('the text ends too early: something is missing at the end')
+    return this.t[this.p++]!
+  }
   private is(v: string) { const k = this.t[this.p]; return !!k && k.v === v }
   private eat(v: string) {
     if (!this.is(v)) {
@@ -1426,20 +1438,53 @@ class FlatParser {
     }
     this.p++
   }
-  private num() { return Number(this.next().v) }
+  /** A NUMBER token, finite — anything else is refused where it stands (flatink/flatink#66: `Number(word)`
+   *  turned `timeline 24` + `scene` into a NaN duration that swallowed the scene, and `glow #fff 8` into a
+   *  blur of NaN). */
+  private num() {
+    const k = this.t[this.p]
+    if (!k) this.fail('a number is expected, but the text ends here')
+    const v = Number(k.v)
+    if (k.k !== 'num' || !Number.isFinite(v)) this.fail(`a number is expected, "${k.v}" found`)
+    this.p++
+    return v
+  }
   private str() { return this.next().v }
+  /** The comma-separated CONSTANT expressions between the bracket at the current token and its match, each
+   *  evaluated like a scalar `var` (flatink/flatink#65: the cells used to be read one token each, so
+   *  `[PI / 2, 1]` gave `[NaN, 2, 1]`). The list may span lines and carry `//` comments. */
+  private constList(close: ']' | ')'): number[] {
+    const cells: string[] = []
+    let depth = 0, cur = '', end = -1, comment = false
+    for (let i = this.peek()!.at + 1; i < this.src.length; i++) {
+      const c = this.src[i]!
+      if (comment) { if (c === '\n' || c === SOFT_NL) comment = false; continue }
+      if (c === '/' && this.src[i + 1] === '/') { comment = true; continue }
+      if (c === '(' || c === '[') depth++
+      else if ((c === ')' || c === ']') && depth > 0) depth--
+      else if (c === close) { end = i; break }
+      else if (c === ',' && depth === 0) { cells.push(cur.trim()); cur = ''; continue }
+      cur += c
+    }
+    if (end < 0) this.fail(`"${close}" expected to close the list`)
+    cells.push(cur.trim())
+    while (this.peek() && this.peek()!.at <= end) this.next()
+    if (cells.length === 1 && cells[0] === '') return []
+    return cells.map((stmt) => {
+      const v = evalConst(stmt, {})
+      if (!Number.isFinite(v)) this.fail(`each cell of a var array is a number or a constant expression — "${stmt}" is neither (assign it in \`when loaded\` if it depends on other variables)`)
+      return v
+    })
+  }
   /** Value of a program variable: number, `fill(n, v)`, or array literal `[a, b, …]`. */
   private varValue(): number | number[] {
-    if (this.is('[')) {
-      this.eat('[')
-      const arr: number[] = []
-      while (!this.is(']')) { arr.push(this.num()); if (this.is(',')) this.eat(',') }
-      this.eat(']')
-      return arr
-    }
+    if (this.is('[')) return this.constList(']')
     if (this.is('fill')) {
-      this.eat('fill'); this.eat('('); const len = this.num(); this.eat(','); const val = this.num(); this.eat(')')
-      return Array<number>(Math.max(0, Math.floor(len))).fill(val)
+      this.eat('fill')
+      if (!this.is('(')) this.eat('(')
+      const args = this.constList(')')
+      if (args.length !== 2) this.fail('`fill(n, v)` takes two values: the length and the value of every cell')
+      return Array<number>(Math.max(0, Math.floor(args[0]!))).fill(args[1]!)
     }
     // A number alone on its line is the common case. Anything else is a CONSTANT expression, evaluated
     // once like a `def` (`10 / 3`, `PI * 2`): the tokenizer has no operators, so `var z = 10 / 3` used to
@@ -1478,6 +1523,9 @@ class FlatParser {
   parse(): SymbolDef[] {
     const out: SymbolDef[] = []
     while (this.peek() && this.is('symbol')) out.push(this.symbol())
+    // A `.flat` holds symbols only. Stopping at the first other line dropped every symbol after it, and the
+    // check passed on what was left (flatink/flatink#66).
+    if (this.peek()) this.fail(`a .flat library holds symbols only — \`symbol "Name" { … }\` expected, "${this.peek()!.v}" found`)
     return out
   }
   // Program: size + background + variables + media (asset/sound) + scene composition.
@@ -1499,7 +1547,13 @@ class FlatParser {
       else if (this.is('var')) { this.next(); const name = this.next().v; this.eat('='); variables[name] = this.varValue() }
       else if (this.is('timeline')) { const tl = this.timeline(); stage = { fps: tl.fps, durationFrames: tl.durationFrames } }
       else if (this.is('asset')) {
-        this.next(); const id = this.str(); const path = this.str(); const kind = this.next().v as Asset['kind']
+        this.next(); const id = this.str(); const path = this.str()
+        // The kind is not optional: a missing one took the NEXT word — `scene` — and the whole scene went with
+        // it, in silence (flatink/flatink#66).
+        const kw = this.peek()
+        if (kw?.k === 'id' && FILE_TYPE_KIND[kw.v.toLowerCase()]) kw.v = FILE_TYPE_KIND[kw.v.toLowerCase()]! // `png` → image
+        if (!kw || kw.k !== 'id' || !ASSET_KINDS.has(kw.v)) this.fail(`an asset names its kind after the file — ${[...ASSET_KINDS].join(' | ')} — as in \`asset "${id}" "${path}" image\`${kw ? `, "${kw.v}" found` : ''}`)
+        const kind = this.next().v as Asset['kind']
         // Optional family alias for `font` assets: `asset "id" "f.woff2" font "Quicksand"`.
         const family = kind === 'font' && this.peek()?.k === 'str' ? this.str() : undefined
         assets.push({ id, name: path, kind, mime: '', data: path, ...(family ? { family } : {}) })
@@ -1695,6 +1749,9 @@ class FlatParser {
       this.eat(')')
       return { cubic: [a, b, c, d] }
     }
+    // A name the engine has no curve for compiled, then crashed the first tween (flatink/flatink#66).
+    const k = this.peek()
+    if (!k || !EASINGS.has(k.v)) this.fail(`unknown easing "${k?.v ?? 'end'}" — ${[...EASINGS].join(' | ')}, or cubic(x1, y1, x2, y2)`)
     return this.next().v as Easing
   }
   private item(): Item {
@@ -2017,8 +2074,8 @@ class FlatParser {
         const ex = this.str()
         ;(a.expressions ??= {})[ch as BindChannel] = deg ? `rad(${ex})` : ex
       }
-      else if (this.is('spring')) { this.next(); this.refuseRotateChannel(this.peek()?.v ?? ''); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let stiffness = 0, damping = 0; for (;;) { if (this.is('stiffness')) { this.next(); stiffness = this.num() } else if (this.is('damping')) { this.next(); damping = this.num() } else break } (a.modifiers ??= {})[ch] = { kind: 'spring', target, stiffness, damping } }
-      else if (this.is('smooth')) { this.next(); this.refuseRotateChannel(this.peek()?.v ?? ''); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let k = 0; if (this.is('k')) { this.next(); k = this.num() } (a.modifiers ??= {})[ch] = { kind: 'smooth', target, k } }
+      else if (this.is('spring')) { this.next(); this.refuseRotateChannel(this.peek()?.v ?? ''); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let stiffness = 0, damping = 0, driven = false; for (;;) { if (this.is('stiffness')) { this.next(); stiffness = this.num(); driven = true } else if (this.is('damping')) { this.next(); damping = this.num() } else break } if (!driven) this.fail(`a spring needs its "stiffness" (0..1) — without it the channel never moves: \`spring ${ch} "…" stiffness 0.1 damping 0.8\``); (a.modifiers ??= {})[ch] = { kind: 'spring', target, stiffness, damping } }
+      else if (this.is('smooth')) { this.next(); this.refuseRotateChannel(this.peek()?.v ?? ''); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; if (!this.is('k')) this.fail(`a smooth needs its "k" (0..1) — without it the channel never moves: \`smooth ${ch} "…" k 0.2\``); this.next(); const k = this.num(); (a.modifiers ??= {})[ch] = { kind: 'smooth', target, k } }
       else if (this.is('nohit')) { this.next(); a.noHit = true }
       else if (this.is('blend')) { this.next(); a.blend = this.next().v as BlendMode }
       else if (this.is('hitbox')) { this.next(); const w = this.num(); const h = this.num(); a.hitbox = { w, h } }
@@ -2038,6 +2095,8 @@ class FlatParser {
     if (t === 'blur') return { type: 'blur', radius: this.num() }
     if (t === 'shadow') return { type: 'shadow', dx: this.num(), dy: this.num(), blur: this.num(), color: this.next().v }
     if (t === 'glow') return { type: 'glow', blur: this.num(), color: this.next().v }
+    // Any other word was read as `adjust` (flatink/flatink#66).
+    if (t !== 'adjust') { this.p--; this.fail(`unknown filter "${t}" — blur <r> | shadow <dx> <dy> <blur> <color> | glow <blur> <color> | adjust <brightness> <contrast> <saturate> <hue>`) }
     return { type: 'adjust', brightness: this.num(), contrast: this.num(), saturate: this.num(), hue: this.num() }
   }
   private paint(): Paint {

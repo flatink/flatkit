@@ -78,6 +78,20 @@ describe('FlatPlayer -- onEvent (send channel)', () => {
     expect(events).toEqual([{ name: 'answer', value: 'Hello' }])
   })
 
+  // flatink/flatink#67 — the docs call it "the LIVE text of a text item", but a bound text sent its raw
+  // template (`Score: {}`), not what the screen shows.
+  it('text("id") of a bound text sends what is DISPLAYED, not the template', () => {
+    const events: SendEvent[] = []
+    const bound: Text = { ...textItem('lbl', 'Score: {}'), bind: 'v * 2', decimals: 2 }
+    const alone: Text = { ...textItem('raw', ''), bind: 'v' }
+    const p = new FlatPlayer(fakeCanvas(), { ...makeDoc([
+      { do: 'send', event: 'a', payload: { kind: 'text', itemId: 'lbl' } },
+      { do: 'send', event: 'b', payload: { kind: 'text', itemId: 'raw' } },
+    ], [bound, alone]), variables: { v: 1.5 } }, { onEvent: (e) => events.push(e) })
+    expect(events).toEqual([{ name: 'a', value: 'Score: 3.00' }, { name: 'b', value: '1.5' }])
+    p.destroy()
+  })
+
   it('text("absent") -> empty string + warning, no crash', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const events: SendEvent[] = []
@@ -179,5 +193,26 @@ describe('FlatPlayer -- random() and the `seed` option (flatink/flatink#24)', ()
   it('without a seed it draws from Math.random, as before', () => {
     const spy = vi.spyOn(Math, 'random').mockReturnValue(0.25)
     try { expect(play(draw, {}).getVar('r')).toBe(0.25) } finally { spy.mockRestore() }
+  })
+})
+
+// flatink/flatink#67 — `when loaded { pause }` ran before `autoplay` started the timeline, so the pause was
+// a no-op and the scene played anyway. What the load script decides wins over the mount option.
+describe('FlatPlayer -- `pause` in `when loaded` holds against autoplay', () => {
+  it('a load-time pause keeps the timeline stopped', () => {
+    const p = new FlatPlayer(fakeCanvas(), makeDoc([{ do: 'pause' }]), { autoplay: true })
+    expect((p as unknown as { playing: boolean }).playing).toBe(false)
+    p.destroy()
+  })
+  it('without it, autoplay plays', () => {
+    const p = new FlatPlayer(fakeCanvas(), makeDoc([]), { autoplay: true })
+    expect((p as unknown as { playing: boolean }).playing).toBe(true)
+    p.destroy()
+  })
+  it('the host can still start it afterwards', () => {
+    const p = new FlatPlayer(fakeCanvas(), makeDoc([{ do: 'pause' }]), { autoplay: true })
+    p.play()
+    expect((p as unknown as { playing: boolean }).playing).toBe(true)
+    p.destroy()
   })
 })

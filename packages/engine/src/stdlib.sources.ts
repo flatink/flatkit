@@ -39,8 +39,10 @@ fn inZone(px, py, x, y, w, h) = px >= x && px <= x + w && py >= y && py <= y + h
 `,
   // Feedback: stateless reactions for interactive elements, driven by self.hovered/self.grabbed (0/1).
   // Use as channel bindings: scaleX = lift(self.hovered), opacity = dim(self.hovered),
-  // scaleY = tilt(self.grabbed), y = sink(self.grabbed), rotation = shake(wrong, clock). The `feedback …`
+  // scaleY = tilt(self.grabbed), dy = sink(self.grabbed), rotation = shake(wrong, clock). The `feedback …`
   // DSL sugar generates these lines for you. (settle-bounce needs a release timestamp → not stateless.)
+  // `sink` is an OFFSET (bind it to `dy`, not `y`, which would place the object at 0); `shake` is 4° of
+  // `rotation`, in radians like the channel.
   // `pulse(since, dur)` = a 1→0 linear ramp over `dur` seconds since the instant `since` (so a feedback
   // text/flash stays readable, vs a too-fast multiplicative decay). Capture the instant in a handler:
   // `var shown = -999` + `when wrong { shown = clock }`, then `opacity = pulse(shown, 4)`. Stateless: the
@@ -54,7 +56,7 @@ fn lift(h) = h ? 1.06 : 1
 fn dim(h) = h ? 0.85 : 1
 fn tilt(g) = g ? 0.94 : 1
 fn sink(g) = g ? 2 : 0
-fn shake(bad, t) = bad ? sin(t * 40) * 4 : 0
+fn shake(bad, t) = bad ? sin(t * 40) * rad(4) : 0
 fn pulse(since, dur) = clamp(1 - (clock - since) / dur, 0, 1)
 `,
 }

@@ -50,6 +50,19 @@ describe('parsePathData', () => {
     expect(b.maxY).toBeCloseTo(10, 0)
   })
 
+  // flatink/flatink#66 — the two arc FLAGS are one character each, and minifiers (SVGO, Inkscape) write them
+  // with no separator: `a10 10 0 01 20 0`, even `a10 10 0 0120 0`. `01` was read as the number 1 and every
+  // argument after it shifted: NaN anchors.
+  it('A with compact flags reads each flag as one character', () => {
+    const spaced = parsePathData('M0 0 a10 10 0 0 1 20 0 a10 10 0 1 0 -20 0')
+    for (const d of ['M0 0 a10 10 0 01 20 0 a10 10 0 10-20 0', 'M0 0 a10 10 0 0120 0a10 10 0 10-20 0', 'M0,0a10,10,0,0,1,20,0a10,10,0,1,0,-20,0']) {
+      expect(parsePathData(d)).toEqual(spaced)
+    }
+    // A flag that is neither 0 nor 1 stops the path where it is, as any malformed command does.
+    expect(parsePathData('M0 0 L5 0 a10 10 0 2 1 20 0').subpaths[0].segments).toHaveLength(2)
+    expect(parsePathData('M0 0 a10 10 0 0 1 20 0 10 10 0 2 1 20 0')).toEqual(parsePathData('M0 0 a10 10 0 0 1 20 0'))
+  })
+
   it('multiple subpaths (repeated M)', () => {
     const p = parsePathData('M0 0 L5 0 Z M10 10 L15 10')
     expect(p.subpaths.length).toBe(2)

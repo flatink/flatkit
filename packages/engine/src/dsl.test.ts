@@ -331,6 +331,21 @@ describe('dsl — parser (text → model)', () => {
     ])
   })
 
+  // flatink/flatink#64 — `else` on the line after `}` read as an assignment to a variable `else` ("=" expected
+  // after "else"), and the recovery then ran the `else` body UNCONDITIONALLY. `else` never starts a
+  // statement, so it is looked for past the line end — with a comment in between, too.
+  it('`else` may open the line after the `}` of its `if`', () => {
+    const r = parseUnits('when clicked {\n  if a > 0 {\n    n = 1\n  }\n  // otherwise\n  else {\n    n = 2\n  }\n  m = 3\n}')
+    expect(r.diagnostics).toEqual([])
+    expect(r.units).toEqual([{ kind: 'event', event: 'click', body: [
+      { do: 'if', cond: 'a > 0', then: [{ do: 'setVar', name: 'n', value: '1' }], else: [{ do: 'setVar', name: 'n', value: '2' }] },
+      { do: 'setVar', name: 'm', value: '3' },
+    ] }])
+    // …and a diagnostic after it still lands on its own line.
+    const bad = parseUnits('when clicked {\n  if a > 0 {\n    n = 1\n  }\n  else {\n    n = 2\n  }\n  zz zz\n}')
+    expect(bad.diagnostics.map((d) => d.line)).toEqual([8])
+  })
+
   it('accepts `let` inside a body (mapped to an assignment)', () => {
     const r = parseUnits('when loaded {\n  let x = 5\n}')
     expect(r.diagnostics).toEqual([])
@@ -513,6 +528,16 @@ describe('dsl — stateful channel modifiers (spring/smooth), block form', () =>
   it('an unknown channel or slot is reported', () => {
     expect(parseUnits('spring wobble = x { stiffness 1 damping 1 }').diagnostics.some((d) => /unknown channel "wobble"/.test(d.message))).toBe(true)
     expect(parseUnits('spring rotation = x { bounce 1 }').diagnostics.some((d) => /unknown slot "bounce"/.test(d.message))).toBe(true)
+  })
+  // flatink/flatink#67 — `k` was accepted inside a `spring` (and stiffness/damping inside a `smooth`) and
+  // ignored, and a spring with no `stiffness` (a smooth with no `k`) defaulted to 0: it never moved.
+  it('a slot of the other kind is refused, and the driving slot is required', () => {
+    const msgs = (s: string) => parseUnits(s).diagnostics.map((d) => d.message).join('\n')
+    expect(msgs('spring rotation = x { stiffness 0.1 damping 0.5 k 0.2 }')).toMatch(/unknown slot "k"/)
+    expect(msgs('smooth opacity = x { k 0.2 damping 0.5 }')).toMatch(/unknown slot "damping"/)
+    expect(msgs('spring rotation = x { damping 0.3 }')).toMatch(/stiffness/)
+    expect(msgs('smooth opacity = x { }')).toMatch(/"k"/)
+    expect(msgs('spring rotation = x { stiffness 0.1 }')).toBe('') // damping 0 is a valid (bouncy) spring
   })
   it('a velocity() target parses cleanly (the parens before the "{" are fine) and round-trips', () => {
     roundtrip([{ kind: 'modifier', channel: 'rotation', modifier: { kind: 'spring', target: '-velocity(crochetX) * 40', stiffness: 0.06, damping: 0.22 } }])

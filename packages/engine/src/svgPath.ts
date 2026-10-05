@@ -7,12 +7,31 @@ import type { Point } from '@flatkit/types'
 import type { Path, Seg, Subpath } from './path'
 import { asStraightLines } from './path'
 
-/** Split a `d` command string into command letters and numbers. */
+/** Split a `d` command string into command letters and numbers. The two FLAGS of an arc (its 4th and 5th
+ *  arguments) are one character each, separator optional — minifiers write `a10 10 0 0120 0` — so they
+ *  are read as such, not as a number (flatink/flatink#66). A flag that is neither 0 nor 1 drops that
+ *  unfinished arc and stops the path there, as any malformed command does. */
 function tokenize(d: string): (string | number)[] {
-  const re = /([MmLlHhVvCcSsQqTtAaZz])|(-?\d*\.?\d+(?:[eE][-+]?\d+)?)/g
+  const num = /-?\d*\.?\d+(?:[eE][-+]?\d+)?/y
   const out: (string | number)[] = []
-  let m: RegExpExecArray | null
-  while ((m = re.exec(d))) out.push(m[1] ? m[1] : parseFloat(m[2]))
+  let cmd = '', arg = 0
+  for (let i = 0; i < d.length;) {
+    const c = d[i]!
+    if (/[MmLlHhVvCcSsQqTtAaZz]/.test(c)) { out.push(c); cmd = c.toUpperCase(); arg = 0; i++; continue }
+    if (cmd === 'A' && (arg % 7 === 3 || arg % 7 === 4)) {
+      if (c === '0' || c === '1') { out.push(Number(c)); arg++ }
+      else if (!/[\s,]/.test(c)) {
+        out.length -= arg % 7 // the unfinished group; an implicitly repeated arc before it stays
+        if (arg < 7) out.pop() // …and the `A` itself when it was its first group
+        break
+      }
+      i++
+      continue
+    }
+    num.lastIndex = i
+    const m = num.exec(d)
+    if (m) { out.push(parseFloat(m[0])); arg++; i = num.lastIndex } else i++
+  }
   return out
 }
 

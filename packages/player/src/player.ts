@@ -15,6 +15,7 @@ import { containerLayers, getSymbol, isGroup, isInstance, isPoseable, isText } f
 import { renderLayers, collectModifierTargets, docHasModifiers, type FilterCacheEntry, type RenderCtx } from './drawScene'
 import { restState, advanceModifier, type ModState } from '@flatkit/engine/channelModifiers'
 import { withCels } from '@flatkit/engine/migrateCel'
+import { formatBoundText } from '@flatkit/engine/cel'
 import { sanitizeDoc } from '@flatkit/engine/validateDoc'
 import { applyInstanceBinds } from '@flatkit/engine/instanceBind'
 import { importedFunctions } from '@flatkit/engine/stdlib'
@@ -513,6 +514,8 @@ export class FlatPlayer {
     this.clearGrab()
   }
   private lastFrameInt = -1
+  private seekCount = 0
+  private scriptPaused = false // a script ran `pause` — read once, at mount, against `autoplay` // lets a frame-action walk notice a `go to` run by one of its scripts
   private readonly onResize = () => {
     this.measure()
     this.render()
@@ -1094,7 +1097,7 @@ export class FlatPlayer {
   /** Surface exposed to the action interpreter (frame-actions, future onClick). */
   private readonly host: ActionHost = {
     play: () => this.play(),
-    pause: () => this.pause(),
+    pause: () => { this.scriptPaused = true; this.pause() },
     seek: (f) => this.seek(f),
     labelFrame: (name) => this.doc.timeline?.labels?.find((l) => l.name === name)?.frame,
     setVar: (name, v) => { this.setVarLive(name, v) },
@@ -1169,7 +1172,8 @@ export class FlatPlayer {
       this.canvas.addEventListener('wheel', this.onWheel, { passive: false }) // non-passive: may preventDefault when the scene reads mouse.wheel
       this.scheduleHitWarm() // pre-flatten hittable paths on idle → the FIRST move/click isn't a cold-start jolt
     }
-    if (opts.autoplay) this.play()
+    // A `pause` run by `when loaded` already decided: autoplay must not undo it (flatink/flatink#67).
+    if (opts.autoplay && !this.scriptPaused) this.play()
   }
 
   /**
@@ -1404,7 +1408,9 @@ export class FlatPlayer {
       console.warn(`FlatPlayer: text("${key}") -- no Text item "${key}" (id or name) in the document`)
       return ''
     }
-    return t.content.length > MAX_SEND_TEXT ? t.content.slice(0, MAX_SEND_TEXT) : t.content
+    // A bound text sends what the screen shows, not its template (flatink/flatink#67).
+    const shown = t.bind ? formatBoundText(t, this.evalNumber(t.bind)) : t.content
+    return shown.length > MAX_SEND_TEXT ? shown.slice(0, MAX_SEND_TEXT) : shown
   }
 
   /**
@@ -1958,6 +1964,7 @@ export class FlatPlayer {
   seek(frame: number): void {
     this.frame = Math.max(0, Math.min(this.duration, frame))
     this.lastFrameInt = Math.floor(this.frame) // a seek does not trigger the frame-actions (anti-loop)
+    this.seekCount++
     this.channelState.clear() // random access: modifiers re-init at rest on their target (snap, no transient)
     this.drawnMods.clear()
     this.velocityState.clear() // velocity() re-inits → 0 (no spurious jolt from a stale delta)
@@ -2070,13 +2077,27 @@ export class FlatPlayer {
     })
   }
 
-  /** Triggers the frame-actions when the playhead enters a new whole frame. */
+  /** Triggers the frame-actions of every whole frame the playhead ENTERED since the last call, in order —
+   *  the one it landed on and the ones it stepped over (a 120 fps timeline stepped at 60 Hz, a slow
+   *  display, a stall), across the loop wrap too. A `go to` or a `pause` run by one of them ends the walk:
+   *  the playhead is no longer where the rest were heading. */
   private fireFrameActions(): void {
     const fi = Math.floor(this.frame)
-    if (fi === this.lastFrameInt) return
+    const from = this.lastFrameInt
+    if (fi === from) return
     this.lastFrameInt = fi
     const fa = this.doc.timeline?.frameActions
-    if (fa) for (const e of fa) if (e.frame === fi) this.run(e.actions)
+    if (!fa?.length) return
+    const last = Math.ceil(this.duration) - 1
+    // Forward: from+1..fi. Wrapped (fi < from): from+1..last, then 0..fi. Never more than one lap.
+    const frames: number[] = []
+    if (fi > from) for (let k = from + 1; k <= fi; k++) frames.push(k)
+    else { for (let k = from + 1; k <= last; k++) frames.push(k); for (let k = 0; k <= fi; k++) frames.push(k) }
+    const seeks = this.seekCount, wasPlaying = this.playing
+    for (const k of frames) {
+      for (const e of fa) if (e.frame === k) this.run(e.actions)
+      if (this.seekCount !== seeks || (wasPlaying && !this.playing)) return
+    }
   }
 
   play(): void {

@@ -119,7 +119,9 @@ export function applyEasing(t: number, e: Easing | undefined): number {
     return 1 - u * u * u
   }
   if (e === 'easeInOut') return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
-  return cubicBezierEase(t, e.cubic)
+  // A `.flatpack` is JSON: an unknown name or a malformed cubic plays linear rather than crash the render.
+  const c = typeof e === 'object' ? e.cubic : undefined
+  return Array.isArray(c) && c.length === 4 && c.every(Number.isFinite) ? cubicBezierEase(t, c) : t
 }
 
 /** Interpolate two transforms via their decomposition. `rotate`/`turns` set the spin direction. */

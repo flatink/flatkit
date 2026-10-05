@@ -101,6 +101,8 @@ export function forEachExpression(doc: Doc, fn: (expr: string) => void): void {
     forEachActionExpression(t.onLoad, fn)
     forEachActionExpression(t.onEnterFrame, fn)
     for (const fa of t.frameActions ?? []) forEachActionExpression(fa.actions, fn)
+    // `each "Sym" as i { channel = expr }` lives here, not on an item (flatink/flatink#64).
+    for (const b of t.binds ?? []) for (const e of Object.values(b.expr)) fn(e)
   }
 }
 

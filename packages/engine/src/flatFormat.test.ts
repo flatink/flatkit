@@ -1793,6 +1793,25 @@ describe('program header — a `var` initialised with a constant expression', ()
   })
 })
 
+// flatink/flatink#65 — an array literal read each TOKEN as a number: `[PI / 2, 1]` gave `[NaN, 2, 1]` and
+// `[rad(30), deg(1)]` eight cells, in silence. Each cell is a constant expression, like a scalar `var`.
+describe('program header — an array literal of constant expressions', () => {
+  it('evaluates each cell', () => {
+    const v = parseProgram(prog0('var t = [PI / 2, 1]\nvar u = [rad(30), deg(1)]\nvar n = [-1, 2.5e-1, (1 + 2) * 3]\nvar e = []')).variables
+    expect(v).toEqual({ t: [Math.PI / 2, 1], u: [Math.PI / 6, 180 / Math.PI], n: [-1, 0.25, 9], e: [] })
+  })
+  it('can span several lines and end on a comment', () => {
+    expect(parseProgram(prog0('var t = [1,\n  2, // two\n  3]')).variables).toEqual({ t: [1, 2, 3] })
+  })
+  it('`fill(n, v)` takes constant expressions too', () => {
+    expect(parseProgram(prog0('var f = fill(2, PI / 2)')).variables).toEqual({ f: [Math.PI / 2, Math.PI / 2] })
+  })
+  it('a cell that is not a constant is refused, with the rule', () => {
+    expect(() => parseProgram(prog0('var a = 1\nvar t = [a, 1]'))).toThrow(/constant/)
+    expect(() => parseProgram(prog0('var t = [1 2]'))).toThrow(/constant/)
+  })
+})
+
 // flatink/flatink#7 — `size` written after another header line was skipped as an unknown token: the scene
 // silently fell back to 800x600.
 describe('program header — `size` is accepted anywhere before the scene', () => {
@@ -1955,5 +1974,58 @@ describe('a matrix survives a print and a re-read', () => {
     const b = (parseProgram(printProgram(parseProgram(src))).layers[0].items[0] as Group).transform
     for (const k of ['a', 'b', 'c', 'd'] as const) expect(Math.abs(a[k] - b[k])).toBeLessThan(1e-6)
     for (const k of ['e', 'f'] as const) expect(Math.abs(a[k] - b[k])).toBeLessThan(1e-3)
+  })
+})
+
+// flatink/flatink#66 — header and attribute words that were taken on trust: each of these used to compile,
+// pass `--check`, and lose content or crash later.
+describe('`.flatink` / `.flat` — malformed input is refused where it is written', () => {
+  const sceneWith = (item: string) => ['size 100 100', 'scene {', '  layer "L" {', `    ${item}`, '  }', '}', ''].join('\n')
+  it('an `asset` with no kind does not swallow the `scene` that follows', () => {
+    expect(() => parseProgram(prog0('asset "boom" "boom.mp3"'))).toThrow(/kind/)
+    expect(parseProgram(prog0('asset "boom" "boom.mp3" sound')).assets?.[0]?.kind).toBe('sound')
+  })
+  it('a file-type word stands for its kind (written in real programs: `asset "a" "a.png" png`)', () => {
+    const kinds = parseProgram(prog0('asset "a" "a.png" png\nasset "b" "b.mp3" mp3\nasset "c" "c.woff2" woff2\nasset "d" "d.jpg" jpeg')).assets?.map((a) => a.kind)
+    expect(kinds).toEqual(['image', 'sound', 'font', 'image'])
+  })
+  it('`timeline` takes two numbers — `timeline 24` lost the duration AND the scene', () => {
+    expect(() => parseProgram(prog0('timeline 24'))).toThrow(/number/)
+  })
+  it('an unknown easing is refused (it crashed the engine at the first tween)', () => {
+    const cel = (ease: string) => ['size 100 100', 'scene {', '  layer "L" {', `    cel 0 tween ease ${ease} {`, '      matter { path "M0 0L10 0L10 10Z" fill #000000 }', '    }', '  }', '}', ''].join('\n')
+    expect(() => parseProgram(cel('bounce'))).toThrow(/bounce/)
+    expect(() => parseProgram(cel('easeInOut'))).not.toThrow()
+  })
+  it('a `.flat` line that is not a symbol stops the parse instead of dropping every symbol after it', () => {
+    const sym = (n: string) => `symbol "${n}" {\n  layer "l" {\n    path "M0 0L10 0L10 10Z" fill #000000\n  }\n}\n`
+    expect(() => parseFlat(sym('A') + 'stray words\n' + sym('B'))).toThrow(/symbol/)
+    expect(parseFlat(sym('A') + '// a comment\n' + sym('B')).map((s) => s.name)).toEqual(['A', 'B'])
+  })
+  it('an unknown filter is refused, not read as `adjust`', () => {
+    expect(() => parseProgram(sceneWith('path "M0 0L10 0L10 10Z" fill #000000 filter sepia 0.5 1 1 1'))).toThrow(/sepia/)
+  })
+  it('`glow` is blur THEN colour — the reversed order is refused', () => {
+    expect(() => parseProgram(sceneWith('path "M0 0L10 0L10 10Z" fill #000000 filter glow #ffffff 8'))).toThrow(/number/)
+  })
+  it('a list of numbers cut short by the end of the text says so (it used to leak an internal message)', () => {
+    let msg = ''
+    try { parseProgram('size 100 100\nscene {\n  layer "L" {\n    path "M0 0L10 0L10 10Z" fill #000000 filter adjust 1 1') } catch (e) { msg = (e as Error).message }
+    expect(msg).not.toMatch(/Cannot read|undefined/)
+    expect(msg).toMatch(/number|end/)
+  })
+})
+
+// flatink/flatink#67 — the scene form of the modifiers: a spring with no `stiffness` (a smooth with no `k`)
+// defaulted to 0 and never moved, in silence.
+describe('`spring` / `smooth` on a scene item — the driving slot is required', () => {
+  const g = (attr: string) => ['size 100 100', 'var t = 0', 'scene {', '  layer "L" {', `    group "G" at 0,0 ${attr} {`, '      layer "x" { path "M0 0L10 0L10 10Z" fill #000000 }', '    }', '  }', '}', ''].join('\n')
+  it('refused without it', () => {
+    expect(() => parseProgram(g('spring rotation "t" damping 0.3'))).toThrow(/stiffness/)
+    expect(() => parseProgram(g('smooth opacity "t"'))).toThrow(/\bk\b/)
+  })
+  it('accepted with it', () => {
+    expect(() => parseProgram(g('spring rotation "t" stiffness 0.1'))).not.toThrow()
+    expect(() => parseProgram(g('smooth opacity "t" k 0.2'))).not.toThrow()
   })
 })

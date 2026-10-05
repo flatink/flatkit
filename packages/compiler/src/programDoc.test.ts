@@ -177,6 +177,14 @@ describe('programDoc — structural warnings', () => {
     expect(ws[0].diag.message).toMatch(/"never"/)
   })
 
+  // flatink/flatink#64 — `each "Cell" as i { opacity = k }` is stored as a collective binding on the
+  // timeline, which the expression walk skipped: `k`, read only there, was reported "never used".
+  it('a variable read only by an `each` binding is used', () => {
+    const d: Doc = { width: 100, height: 100, symbols: [], variables: { k: 0.5 }, layers: [layer([group('c0', 'Cell0')])],
+      timeline: { fps: 24, durationFrames: 60, tracks: [], binds: [{ symbol: 'Cell', as: 'i', expr: { opacity: 'k' } }] } }
+    expect(docStructureWarnings(d).filter((w) => /never used/.test(w.diag.message))).toEqual([])
+  })
+
   // An `instance "X"` naming no symbol keeps its unresolved `@X` marker all the way into the .flatpack,
   // draws nothing, and said nothing at `--check`. Measured on a real corpus: 96 such refs across 14 of 58
   // activities passed as `check passed ✓` — a green light on scenes missing most of their artwork.

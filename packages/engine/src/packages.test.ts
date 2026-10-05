@@ -94,3 +94,14 @@ describe('packages — gesture (drag constraints)', () => {
     expect(evalWith(['gesture'], 'inZone(150, 50, 0, 0, 100, 100)')).toBe(0)
   })
 })
+
+// flatink/flatink#67 — `feedback shake(…)` binds `rotation`, which is in RADIANS: `sin(t * 40) * 4` was a
+// wobble of ±4 rad (±229°), a leftover of the degree era. A refusal wobble is a few degrees.
+describe('feedback — shake is a few degrees of rotation', () => {
+  it('peaks at 4°, and is still when the answer is right', () => {
+    let peak = 0
+    for (let k = 0; k <= 400; k++) peak = Math.max(peak, Math.abs(evalWith(['feedback'], `shake(1, ${k / 400})`)))
+    expect(peak).toBeCloseTo((4 * Math.PI) / 180, 3)
+    expect(evalWith(['feedback'], 'shake(0, 0.3)')).toBe(0)
+  })
+})

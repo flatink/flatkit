@@ -264,7 +264,9 @@ function compileOnce(programPath: string, explicitFlats: string[], out: string, 
     process.stdout.write(`flatc: check passed ✓${warnings ? ` · ${warnings} warning(s)` : ''}\n`)
     return 0
   }
-  if (report) process.stderr.write(report + '\n') // compile anyway: diagnostics as warnings
+  // Compile anyway — an editor's watch loop wants the pack — but an `error` still fails the exit code: a
+  // script or a CI trusting it must not publish a broken program (flatink/flatink#64).
+  if (report) process.stderr.write(report + '\n')
   writeFileSync(outPath, packToJSON(doc))
   const outDir = dirname(outPath)
   for (const c of built.mediaCopies) {
@@ -274,8 +276,8 @@ function compileOnce(programPath: string, explicitFlats: string[], out: string, 
     copyFileSync(c.src, dest)
   }
   const where = assetMode === 'external' ? ` (external → ${assetsDir}/)` : ''
-  process.stdout.write(`flatc: ${basename(outPath)} ✓  ${doc.symbols.length} symbol(s) · ${built.flatLibs} lib(s) · ${built.packages} package(s) · ${built.media} media${where}\n`)
-  return 0
+  process.stdout.write(`flatc: ${basename(outPath)} ${hasErrors ? 'written WITH ERRORS' : '✓ '} ${doc.symbols.length} symbol(s) · ${built.flatLibs} lib(s) · ${built.packages} package(s) · ${built.media} media${where}\n`)
+  return hasErrors ? 1 : 0
 }
 
 /** PROGRAM-only constructs found in what is supposed to be a `.flat` symbol library. `parseFlatLib` reads a

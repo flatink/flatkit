@@ -72,6 +72,22 @@ describe('the order: handlers run when the event arrives, `every frame` at the n
       'every frame { a = a + 1 }', 'at frame 3 { seen = a }'].join('\n')
     expect(play(src, [{ type: 'wait', frames: 3 }]).seen).toBe(3)
   })
+  // Found while triaging flatink/flatink#67: only the frame the playhead LANDS on was checked, so a frame
+  // it stepped over (a 120 fps timeline stepped at 60 Hz, a 60 fps one on a 30 Hz display, a stalled
+  // tab) never ran its script. Every whole frame crossed runs, in order, the loop wrap included.
+  it('`at frame` runs for a frame the playhead steps OVER, too', () => {
+    const src = (marks: string[]) => ['size 200 200', 'timeline 120 240', 'var seen = 0',
+      'scene { layer "c" { group "G" at 100,100 { layer "a" { circle 0 0 10 fill #cc3333 } } } }',
+      ...marks].join('\n')
+    // Two frames per step: 30 is landed on, 31 is stepped over.
+    expect(play(src(['at frame 30 { seen = seen + 1 }', 'at frame 31 { seen = seen + 10 }']), [{ type: 'wait', frames: 20 }]).seen).toBe(11)
+    // Order is kept across a jump, and frames are not run twice.
+    expect(play(src(['at frame 33 { seen = seen * 10 }', 'at frame 31 { seen = seen + 1 }']), [{ type: 'wait', frames: 20 }]).seen).toBe(10)
+    // Across the loop: 239 is the last frame, 1 is stepped over after the wrap (240 -> 0, 2).
+    expect(play(src(['at frame 239 { seen = seen + 1 }', 'at frame 1 { seen = seen + 10 }']), [{ type: 'wait', frames: 121 }]).seen).toBe(11 + 10)
+    // A `go to` run by a stepped-over frame ends the walk: the playhead is elsewhere now.
+    expect(play(src(['at frame 31 { go to frame 100 }', 'at frame 32 { seen = 1 }']), [{ type: 'wait', frames: 16 }]).seen).toBe(0)
+  })
   it('a channel binding is not a statement: it reads the variables whenever it is looked at', () => {
     const src = ['size 200 200', 'var px = 10',
       'scene { layer "c" { group "G" at 0,0 { layer "a" { circle 0 0 10 fill #cc3333 } }',

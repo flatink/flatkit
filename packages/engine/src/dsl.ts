@@ -922,8 +922,10 @@ class Parser {
     else {this.err('empty condition', m)}
     if (!this.expectBrace()) return null
     const then = this.body()
-    // optional `else { … }` and `else if … { … }`
+    // optional `else { … }` and `else if … { … }` — on the `}` line or a later one: `else` never starts a
+    // statement, so looking past line ends (and comments) cannot steal one (flatink/flatink#64).
     const save = this.mark()
+    this.skipWs()
     if (this.peekWord() === 'else') {
       this.word()
       // `else if` sugar: we nest a full `if` as the only action of the `else` body
@@ -1338,18 +1340,22 @@ class Parser {
         if (!tgt) { this.err(`target expression expected: ${w} ${raw} = <target> { … }`, m); this.recoverBlockOrLine(); return null }
         this.exprSite(tgt, tpos) // the (raw) target is linted like any channel expression
         if (!this.expectBrace()) return null
-        let stiffness = 0, damping = 0, k = 0
+        let stiffness = 0, damping = 0, k = 0, driven = false
+        const slots = mkind === 'spring' ? ['stiffness', 'damping'] : ['k'] // per kind: a foreign slot was silently ignored (flatink/flatink#67)
         for (;;) { // slots — separated by whitespace OR newline (no endStatement → `{ a 1 b 2 }` on one line is fine)
           this.skipWs()
           if (this.eof()) { this.err('missing "}"', m); break }
           if (this.peek() === '}') { this.next(); break }
           const sm = this.mark()
           const slot = this.word()
+          if (!slots.includes(slot)) { this.err(`unknown slot "${slot}" (expected: ${slots.join(', ')})`, sm); this.skipLine(); continue }
+          if (slot === 'stiffness' || slot === 'k') driven = true
           if (slot === 'stiffness') { const n = this.number(); if (n === null) { this.err('value expected after "stiffness"', sm); this.skipLine(); continue } stiffness = n }
           else if (slot === 'damping') { const n = this.number(); if (n === null) { this.err('value expected after "damping"', sm); this.skipLine(); continue } damping = n }
           else if (slot === 'k') { const n = this.number(); if (n === null) { this.err('value expected after "k"', sm); this.skipLine(); continue } k = n }
-          else { this.err(`unknown slot "${slot}" (expected: ${mkind === 'spring' ? 'stiffness, damping' : 'k'})`, sm); this.skipLine(); continue }
         }
+        // Without it the modifier is 0 and never moves.
+        if (!driven) this.err(mkind === 'spring' ? 'a spring needs its "stiffness" (0..1) — without it the channel never moves: `{ stiffness 0.1 damping 0.8 }`' : 'a smooth needs its "k" (0..1) — without it the channel never moves: `{ k 0.2 }`', m)
         const target = deg ? `rad(${tgt})` : tgt
         const modifier: ChannelModifier = mkind === 'spring' ? { kind: 'spring', target, stiffness, damping } : { kind: 'smooth', target, k }
         return { kind: 'modifier', channel: channel as ExprChannel, modifier }

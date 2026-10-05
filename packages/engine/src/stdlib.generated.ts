@@ -202,7 +202,7 @@ export const PACKAGE_FUNCS: Record<string, FuncDef[]> = {
         "t"
       ],
       "kind": "value",
-      "expr": "bad ? sin(t * 40) * 4 : 0"
+      "expr": "bad ? sin(t * 40) * rad(4) : 0"
     },
     {
       "name": "pulse",
