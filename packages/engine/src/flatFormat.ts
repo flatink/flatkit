@@ -1182,16 +1182,30 @@ export function objectTargetDiagnostics(src: string): { scope: string; diag: Dia
   // outliner) but neither can carry a pose — worth telling apart, since the fix differs.
   const shapes = new Set<string>()
   const layerNames = new Set<string>()
+  const named = new Map<string, number>() // poseable items by name (a text named by its CONTENT aside)
   const walk = (ls: Layer[]) => {
     for (const l of ls) {
       if (l.name) layerNames.add(l.name)
-      for (const it of l.items) { if (isRegion(it) && it.name) shapes.add(it.name); if (isGroup(it)) walk(it.layers) }
+      for (const it of l.items) {
+        if (isRegion(it) && it.name) shapes.add(it.name)
+        const nm = itemName(it)
+        if (nm && !isRegion(it) && !isNamedByContent(it)) named.set(nm, (named.get(nm) ?? 0) + 1)
+        if (isGroup(it)) walk(it.layers)
+      }
     }
   }
   walk(composition.layers)
   const lineAt = (off: number) => expanded.slice(0, off).split('\n').length
   const out: { scope: string; diag: Diagnostic }[] = []
+  const twice = new Set<string>()
   for (const ob of objects) {
+    // Two items answering to the name: the object attached to the FIRST, the other never reacted
+    // (flatink/flatink#66). Two instances of one symbol without `as` share the symbol's name.
+    const count = named.get(ob.name) ?? 0
+    if (count > 1 && !twice.has(ob.name)) {
+      twice.add(ob.name)
+      out.push({ scope: `object "${ob.name}"`, diag: { line: lineAt(ob.at), col: 1, severity: 'warning', message: `${count} items are named "${ob.name}" — this object attaches to the first one only, the others never react. Give each its own name (\`as "${ob.name}2"\` on an instance)` } })
+    }
     if (byName.has(ob.name)) continue
     const why = shapes.has(ob.name)
       ? `"${ob.name}" is a shape — shapes are baked material and cannot be animated. Wrap it in a group: \`group "${ob.name}" { layer "art" { … } }\``

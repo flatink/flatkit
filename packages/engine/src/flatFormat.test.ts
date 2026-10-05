@@ -2067,3 +2067,17 @@ describe('`.flatink` — a closed-set word is checked where it is written', () =
     expect(parseProgram(sceneWith('path "M0 0L10 0L10 10Z" fill #000000', 'background #102030')).background).toBe('#102030')
   })
 })
+
+// flatink/flatink#66 — two items with the name an `object` targets: it attached to the first one only, and
+// the second never reacted. Two instances of a symbol without `as` share the symbol's name, same trap.
+describe('objectTargetDiagnostics — an object name that matches two items', () => {
+  const art = '{ layer "a" { circle 0 0 10 fill #cc3333 } }'
+  const prog = (items: string[]) => ['size 200 200', 'var n = 0', 'scene {', '  layer "c" {', ...items.map((i) => `    ${i}`), '  }', '}', 'object "B" {', '  when clicked { n = n + 1 }', '}', ''].join('\n')
+  it('is warned, with the count', () => {
+    const ds = objectTargetDiagnostics(prog([`group "B" at 10,10 ${art}`, `group "B" at 50,50 ${art}`]))
+    expect(ds.map((d) => `${d.diag.severity} ${d.diag.line}: ${d.diag.message}`)).toEqual([expect.stringMatching(/^warning 9: .*2 items are named "B".*first/)])
+  })
+  it('a single one says nothing', () => {
+    expect(objectTargetDiagnostics(prog([`group "B" at 10,10 ${art}`, `group "C" at 50,50 ${art}`]))).toEqual([])
+  })
+})

@@ -54,7 +54,7 @@ export const formatDiagnostics = (diagnostics: CheckDiagnostic[]): string => dia
 /** The two SOURCE-level passes, which read the author's text rather than the compiled Doc. Always errors. */
 function sourceDiagnostics(src: string): CheckDiagnostic[] {
   return [...behaviorDiagnostics(src), ...objectTargetDiagnostics(src), ...sceneOnlyUnitDiagnostics(src), ...itemOnlyUnitDiagnostics(src)]
-    .map(({ scope, diag }) => ({ scope, line: diag.line, col: diag.col, severity: 'error' as const, message: diag.message, ...(diag.fix ? { fix: diag.fix } : {}) }))
+    .map(({ scope, diag }) => ({ scope, line: diag.line, col: diag.col, severity: diag.severity === 'warning' ? 'warning' as const : 'error' as const, message: diag.message, ...(diag.fix ? { fix: diag.fix } : {}) }))
 }
 
 /** Statements that belong to the COMPOSITION half — they are only legal inside `scene { … }`. */
