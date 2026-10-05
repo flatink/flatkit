@@ -177,6 +177,20 @@ describe('desugar — every expansion passes checkProgram with ZERO warnings', (
 // The claim that makes "no visual opinion" checkable rather than promised: expand every gesture with a
 // theme that draws NOTHING, and the output must not carry one colour, one font or one stroke. If a
 // gesture ever hard-codes a look, this goes red on the line that did it.
+// flatink/flatink#57 — accessibility: GREYBOX wrote its labels at 14-16 px; the stories' rule is 20 px at
+// least. The footprints stay (a drop box is layout: bigger ones would overlap existing activities).
+describe('GREYBOX — every label is at least 20 px, within the same footprints', () => {
+  it('for every role', () => {
+    for (const role of ROLES) {
+      const sizes = GREYBOX.draw(role, 'Label').flatMap((l) => [...l.matchAll(/\bsize (\d+)/g)].map((m) => Number(m[1])))
+      expect(sizes.length, role).toBeGreaterThan(0)
+      expect(Math.min(...sizes), role).toBeGreaterThanOrEqual(20)
+    }
+    expect(GREYBOX.size('item')).toEqual({ w: 92, h: 92 })
+    expect(GREYBOX.size('target')).toEqual({ w: 208, h: 118 })
+  })
+})
+
 describe('gestures carry no appearance of their own', () => {
   const APPEARANCE = /#[0-9a-fA-F]{3,8}\b|\bfill\b|\bstroke\b|\bfont\b|\bcolor\b|\bopacity\s+[\d.]/
 

@@ -66,12 +66,14 @@ export const GREYBOX: Theme = {
     const text = (size: number, boxW: number, boxH: number, colour: string, y: number) =>
       `text "${label.replace(/"/g, "'")}" at ${-boxW / 2},${y} font "system-ui, sans-serif" size ${size} align center line 1.2 color ${colour} box ${boxW} ${boxH} wrap`
     switch (role) {
+      // Labels are 20 px at least (flatink/flatink#57, the stories' accessibility rule), inside the same
+      // footprints: the item's disc grows within its 92 px to make room.
       case 'item':
-        return [`circle 0 0 ${w / 2 - 12} fill #e8c46b`, `circle 0 0 ${w / 2 - 12} nofill stroke #b8923f 2`, text(14, w - 8, 20, '#4a3a1e', -9)]
+        return [`circle 0 0 ${w / 2 - 4} fill #e8c46b`, `circle 0 0 ${w / 2 - 4} nofill stroke #b8923f 2`, text(20, w - 4, 50, '#4a3a1e', -13)]
       case 'target':
-        return [`${plate(w - 8, h - 8, 14)} fill #2e3a4e`, `${plate(w - 8, h - 8, 14)} nofill stroke #5a6f8a 2 dash 8,6`, text(16, w - 28, 22, '#aeb6c4', -h / 2 + 10)]
+        return [`${plate(w - 8, h - 8, 14)} fill #2e3a4e`, `${plate(w - 8, h - 8, 14)} nofill stroke #5a6f8a 2 dash 8,6`, text(20, w - 28, 26, '#aeb6c4', -h / 2 + 10)]
       case 'card':
-        return [`${plate(w, h, 16)} fill #2b3447`, `${plate(w, h, 16)} nofill stroke #44516a 2`, text(15, w - 20, h - 40, '#d7deea', -h / 2 + 26)]
+        return [`${plate(w, h, 16)} fill #2b3447`, `${plate(w, h, 16)} nofill stroke #44516a 2`, text(20, w - 20, h - 36, '#d7deea', -h / 2 + 22)]
       case 'chip':
         return [`circle 0 0 ${w / 2 - 8} fill #e8c46b`, `circle 0 0 ${w / 2 - 8} nofill stroke #b8923f 3`, text(22, w - 16, 28, '#4a3a1e', -13)]
       case 'counter':
