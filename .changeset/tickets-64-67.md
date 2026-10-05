@@ -6,6 +6,25 @@
 
 Fixes and checks from flatink/flatink#64 #65 #66 #67.
 
+**Breaking:**
+
+- `flatc <program>` (plain compile) exits 1 when the program has an `error` (the `.flatpack` is still
+  written). Scripts that relied on exit 0 must check the report or fix the errors.
+- The scene parser refuses what it used to swallow: an `asset` without a kind, `timeline` with one
+  number, an unknown easing or filter, an unknown `blend` / `cap` / `join` / `align` / `spin` word, a
+  colour that is not 3/4/6/8 hex digits, `clip` on a text or an image, a non-colour `background`, a
+  non-symbol line in a `.flat`, a `spring` without `stiffness` (a `smooth` without `k`).
+- New `--check` errors: wrong argument counts, unknown procedure or package, two interactors on one
+  object, `sound` of an undeclared asset, `text()` of a missing text.
+- A script `pause` holds the playhead only: `every frame`, `clock` and springs keep running. The host's
+  `play()` no longer releases a playhead the scene paused (the scene's `play` does); the host's `pause()`
+  still freezes everything. `isPlaying` is true when the timeline moves.
+- `at frame N` now runs for frames the playhead steps over (120 fps timelines, slow displays).
+- A `repeat i from A to B` variable is restored after the loop.
+- `shake` is 4 degrees (was 4 radians); `text("id")` of a bound text sends the displayed value.
+- FlatPlayer internals are ES private fields: reading one through a cast no longer works (public API
+  unchanged).
+
 Bugs: `at frame` runs for every whole frame the playhead crossed, not only the one it landed on; a plain
 `flatc` compile with an error exits 1 (the pack is still written); `else` may open the line after the `}`
 (its body used to run unconditionally); a var array reads each cell as a constant expression
