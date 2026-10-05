@@ -681,6 +681,12 @@ export function docDrawWarnings(doc: Doc): { scope: string; diag: Diagnostic }[]
   return out
 }
 
+/** The colour names an author writes for a hex (`fill red` was read as a colour PARAM, flatink/flatink#66). */
+const CSS_COLORS: Record<string, string> = {
+  red: '#ff0000', green: '#008000', blue: '#0000ff', black: '#000000', white: '#ffffff', yellow: '#ffff00', orange: '#ffa500',
+  purple: '#800080', pink: '#ffc0cb', brown: '#a52a2a', gray: '#808080', grey: '#808080', cyan: '#00ffff', magenta: '#ff00ff',
+}
+
 /** A scope's declared `color` param names (the only params usable as a paint color). */
 const colorParamNames = (params?: ParamDef[]): Set<string> => new Set((params ?? []).filter((p) => p.type === 'color').map((p) => p.name))
 
@@ -695,7 +701,8 @@ export function docPaintParamWarnings(doc: Doc): { scope: string; diag: Diagnost
   const checkScope = (scope: string, layers: Layer[], known: Set<string>) => {
     const flag = (param: string, where: string, who?: string) => {
       if (known.has(param)) return
-      const hint = known.size ? `declared color params: ${[...known].join(', ')}` : 'this scope declares no color params'
+      const css = CSS_COLORS[param.toLowerCase()]
+      const hint = (css ? `a colour is written in hex — \`${css}\` for ${param}; ` : '') + (known.size ? `declared color params: ${[...known].join(', ')}` : 'this scope declares no color params')
       out.push({ scope, diag: { line: 1, col: 1, severity: 'warning', message: `unknown color param "${param}" in ${where}${who ? ` (${who})` : ''} — ${hint}` } })
     }
     const visit = (it: Item) => {

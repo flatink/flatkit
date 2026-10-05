@@ -615,6 +615,13 @@ describe('programDoc — a color param used as a paint must be declared (RFC fol
     expect(paintWarn(doc1(region({ fillParam: 'teinte' })))).toEqual([])
   })
 
+  // flatink/flatink#66 — `fill red` reads `red` as a colour PARAM: the shape painted black, and the warning
+  // did not say why. A colour name gets the hex spelling.
+  it('a CSS colour name gets the hex spelling', () => {
+    expect(paintWarn(doc1(region({ fillParam: 'red' })))[0]).toMatch(/"red".*#ff0000/)
+    expect(paintWarn(doc1(region({ fillParam: 'teinet' })))[0]).not.toMatch(/#[0-9a-f]{6}/)
+  })
+
   it('a typo in a stop / tint / fill / stroke is flagged (warning, scoped to the symbol)', () => {
     expect(paintWarn(doc1(region({ paint: radial('teint') })))[0]).toMatch(/\[Halo\].*unknown color param "teint" in a gradient stop/)
     expect(paintWarn(doc1({ id: 'g', kind: 'group', name: 'g', transform: IDENTITY, layers: [layer([])], tint: { color: '#fff', param: 'tinte', amount: 0.5 } }))[0]).toMatch(/in a tint/)
