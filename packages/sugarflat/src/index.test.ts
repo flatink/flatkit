@@ -426,6 +426,22 @@ describe('the gestures, played — flatink/flatink #55 #56 #58', async () => {
     return playHeadless(c.doc!, g as never)
   }
   const steps = 'steps s {\n  step "one" at 100,300\n  step "two" at 300,300\n  step "three" at 500,300\n}\n'
+  // #56 — the targets of `place` had one fixed size (208x118 under GREYBOX): five of them could not stand in a
+  // row on a 760 px scene (a number line). A size per target, or one for the whole block.
+  it('place: a target takes its own size, or the block\'s — drop box and drawing alike', () => {
+    const src = 'place p {\n  targets size 120,80\n  target A at 100,300\n  target B at 260,300 size 60,60\n  item a -> A at 100,100\n  item b -> B at 300,100\n}\n'
+    const c = checkProgram(ensureHeader(desugar(src).flatink))
+    expect(c.errors).toBe(0)
+    const box = (name: string) => (c.doc!.layers.flatMap((l) => l.items) as Array<{ name: string; hitbox?: { w: number; h: number } }>).find((it) => it.name === name)?.hitbox
+    expect([box('p_TA'), box('p_TB')]).toEqual([{ w: 120, h: 80 }, { w: 60, h: 60 }])
+    expect(desugar(src).flatink).toMatch(/rect -56 -36 112 72/) // GREYBOX draws within the size it was given
+    const r = run(src, [{ type: 'drag', source: 'p_Ib', target: 'p_TB' }, { type: 'drag', source: 'p_Ia', target: 'p_TA' }])
+    expect(r.sends.map((s) => s.name)).toEqual(['correct', 'correct', 'part', 'completed'])
+  })
+  it('place: a malformed size is refused, with the rule', () => {
+    expect(() => desugar('place p {\n  target A at 100,300 size big\n  item a -> A at 100,100\n}\n')).toThrow(/size/)
+  })
+
   // #58 — a step tapped out of order did nothing and sent nothing: an activity could not count mistakes.
   it('steps: a step AHEAD of the current one sends `incorrect`; a step already done stays silent', () => {
     const r = run(steps, [{ type: 'tap', target: 's_S2' }, { type: 'tap', target: 's_S0' }, { type: 'tap', target: 's_S0' }, { type: 'tap', target: 's_S1' }, { type: 'tap', target: 's_S2' }, { type: 'tap', target: 's_S1' }])

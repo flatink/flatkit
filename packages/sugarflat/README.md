@@ -119,7 +119,7 @@ learner makes a mistake and the activity stops responding, at the exact moment t
 
 | | |
 |---|---|
-| `place <name> { prompt "…"  target <T> at x,y  item <i> -> <T> at x,y }` | drag items onto where they belong |
+| `place <name> { prompt "…"  target <T> at x,y [size w,h]  item <i> -> <T> at x,y }` | drag items onto where they belong (`targets size w,h` sizes every target of the block) |
 | `compose <name> { prompt "…"  total <n>  chip <v> at x,y }` | tap values until they add up; overshooting resets |
 | `steps <name> { prompt "…"  step "…" at x,y }` | a gated sequence; a step tapped ahead of its turn moves nothing but sends `incorrect` |
 

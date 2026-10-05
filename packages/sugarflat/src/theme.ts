@@ -22,8 +22,9 @@ export type Theme = {
   readonly name: string
   /** Footprint of a role. The gesture uses it for drop boxes; the theme must draw within it. */
   size(role: Role): { w: number; h: number }
-  /** Drawing statements for a role, in LOCAL coordinates centred on 0,0. May be empty. */
-  draw(role: Role, label: string): string[]
+  /** Drawing statements for a role, in LOCAL coordinates centred on 0,0. May be empty. `size`, when given,
+   *  is the footprint the author asked for (`target … size w,h`); a theme draws within it. */
+  draw(role: Role, label: string, size?: { w: number; h: number }): string[]
 }
 
 /** Every role, in a stable order — for a reference card, or to sweep a theme. */
@@ -58,8 +59,8 @@ const plate = (w: number, h: number, r: number): string => `rect ${-w / 2} ${-h 
 export const GREYBOX: Theme = {
   name: 'greybox',
   size: (role) => SIZES[role],
-  draw(role, label) {
-    const { w, h } = SIZES[role]
+  draw(role, label, size) {
+    const { w, h } = size ?? SIZES[role]
     const text = (size: number, boxW: number, boxH: number, colour: string, y: number) =>
       `text "${label.replace(/"/g, "'")}" at ${-boxW / 2},${y} font "system-ui, sans-serif" size ${size} align center line 1.2 color ${colour} box ${boxW} ${boxH} wrap`
     switch (role) {

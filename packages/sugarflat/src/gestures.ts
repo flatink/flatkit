@@ -77,7 +77,9 @@ function lines(kind: string, name: string, body: string): string[] {
 type PlaceModel = {
   prompt: string
   shuffle: boolean
-  targets: { id: string; label: string; x: string; y: string }[]
+  /** `targets size w,h`: the footprint of every target of the block that does not give its own. */
+  targetSize?: { w: number; h: number }
+  targets: { id: string; label: string; x: string; y: string; size?: { w: number; h: number } }[]
   items: { id: string; label: string; target: string; x: string; y: string }[]
 }
 
@@ -98,12 +100,17 @@ function parsePlace(name: string, body: string, p: string): PlaceModel {
     let x: RegExpMatchArray | null
     if ((x = line.match(/^prompt\s+"(.*)"$/))) m.prompt = x[1]
     else if (line === 'shuffle') m.shuffle = true
-    else if ((x = line.match(/^target\s+(?:"([^"]+)"|(\S+))\s+at\s+(-?[\d.]+),(-?[\d.]+)$/))) {
+    else if ((x = line.match(/^targets\s+size\s+(\d+),(\d+)$/))) m.targetSize = { w: Number(x[1]), h: Number(x[2]) }
+    else if ((x = line.match(/^target\s+(?:"([^"]+)"|(\S+))\s+at\s+(-?[\d.]+),(-?[\d.]+)(?:\s+size\s+(\d+),(\d+))?$/))) {
       const label = x[1] ?? x[2]
       if (targetOf.has(label)) throw new Error(`place "${name}": two targets are labelled "${label}" — an item pointing at it could mean either`)
       const id = own(`${p}T${ident(label)}`)
       targetOf.set(label, id)
-      m.targets.push({ id, label, x: x[3], y: x[4] })
+      // The size of a target is the author's (flatink/flatink#56): five fixed-size ones could not stand in a
+      // row on a 760 px scene.
+      m.targets.push({ id, label, x: x[3], y: x[4], ...(x[5] ? { size: { w: Number(x[5]), h: Number(x[6]) } } : {}) })
+    } else if (/^targets?\b.*\bsize\b/.test(line)) {
+      throw new Error(`place "${name}": a size is two whole numbers, width,height — \`target T at x,y size 120,80\`, or \`targets size 120,80\` for the whole block: ${line}`)
     } else if ((x = line.match(/^item\s+(?:"([^"]+)"|(\S+))\s*->\s*(?:"([^"]+)"|(\S+))\s+at\s+(-?[\d.]+),(-?[\d.]+)$/))) {
       const label = x[1] ?? x[2]
       m.items.push({ id: own(`${p}I${ident(label)}`), label, target: x[3] ?? x[4], x: x[5], y: x[6] })
@@ -160,7 +167,10 @@ function expandPlace(name: string, body: string, theme: Theme, ctx: GestureConte
       ]
 
   const layers = [`  layer "${p}targets" {`]
-  for (const t of m.targets) layers.push(...container(t.id, t.x, t.y, theme.draw('target', t.label), theme.size('target')))
+  for (const t of m.targets) {
+    const size = t.size ?? m.targetSize ?? theme.size('target')
+    layers.push(...container(t.id, t.x, t.y, theme.draw('target', t.label, size), size))
+  }
   layers.push('  }', `  layer "${p}items" {`)
   for (const it of m.items) layers.push(...container(it.id, it.x, it.y, theme.draw('item', it.label)))
   layers.push('  }')
@@ -306,7 +316,7 @@ export function gestures(opts: GestureOptions = {}): Gesture[] {
   return [
     {
       keyword: 'place',
-      summary: `place <name> { prompt "…"  [shuffle]  target <T> at x,y  item <i> -> <T> at x,y }  — drag items onto where they belong. Footprints: target ${footprint(theme, 'target')}, item ${footprint(theme, 'item')}; keep centres at least one footprint apart or the drop is ambiguous`,
+      summary: `place <name> { prompt "…"  [shuffle]  [targets size w,h]  target <T> at x,y [size w,h]  item <i> -> <T> at x,y }  — drag items onto where they belong. Footprints: target ${footprint(theme, 'target')} unless sized, item ${footprint(theme, 'item')}; keep centres at least one footprint apart or the drop is ambiguous`,
       expand: (name, body, _doc, ctx) => expandPlace(name, body, theme, ctx),
     },
     {
