@@ -201,18 +201,21 @@ describe('FlatPlayer -- random() and the `seed` option (flatink/flatink#24)', ()
 describe('FlatPlayer -- `pause` in `when loaded` holds against autoplay', () => {
   it('a load-time pause keeps the timeline stopped', () => {
     const p = new FlatPlayer(fakeCanvas(), makeDoc([{ do: 'pause' }]), { autoplay: true })
-    expect((p as unknown as { playing: boolean }).playing).toBe(false)
+    expect(p.isPlaying).toBe(false)
     p.destroy()
   })
   it('without it, autoplay plays', () => {
     const p = new FlatPlayer(fakeCanvas(), makeDoc([]), { autoplay: true })
-    expect((p as unknown as { playing: boolean }).playing).toBe(true)
+    expect(p.isPlaying).toBe(true)
     p.destroy()
   })
-  it('the host can still start it afterwards', () => {
+  // The reported trap was exactly this: the host starting playback undid the scene's own `pause`. The
+  // host runs or freezes the PLAYER; the playhead is the scene's (its `play`, `go to … and play`).
+  it('the host starting the player does not undo it', () => {
     const p = new FlatPlayer(fakeCanvas(), makeDoc([{ do: 'pause' }]), { autoplay: true })
+    p.pause()
     p.play()
-    expect((p as unknown as { playing: boolean }).playing).toBe(true)
+    expect(p.isPlaying).toBe(false)
     p.destroy()
   })
 })

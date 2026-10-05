@@ -391,12 +391,14 @@ export class FlatPlayer {
   // evalNumber (hundreds/frame in a game) -> stutter. Invalidated by inputs (cf. bustNamed).
   private namedCache: NamedChannels | null = null
   private namedFrame = Number.NaN
+  private namedMono = Number.NaN // …and `clock`: a HELD playhead keeps the frame while the scene moves on
   // Per-frame expression context cache: the `every frame` interpreter calls exprCtx hundreds of times/frame;
   // everything but the variables is stable within a frame (named channels memoized, funcs/mouse/keys reused),
   // so we build it ONCE per frame and only refresh the live vars on reuse. Bypassed when `self` is set
   // (a handler) or when called with interpolated vars (render between sim steps). Invalidated by bustNamed.
   private ctxCache: ExprContext | null = null
   private ctxFrame = Number.NaN
+  private ctxMono = Number.NaN
   private funcNames: Set<string> = new Set() // value-function names → keep priority over vars when refreshing
   // -- Grabbing (drag / press / long-press) --
   private grabbed: string | null = null // grabbed item (between pointerdown and pointerup)
@@ -515,7 +517,10 @@ export class FlatPlayer {
   }
   private lastFrameInt = -1
   private seekCount = 0
-  private scriptPaused = false // a script ran `pause` — read once, at mount, against `autoplay` // lets a frame-action walk notice a `go to` run by one of its scripts
+  // The SCENE holds its playhead: a script `pause`, or the end of a timeline that does not loop. The scene
+  // keeps living — `every frame`, `clock`, springs — like Flash's `stop()`; only the host's `pause()`
+  // freezes the player (flatink/flatink#67: `at frame N { pause }` froze ambient `clock` motion too).
+  private held = false // lets a frame-action walk notice a `go to` run by one of its scripts
   private readonly onResize = () => {
     this.measure()
     this.render()
@@ -540,6 +545,7 @@ export class FlatPlayer {
   private pictureSide<T>(f: () => T): T { this.picturing++; try { return f() } finally { this.picturing-- } }
   private bustNamed(dirty = true): void {
     this.namedFrame = Number.NaN
+    this.namedMono = Number.NaN
     this.ctxCache = null // its baked-in named channels are now stale
     if (dirty) this.dirty = true // an input changed: the picture may read it
   }
@@ -1096,8 +1102,8 @@ export class FlatPlayer {
   }
   /** Surface exposed to the action interpreter (frame-actions, future onClick). */
   private readonly host: ActionHost = {
-    play: () => this.play(),
-    pause: () => { this.scriptPaused = true; this.pause() },
+    play: () => this.release(),
+    pause: () => this.hold(),
     seek: (f) => this.seek(f),
     labelFrame: (name) => this.doc.timeline?.labels?.find((l) => l.name === name)?.frame,
     setVar: (name, v) => { this.setVarLive(name, v) },
@@ -1172,8 +1178,8 @@ export class FlatPlayer {
       this.canvas.addEventListener('wheel', this.onWheel, { passive: false }) // non-passive: may preventDefault when the scene reads mouse.wheel
       this.scheduleHitWarm() // pre-flatten hittable paths on idle → the FIRST move/click isn't a cold-start jolt
     }
-    // A `pause` run by `when loaded` already decided: autoplay must not undo it (flatink/flatink#67).
-    if (opts.autoplay && !this.scriptPaused) this.play()
+    // A `pause` run by `when loaded` HOLDS the playhead: autoplay runs the scene, the head stays put.
+    if (opts.autoplay) this.play()
   }
 
   /**
@@ -1316,7 +1322,7 @@ export class FlatPlayer {
     const cacheable = !interp && !this.selfChannels && !this.selfParent
     // Cache HIT: the variables are kept in sync by `setVarLive` (write-through on every setVar), so we hand
     // back the cached ctx as-is — no per-call refresh loop (that was O(vars) on EVERY eval, hundreds/frame).
-    if (cacheable && this.ctxCache && this.ctxFrame === this.frame && this.namedFrame === this.frame) return this.ctxCache
+    if (cacheable && this.ctxCache && this.ctxFrame === this.frame && this.ctxMono === this.mono && this.namedFrame === this.frame && this.namedMono === this.mono) return this.ctxCache
     // `time`/`frame`/`clock` baked in (per-frame constants) so `evalNumber` can evaluate against this ctx
     // DIRECTLY — no `exprScope` copy per statement (object construction dominated the sim profile). They are
     // reserved (never shadowed by a same-named variable), so the var loops skip them.
@@ -1343,9 +1349,10 @@ export class FlatPlayer {
       const named = this.pictureSide(() => namedChannels(this.doc, this.frame, ctx, this.fps))
       for (const name in named) if (!(name in ctx)) ctx[name] = named[name]
     } else {
-      if (!this.namedCache || this.namedFrame !== this.frame) {
+      if (!this.namedCache || this.namedFrame !== this.frame || this.namedMono !== this.mono) {
         this.namedCache = this.pictureSide(() => namedChannels(this.doc, this.frame, ctx, this.fps))
         this.namedFrame = this.frame
+        this.namedMono = this.mono
       }
       for (const name in this.namedCache) if (!(name in ctx)) ctx[name] = this.namedCache[name]
     }
@@ -1355,7 +1362,7 @@ export class FlatPlayer {
     // World<->local conversions relative to the handler's object (cf. RFC coordinate-spaces): a WORLD point
     // (mouse.x, Hero.x) -> the object's PARENT space (where its x/y live), and inverse.
     if (this.selfParent) Object.assign(ctx, spaceConversions(this.selfParent))
-    if (cacheable) { this.ctxCache = ctx; this.ctxFrame = this.frame } // reuse this build for the rest of the frame
+    if (cacheable) { this.ctxCache = ctx; this.ctxFrame = this.frame; this.ctxMono = this.mono } // reuse this build for the rest of the frame
     return ctx
   }
   private evalNumber(src: string): number {
@@ -1473,8 +1480,9 @@ export class FlatPlayer {
   get currentFrame(): number {
     return this.frame
   }
+  /** The TIMELINE is playing: the player runs and the scene does not hold its playhead. */
   get isPlaying(): boolean {
-    return this.playing
+    return this.playing && !this.held
   }
 
   /**
@@ -1686,6 +1694,7 @@ export class FlatPlayer {
     this.preloadAudio()
     this.measure()
     this.render()
+    this.held = false
     this.fireLoad()
   }
 
@@ -1973,7 +1982,7 @@ export class FlatPlayer {
     // clip keeps its phase. A seek while NOT playing is a SCRUB / static render: anchor `mono` to the
     // scrubbed frame so MovieClip clips (independent/once) resolve deterministically (phase = frame mod dur)
     // — this is what makes a headless `seek`+`render` and `--render --frame N` reproducible.
-    if (this.playing) this.startAudio(this.frame) // resyncs the audio
+    if (this.playing) { if (!this.held) this.startAudio(this.frame) } // resyncs the audio
     else this.mono = this.frame
     this.render()
   }
@@ -1987,9 +1996,9 @@ export class FlatPlayer {
   stepSim(steps: number): void {
     const rootSim = this.doc.timeline?.onEnterFrame
     for (let i = 0; i < Math.max(0, Math.floor(steps)); i++) {
-      let f = this.frame + SIM_STEP * this.fps
+      let f = this.held ? this.frame : this.frame + SIM_STEP * this.fps // a script `pause` holds it, as in the player
       this.mono += SIM_STEP * this.fps // monotone clock: accumulate BEFORE the loop wrap
-      if (f >= this.duration) f = this.loop ? f % this.duration : this.duration
+      if (f >= this.duration) { if (this.loop) f %= this.duration; else { f = this.duration; this.held = true } }
       this.frame = f
       this.advanceParams(SIM_STEP * this.fps) // P3: advance per-instance state transitions in lockstep with the sim
       const symSims = this.activeSymbolTimelines(f).filter((s) => s.tl.onEnterFrame?.length)
@@ -2013,7 +2022,7 @@ export class FlatPlayer {
     if (on === this.audioOn) return
     this.audioOn = on
     if (!on) this.stopAudio()
-    else if (this.playing) this.startAudio(this.frame)
+    else if (this.isPlaying) this.startAudio(this.frame)
   }
   private stopAudio(): void {
     for (const s of this.activeSources) { try { s.stop() } catch { /* already stopped */ } }
@@ -2073,7 +2082,7 @@ export class FlatPlayer {
     // must not restart the audio forever.
     const decodes = waiting.map((id) => this.decodeAudio(id)).filter((p) => p !== undefined)
     if (decodes.length) void Promise.all(decodes).then(() => {
-      if (!this.destroyed && this.playing && gen === this.audioGen && waiting.some((id) => typeof playerAudioBuffers.get(id) === 'object')) this.startAudio(this.frame)
+      if (!this.destroyed && this.isPlaying && gen === this.audioGen && waiting.some((id) => typeof playerAudioBuffers.get(id) === 'object')) this.startAudio(this.frame)
     })
   }
 
@@ -2096,7 +2105,7 @@ export class FlatPlayer {
     const seeks = this.seekCount, wasPlaying = this.playing
     for (const k of frames) {
       for (const e of fa) if (e.frame === k) this.run(e.actions)
-      if (this.seekCount !== seeks || (wasPlaying && !this.playing)) return
+      if (this.seekCount !== seeks || this.held || (wasPlaying && !this.playing)) return
     }
   }
 
@@ -2109,22 +2118,19 @@ export class FlatPlayer {
     this.simAcc = 0
     this.prevSimVars = null; this.simAlpha = 1; this.simActive = false // restart from a clean interpolation state
     this.mouse.dx = 0; this.mouse.dy = 0; this.mouse.wheel = 0 // discard pointer deltas banked while paused (no jump on resume)
-    this.startAudio(this.frame)
+    if (!this.held) this.startAudio(this.frame)
     const tick = (now: number) => {
       if (!this.playing) return
       const dt = Math.min((now - this.last) / 1000, 0.25) // clamp the big gaps (backgrounded tab) -> no explosive catch-up
       this.last = now
 
-      // 1) PLAYHEAD: based on real time (smooth, independent of refresh rate) + looping.
-      let f = this.frame + dt * this.fps
+      // 1) PLAYHEAD: based on real time (smooth, independent of refresh rate) + looping — unless the scene
+      // holds it. `clock` runs on either way.
+      let f = this.held ? this.frame : this.frame + dt * this.fps
       this.mono += dt * this.fps // monotone clock: accumulate BEFORE the loop wrap
       if (f >= this.duration) {
         if (this.loop) { f %= this.duration; this.startAudio(f) } // restarts the audio on loop
-        else {
-          f = this.duration
-          this.playing = false
-          this.stopAudio()
-        }
+        else { f = this.duration; this.hold() } // the end of a one-shot timeline holds it, the scene lives on
       }
       this.frame = f
       this.advanceParams(dt * this.fps) // P3: advance in-progress per-instance state transitions
@@ -2169,11 +2175,32 @@ export class FlatPlayer {
       // 3) frame-actions (on the current frame) + single render — when there is something new to show.
       this.fireFrameActions() // can change frame/playing (gotoFrame, pause...)
       if (this.timeDriven || this.dirty || wasMoving || this.moving) this.render()
+      // A held scene with nothing left alive stops asking for frames: the old full pause, no idle loop.
+      if (this.held && !this.aliveWhileHeld()) { this.pause(); return }
       if (this.playing) this.raf = requestAnimationFrame(tick)
     }
     this.raf = requestAnimationFrame(tick)
   }
 
+  /** What a script's `pause` does: hold the playhead (and its audio); the scene keeps living. */
+  private hold(): void {
+    if (this.held) return
+    this.held = true
+    this.stopAudio()
+  }
+  /** What a script's `play` does: release the playhead, and run the player if it is not running. */
+  private release(): void {
+    const was = this.held
+    this.held = false
+    if (!this.playing) this.play()
+    else if (was) this.startAudio(this.frame)
+  }
+  /** Something still moves while the playhead is held: a simulation, a spring, a picture reading `clock`. */
+  private aliveWhileHeld(): boolean {
+    return !!this.doc.timeline?.onEnterFrame?.length || this.activeSymbolTimelines(this.frame).some((s) => s.tl.onEnterFrame?.length) || this.hasModifiers || this.reads.has('clock')
+  }
+
+  /** The HOST's pause: freezes the whole player — playhead, `every frame`, `clock`, springs. */
   pause(): void {
     this.playing = false
     this.simActive = false // no more playback -> the render goes back to the real values (not interpolated)
@@ -2187,6 +2214,7 @@ export class FlatPlayer {
   }
   stop(): void {
     this.pause()
+    this.held = false
     this.seek(0)
   }
 

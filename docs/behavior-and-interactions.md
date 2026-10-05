@@ -69,6 +69,11 @@ send "<event>" [, <payload>]             # emit an event to the host (see below)
 sound "<assetId>"                        # one-shot audio
 ```
 
+`pause` holds the **playhead** only, like Flash's `stop()`: `every frame`, `clock`, springs and handlers go
+on, so `at frame 149 { pause }` ends an intro on a scene that keeps breathing. `play` releases it. A
+timeline that does not loop holds itself the same way at its end. (The host's `pause()` is another thing:
+it freezes the whole player.)
+
 ### `send` — talking to the host
 
 `send` is the one-way channel from the scene to the page that embeds it. Four payload forms:
