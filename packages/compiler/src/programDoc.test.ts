@@ -1100,6 +1100,13 @@ describe('programDoc — the params and states given to an instance', () => {
     expect(about(' { corps = #2e86de, queue = 2, casque = false, nom = "Zed", bras = leve }')).toEqual([])
     expect(about('', 'when loaded {\n  R.bras = leve\n  R.queue = v + 1\n  R.corps = #33aa33\n  R.nom = "Zed"\n}')).toEqual([])
   })
+  // flatink/flatink#14 — `= B from A` replays a state transition: both ends are states, and only a state
+  // machine has a transition to replay.
+  it('`= B from A` checks both states, and is for a state param only', () => {
+    expect(about('', 'when loaded {\n  R.bras = leve from repos\n}')).toEqual([])
+    expect(about('', 'when loaded {\n  R.bras = leve from repoz\n}')).toEqual([expect.stringMatching(/"repoz" is not a state of "bras"/)])
+    expect(about('', 'when loaded {\n  R.queue = 2 from 0\n}')).toEqual([expect.stringMatching(/from.*state/)])
+  })
   it('an unknown param is named, with the one it probably meant', () => {
     const ws = about(' { corp = #2e86de }')
     expect(ws).toHaveLength(1)

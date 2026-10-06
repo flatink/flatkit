@@ -231,19 +231,23 @@ function instanceParamWarnings(doc: Doc): string[] {
     const sym = byName.get(a.target)
     if (!sym) { say(`no instance named "${a.target}" in the scene — \`${a.target}.${a.param} = …\` does nothing${didYouMean(a.target, [...byName.keys()])}`); return }
     const who = `${a.target}.${a.param} = …`
-    const value = a.value.trim()
     const def = sym.params?.find((p) => p.name === a.param)
     const states = stateNames(sym, a.param)
     if (!def && !states) { say(`${who}: unknown param "${a.param}" (symbol "${sym.name}")${didYouMean(a.param, names(sym))}`); return }
-    if (states) {
-      // A bare word that is neither a state nor anything the program declares can only be a misspelt state.
-      if (/^[A-Za-z_]\w*$/.test(value) && !states.includes(value) && !known.has(value)) say(`${who}: "${value}" is not a state of "${a.param}" (${states.join(', ')})`)
-    } else if (def!.type === 'color') { if (!COLOR_LITERAL.test(value)) say(`${who}: "${a.param}" is a color param — it takes a color literal (#rrggbb), not an expression`) }
-    else if (def!.type === 'text') { if (!/^".*"$/.test(value)) say(`${who}: "${a.param}" is a text param — it takes a quoted text`) }
-    else if (/^-?[\d.]+$/.test(value)) {
-      const before = out.length
-      checkLiteral(who, sym, a.param, value)
-      for (const m of out.splice(before)) say(m)
+    // `= B from A` replays a state transition from A (flatink/flatink#14): both ends are checked as states.
+    const replay = /^(.+?)\s+from\s+(.+)$/.exec(a.value.trim())
+    if (replay && !states) { say(`${who}: \`from\` replays a STATE transition — "${a.param}" is not a state param`); return }
+    for (const value of replay ? [replay[1]!.trim(), replay[2]!.trim()] : [a.value.trim()]) {
+      if (states) {
+        // A bare word that is neither a state nor anything the program declares can only be a misspelt state.
+        if (/^[A-Za-z_]\w*$/.test(value) && !states.includes(value) && !known.has(value)) say(`${who}: "${value}" is not a state of "${a.param}" (${states.join(', ')})`)
+      } else if (def!.type === 'color') { if (!COLOR_LITERAL.test(value)) say(`${who}: "${a.param}" is a color param — it takes a color literal (#rrggbb), not an expression`) }
+      else if (def!.type === 'text') { if (!/^".*"$/.test(value)) say(`${who}: "${a.param}" is a text param — it takes a quoted text`) }
+      else if (/^-?[\d.]+$/.test(value)) {
+        const before = out.length
+        checkLiteral(who, sym, a.param, value)
+        for (const m of out.splice(before)) say(m)
+      }
     }
   })
   return out

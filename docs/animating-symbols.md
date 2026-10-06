@@ -383,6 +383,11 @@ object "FrontDoor" {
 The right-hand side is a **state name** (`open`) or an expression (`FrontDoor.door = score > 5 ? open : closed`
 isn't valid — names aren't expressions; use a number there, e.g. `… ? 1 : 0`). `transition 0` snaps instantly.
 
+A state is a **position**, so writing the state an instance is already in does nothing, and going back
+through the previous one plays the effect backwards. To **replay** a one-shot effect (a flash, sparks), name
+where it starts: `Spark.fx = play from rest` jumps to `rest` with no animation, then plays the transition
+to `play` — even when the instance is already at `play`. Both ends are checked by `--check`.
+
 > **Scope note:** the state value drives the instance's playhead and is visible to that instance's own
 > expressions. Reading another object's state back by name (`FrontDoor.door` in an unrelated expression)
 > and the broader typed `params {}` interface (colors/numbers/toggles, `fill hull`) are still to come.

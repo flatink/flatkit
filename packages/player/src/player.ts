@@ -1877,9 +1877,16 @@ export class FlatPlayer {
     // A number written out, or `true` / `false` (accepted at a call site, so in an assignment too), is read
     // as such — not compiled: a host driving a param with a slider sends a new value every frame, and each
     // distinct source compiled was kept for good.
-    const literal = trimmed === 'true' ? 1 : trimmed === 'false' ? 0 : trimmed !== '' ? Number(trimmed) : Number.NaN
-    let targetVal = sm && sm.states.some((s) => s.name === trimmed) ? stateValueOf(sm, trimmed) : Number.isFinite(literal) ? literal : this.#evalNumber(raw)
-    if (!Number.isFinite(targetVal)) return false
+    const resolve = (src: string): number => {
+      const lit = src === 'true' ? 1 : src === 'false' ? 0 : src !== '' ? Number(src) : Number.NaN
+      return sm && sm.states.some((s) => s.name === src) ? stateValueOf(sm, src) : Number.isFinite(lit) ? lit : this.#evalNumber(src)
+    }
+    // `= open from closed` (a state machine only): jump to the origin, then play the transition — a state is
+    // a POSITION, so replaying an effect used to mean going back through it, backwards (flatink/flatink#14).
+    const replay = sm ? /^(.+?)\s+from\s+(.+)$/.exec(trimmed) : null
+    let targetVal = resolve(replay ? replay[1]!.trim() : trimmed)
+    const fromVal = replay ? resolve(replay[2]!.trim()) : undefined
+    if (!Number.isFinite(targetVal) || (fromVal !== undefined && !Number.isFinite(fromVal))) return false
     // Clamp a declared number param to its range (consistent with call-site/default resolution).
     const def = sym?.params?.find((p) => p.name === param && p.type === 'number')
     if (def?.min != null && def.max != null && def.min <= def.max) targetVal = Math.max(def.min, Math.min(def.max, targetVal))
@@ -1887,9 +1894,9 @@ export class FlatPlayer {
     // Writing the value a param is ALREADY heading to changes nothing: mirroring a variable into a state
     // from `every frame` used to restart the transition on every step (from the current value, with zero
     // elapsed time), so an ease with a flat start never left its origin.
-    if (params?.get(param)?.target === targetVal) return true
+    if (fromVal === undefined && params?.get(param)?.target === targetVal) return true
     if (!params) { params = new Map(); this.#paramRt.set(inst.id, params) }
-    const cur = params.get(param)?.value ?? (sm ? initialStateValue(sm) : 0)
+    const cur = fromVal ?? params.get(param)?.value ?? (sm ? initialStateValue(sm) : 0)
     const dur = Math.max(0, sm?.transition ?? 0)
     params.set(param, { value: dur > 0 ? cur : targetVal, from: cur, target: targetVal, elapsed: 0, dur, ease: sm?.ease })
     this.#dirty = true

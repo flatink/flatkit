@@ -103,3 +103,33 @@ describe('FlatPlayer — writing the state it is already heading to', () => {
     expect(param(pl, 'doorInst', 'door')).toBe(0)
   })
 })
+
+// flatink/flatink#14 — a state is a POSITION: once at `open`, writing `open` again does nothing, and going
+// back through `closed` played the effect backwards. `= open from closed` jumps to `closed` (no animation)
+// and plays the transition to `open` again — even when the state is already `open`.
+describe('FlatPlayer — `Inst.state = B from A` replays a transition from its start', () => {
+  const at = (frame: number, value: string) => ({ frame, actions: [{ do: 'setParam', target: 'Door', param: 'door', value } as Action] })
+  const replayDoc = (value: string) => {
+    const doc = doorDoc([{ do: 'setParam', target: 'Door', param: 'door', value: 'open' }])
+    doc.timeline = { ...doc.timeline!, durationFrames: 1000, frameActions: [at(20, value)] }
+    return doc
+  }
+  it('jumps to the origin, then plays to the target', () => {
+    const pl = new FlatPlayer(fakeCanvas(), replayDoc('open from closed'), { input: false, audio: false, render: false })
+    pl.stepSim(49) // the first transition is long done, frame ~19.6
+    expect(param(pl, 'doorInst', 'door')).toBe(1)
+    pl.stepSim(2) // frame 20 crossed: the replay starts — back at `closed`
+    expect(param(pl, 'doorInst', 'door')).toBeLessThan(0.05)
+    pl.stepSim(15)
+    const mid = param(pl, 'doorInst', 'door')!
+    expect(mid).toBeGreaterThan(0)
+    expect(mid).toBeLessThan(1)
+    pl.stepSim(30)
+    expect(param(pl, 'doorInst', 'door')).toBe(1)
+  })
+  it('without `from`, the same write stays a no-op (the state is already there)', () => {
+    const pl = new FlatPlayer(fakeCanvas(), replayDoc('open'), { input: false, audio: false, render: false })
+    pl.stepSim(75)
+    expect(param(pl, 'doorInst', 'door')).toBe(1)
+  })
+})
