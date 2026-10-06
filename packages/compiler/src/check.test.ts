@@ -513,3 +513,22 @@ describe('checkProgram — a behavior that can never happen is named', () => {
     expect(about(prog('object "Box" {\n  when clicked {\n    send "answer", text("msg")\n  }\n}'), /msg/)).toEqual([])
   })
 })
+
+// flatink/flatink#68 (from #66.6) — the expressions a scene item carries (`bind`, `draw`, `count`, an `expr`
+// attribute) were never linted when checking a `.flatink`: `bind "p +* 2"` passed `--check`.
+describe('checkProgram — the expressions written on scene items are linted', () => {
+  const prog = (item: string, behavior = '') => ['size 200 200', 'var p = 0', 'var xs = [1, 2]', 'var ys = [1, 2]',
+    'scene {', '  layer "art" {', `    ${item}`, '  }', '}', behavior, ''].join('\n')
+  const errs = (src: string) => checkProgram(src).diagnostics.filter((d) => d.severity === 'error').map((d) => `${d.line}: ${d.message}`)
+  it('a bound text, a drawn stroke, a polyline count, an `expr` attribute', () => {
+    expect(errs(prog('text "{}" at 10,10 bind "p +* 2"'))).toEqual([expect.stringMatching(/^7: .*bind.*invalid expression/)])
+    expect(errs(prog('text "{}" at 10,10 bind "zork(p) + qq"'))).toEqual([expect.stringMatching(/^7: .*unknown function "zork"/), expect.stringMatching(/^7: .*unknown variable "qq"/)])
+    expect(errs(prog('path "M0 0 L100 0" nofill stroke #000000 2 draw "qq"'))).toEqual([expect.stringMatching(/^7: .*draw.*unknown variable "qq"/)])
+    expect(errs(prog('polyline xs ys count "qq + 1" nofill stroke #000000 2'))).toEqual([expect.stringMatching(/^7: .*count.*unknown variable "qq"/)])
+    expect(errs(prog('group "G" at 0,0 expr x "qq + 1" { layer "a" { circle 0 0 5 fill #000000 } }'))).toEqual([expect.stringMatching(/^7: .*unknown variable "qq"/)])
+  })
+  it('correct ones say nothing, and an object binding is not reported twice', () => {
+    expect(errs(prog('text "{}" at 10,10 bind "p * 2" decimals 1'))).toEqual([])
+    expect(errs(prog('group "G" at 0,0 { layer "a" { circle 0 0 5 fill #000000 } }', 'object "G" {\n  x = qq\n}'))).toHaveLength(1)
+  })
+})

@@ -974,12 +974,61 @@ export function lintDoc(doc: Doc, src?: string): { scope: string; diag: Diagnost
         const fix = d.fix && { ...d.fix, line: d.fix.line + shift, endLine: d.fix.endLine + shift }
         out.push({ scope: r.scope, diag: { ...d, line: d.line + shift, ...(fix ? { fix } : {}) } })
       }
+    out.push(...itemExpressionDiagnostics(doc, editPath, label, ctx, src && editPath.length === 0 ? src : undefined, out))
   }
   out.push(...docStructureWarnings(doc))
   out.push(...docModifierWarnings(doc))
   return out
 }
 
+
+/**
+ * The expressions a scene item CARRIES — a text's `bind` (and text-on-path `start`/`spacing`), a stroke's
+ * `draw`/`from`, a polyline's `count`, and (in the scene, when the source is at hand) a channel `expr`
+ * written on the item itself. The behavior regions never contain them, so `bind "p +* 2"` passed `--check`
+ * (flatink/flatink#68). A message already reported for this scope (an `object` binding lands in the same
+ * `expressions` as an `expr` attribute) is not repeated. Positions: the quoted expression in `src`, or 1:1.
+ */
+function itemExpressionDiagnostics(doc: Doc, editPath: EditFrame[], scope: string, ctx: LintContext, src: string | undefined, already: { scope: string; diag: Diagnostic }[]): { scope: string; diag: Diagnostic }[] {
+  const out: { scope: string; diag: Diagnostic }[] = []
+  // From the source, the scene's behavior is reported under `object "X"` scopes: compare against all of them.
+  const seen = new Set(already.filter((x) => src || x.scope === scope).map((x) => x.diag.message))
+  const lineOf = (expr: string): number => {
+    const at = src ? src.indexOf(`"${expr}"`) : -1
+    return at < 0 ? 1 : src!.slice(0, at).split('\n').length
+  }
+  const check = (what: string, expr: string): void => {
+    for (const d of lint(`opacity = ${expr}`, ctx)) {
+      if (seen.has(d.message)) continue
+      seen.add(d.message)
+      out.push({ scope, diag: { ...d, line: lineOf(expr), col: 1, message: `${what} "${expr}": ${d.message}`, fix: undefined } })
+    }
+  }
+  const leaf = (it: Item): void => {
+    if (isText(it)) {
+      if (it.bind) check('bind', it.bind)
+      if (it.textPath?.startExpr) check('start', it.textPath.startExpr)
+      if (it.textPath?.spacingExpr) check('spacing', it.textPath.spacingExpr)
+    } else if (isRegion(it)) {
+      if (it.drawExpr) check('draw', it.drawExpr)
+      if (it.drawFromExpr) check('from', it.drawFromExpr)
+      if (it.poly?.count !== undefined && !/^\d+$/.test(it.poly.count)) check('count', it.poly.count)
+    }
+  }
+  const visit = (layers: Layer[]): void => {
+    for (const l of layers) {
+      for (const it of l.items) {
+        leaf(it)
+        // A symbol's own `expr` attributes are in its rebuilt program already; the scene's are not.
+        if (src && isPoseable(it) && it.expressions) for (const [ch, e] of Object.entries(it.expressions)) if (e) check(`expr ${ch}`, e)
+        if (isGroup(it)) visit(it.layers) // a group shares the scope; an instance is linted with its symbol
+      }
+      for (const c of l.cels ?? []) for (const r of c.matter ?? []) leaf(r)
+    }
+  }
+  visit(contextLayers(doc, editPath))
+  return out
+}
 
 /** Lint each stateful channel modifier's TARGET expression with its scope's known names (a symbol's params
  *  included) — so a typo'd `spring rotation "crochetXX"` surfaces as "unknown variable" at `--check` time,
