@@ -388,9 +388,9 @@ through the previous one plays the effect backwards. To **replay** a one-shot ef
 where it starts: `Spark.fx = play from rest` jumps to `rest` with no animation, then plays the transition
 to `play` — even when the instance is already at `play`. Both ends are checked by `--check`.
 
-> **Scope note:** the state value drives the instance's playhead and is visible to that instance's own
-> expressions. Reading another object's state back by name (`FrontDoor.door` in an unrelated expression)
-> and the broader typed `params {}` interface (colors/numbers/toggles, `fill hull`) are still to come.
+> **Reading it back:** anywhere in the program, `FrontDoor.door` reads the instance's state (and
+> `R.queue` a number or bool param): the live value while a transition runs, else the call site's, else
+> the symbol's default. A param named like a channel (`x`, `opacity`…) does not shadow the channel.
 
 ## Render order (a real caveat)
 

@@ -6,7 +6,8 @@
 //  (`polygon-clipping`) -- the material is already baked into the document, the
 //  player only evaluates the timeline and draws.
 // -----------------------------------------------------------------------------
-import type { Asset, Doc, Item, Layer, Point, Text } from '@flatkit/types'
+import type { Asset, Doc, Item, Layer, Point, SymbolDef, Text } from '@flatkit/types'
+import { resolveInstanceParams } from '@flatkit/engine/params'
 import { resolveInstanceFrame, scheduleSounds, applyEasing, type Timeline, type Easing } from '@flatkit/engine/timeline'
 import { stateValueOf, initialStateValue, stateMachineByParam } from '@flatkit/engine/states'
 import { compileCached, evalExpr, exprScope, SIM_HZ, type ExprContext, type Compiled } from '@flatkit/engine/expr'
@@ -168,6 +169,19 @@ const TIME_NAMES = ['time', 'frame', 'clock', 'random']
  * label counts as a name. The error that costs is the other one — a name missed here is a variable whose
  * changes would not be painted — and a scan of every string cannot miss an expression field added later.
  */
+const CHANNEL_KEYS: ReadonlySet<string> = new Set(['x', 'y', 'scaleX', 'scaleY', 'rotation', 'opacity'])
+/** Every string a program carries but its geometry and media — where its expressions and actions live. */
+function programText(doc: Doc): string {
+  const out: string[] = []
+  const visit = (v: unknown): void => {
+    if (typeof v === 'string') out.push(v)
+    else if (Array.isArray(v)) for (const x of v) visit(x)
+    else if (v && typeof v === 'object') for (const k in v) if (k !== 'assets' && k !== 'path' && k !== 'data') visit((v as Record<string, unknown>)[k])
+  }
+  visit(doc)
+  return out.join('\n')
+}
+
 function pictureReads(doc: Doc): Set<string> {
   const out = new Set<string>()
   const words = (src: string): void => { for (const m of src.matchAll(/[A-Za-z_]\w*/g)) out.add(m[0]) }
@@ -439,7 +453,8 @@ export class FlatPlayer {
   #modAcc = 0 // fixed-step accumulator for the modifier advance (independent of the onEnterFrame sim gate)
   #hasModifiers = false // doc declares ≥1 modifier → run the advance pass (else zero overhead)
   #hasSymbolTimelines = false // any symbol carries a timeline? (else `activeSymbolTimelines` is empty by construction)
-  #instNameCache?: Map<string, { id: string; symbolId: string }>
+  #instNameCache?: Map<string, { id: string; symbolId: string; params?: Record<string, string> }>
+  #instFields?: { name: string; id: string; sym: SymbolDef; params?: Record<string, string>; read: string[] }[] // instances whose params a program reads by name
   #assetCache?: Map<string, Asset> // asset id -> asset (see `assetById`); rebuilt on load
   // WORLD path of a `trace` target by name. It is built from the scene's ROSTER transforms, so playback
   // never moves it — yet it was rebuilt (a full document walk, plus a transformed copy of every subpath) on
@@ -1367,6 +1382,7 @@ export class FlatPlayer {
       }
       for (const name in this.#namedCache) if (!(name in ctx)) ctx[name] = this.#namedCache[name]
     }
+    this.#putInstanceFields(ctx)
     // `self` set during a handler's execution (cf. fireEvent); in a channel binding, cel/timeline
     // re-inject it with the binding's object (priority). Absent (null) outside a handler -> no `self`.
     if (this.#selfChannels) ctx.self = this.#selfChannels
@@ -1375,6 +1391,30 @@ export class FlatPlayer {
     if (this.#selfParent) Object.assign(ctx, spaceConversions(this.#selfParent))
     if (cacheable) { this.#ctxCache = ctx; this.#ctxFrame = this.#frame; this.#ctxMono = this.#mono } // reuse this build for the rest of the frame
     return ctx
+  }
+  /** `R.bras`, `R.queue`: an instance's params and states, read by name (flatink/flatink#68, from #66.9c) —
+   *  the live value (a transition in progress), else the call site's, else the symbol's default. Only for
+   *  the instances whose params the program actually names (found once per document), so a scene that
+   *  never reads one pays nothing. Channels keep priority over a param of the same name. */
+  #putInstanceFields(ctx: ExprContext): void {
+    if (!this.#instFields) {
+      this.#instanceByName('')
+      const text = programText(this.doc)
+      this.#instFields = []
+      for (const [name, inst] of this.#instNameCache!) {
+        const sym = getSymbol(this.doc, inst.symbolId)
+        const names = [...(sym?.params ?? []).filter((p) => p.type !== 'color' && p.type !== 'text').map((p) => p.name), ...(sym?.states ?? []).map((sm) => sm.param)]
+        const read = names.filter((p) => new RegExp(`(?<![\\w.])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.${p}\\b`).test(text))
+        if (sym && read.length) this.#instFields.push({ name, id: inst.id, sym, ...(inst.params ? { params: inst.params } : {}), read })
+      }
+    }
+    for (const f of this.#instFields) {
+      const target = ctx[f.name]
+      if (!target || typeof target !== 'object' || Array.isArray(target)) continue
+      const base = resolveInstanceParams(f.sym, { params: f.params }).numeric
+      const live = this.paramsForInstance(f.id)
+      for (const p of f.read) if (!CHANNEL_KEYS.has(p)) (target as Record<string, number>)[p] = live?.[p] ?? base[p] ?? 0
+    }
   }
   #evalNumber(src: string): number {
     const c = compileCached(src)
@@ -1681,6 +1721,7 @@ export class FlatPlayer {
     // for a `trace`'s path to place its pen tip, and answering that from the PREVIOUS document is exactly
     // the kind of bug a cache introduces.
     this.#instNameCache = undefined // new document -> name→instance lookup stale
+    this.#instFields = undefined
     this.#assetCache = undefined // …and so is the asset lookup
     this.#tracePathCache.clear() // …and the `trace` target geometry
     this.#handlerIndex = undefined // …and the handler/interactor indexes
@@ -1804,12 +1845,12 @@ export class FlatPlayer {
 
   // ── Per-instance exposed params (P3 states) ───────────────────────────────────
   /** Scene instance (id + symbol) by NAME; first carrier wins (document order), groups recursed. Cached. */
-  #instanceByName(name: string): { id: string; symbolId: string } | undefined {
+  #instanceByName(name: string): { id: string; symbolId: string; params?: Record<string, string> } | undefined {
     if (!this.#instNameCache) {
-      const m = new Map<string, { id: string; symbolId: string }>()
+      const m = new Map<string, { id: string; symbolId: string; params?: Record<string, string> }>()
       const walk = (layers: Layer[]) => {
         for (const l of layers) for (const it of l.items) {
-          if (isInstance(it) && it.name && !m.has(it.name)) m.set(it.name, { id: it.id, symbolId: it.symbolId })
+          if (isInstance(it) && it.name && !m.has(it.name)) m.set(it.name, { id: it.id, symbolId: it.symbolId, ...(it.params ? { params: it.params } : {}) })
           if (isGroup(it)) walk(it.layers)
         }
       }

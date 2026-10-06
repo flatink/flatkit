@@ -133,3 +133,31 @@ describe('FlatPlayer — `Inst.state = B from A` replays a transition from its s
     expect(param(pl, 'doorInst', 'door')).toBe(1)
   })
 })
+
+// flatink/flatink#68 (from #66.9c) — `x = R.bras` read 0, always: an instance's params and states were not
+// readable by name ("still to come" in the docs). They read their live value: the transition in progress,
+// else the call-site value, else the symbol's default.
+describe('an instance\'s params and states read by name', async () => {
+  const { playHeadless } = await import('./headless')
+  const { parseProgramFull } = await import('@flatkit/engine/flatFormat')
+  const src = (call: string, behavior: string) => ['size 200 200', 'var b = -1', 'var q = -1',
+    'symbol "Robot" {', '  timeline 24 24', '  params {', '    number queue = 1 range 0 2', '  }',
+    '  states bras { repos at 0   leve at 24   initial repos   transition 6 }',
+    '  layer "l" {', '    rect 0 0 20 20 fill #cc3333', '  }', '}',
+    'scene {', '  layer "c" {', `    instance "Robot" as "R" at 50,50${call}`, '  }', '}', behavior].join('\n')
+  // As the compiler hands it over: the instance's `@Robot` reference resolved to the symbol's id.
+  const compiled = (s: string): Doc => {
+    const d = parseProgramFull(s) as unknown as Doc
+    for (const it of d.layers[0].items) if ('symbolId' in it) it.symbolId = d.symbols.find((y) => `@${y.name}` === it.symbolId)!.id
+    return d
+  }
+  const run = (s: string, frames: number) => playHeadless(compiled(s), [{ type: 'wait', frames }]).vars
+  it('defaults and call-site values', () => {
+    expect(run(src('', 'every frame {\n  b = R.bras\n  q = R.queue\n}'), 1)).toMatchObject({ b: 0, q: 1 })
+    expect(run(src(' { bras = leve, queue = 2 }', 'every frame {\n  b = R.bras\n  q = R.queue\n}'), 1)).toMatchObject({ b: 1, q: 2 })
+  })
+  it('a state set at runtime, through its transition', () => {
+    const v = run(src('', 'when loaded {\n  R.bras = leve\n}\nevery frame {\n  b = R.bras\n}'), 60)
+    expect(v.b).toBe(1)
+  })
+})
