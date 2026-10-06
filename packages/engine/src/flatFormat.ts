@@ -1225,7 +1225,9 @@ export function objectTargetDiagnostics(src: string): { scope: string; diag: Dia
 function calledFunctions(src: string): Set<string> {
   const bare = src.replace(/"(?:[^"\\]|\\.)*"/g, '""')
   const out = new Set<string>()
-  for (const m of bare.matchAll(/([A-Za-z_]\w*)\s*\(/g)) out.add(m[1])
+  // Anchored at the START of a word: unanchored, a 3000-character name was retried from each of its
+  // characters (quadratic) — most of what `--check` spent on such a program.
+  for (const m of bare.matchAll(/(?<!\w)([A-Za-z_]\w*)\s*\(/g)) out.add(m[1])
   return out
 }
 
