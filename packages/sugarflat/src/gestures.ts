@@ -53,7 +53,8 @@ function shuffler(p: string, spots: { x: string; y: string }[]): { vars: string[
 }
 
 /** A line holding two statements: one keyword, then another after a run of spaces. */
-const RUNON = /^(?:prompt|target|item|total|chip|step)\b.*\s{2,}(?:prompt|target|item|total|chip|step)\b/
+const WORDS = 'prompt|target|item|total|chip|step|min|max|start|minus|plus|counter|rail|handle'
+const RUNON = new RegExp(`^(?:${WORDS})\\b.*\\s{2,}(?:${WORDS})\\b`)
 
 /**
  * Split a block body into its non-empty, comment-free lines — ONE STATEMENT PER LINE, like FlatInk
@@ -316,6 +317,83 @@ function expandSteps(name: string, body: string, theme: Theme, ctx: GestureConte
   }
 }
 
+// ── controls ─────────────────────────────────────────────────────────────────
+// Inputs, not tasks (flatink/flatink#39): they write `<name>_value`, send `change` when it moves, and have
+// no "done". They are the recipes every activity copied by hand — the bounds, the rounding, the repeat.
+
+const NUMBER = '(-?\\d+(?:\\.\\d+)?)'
+/** The `min` / `max` / `step` / `start` lines of a control, checked; `k` rounds to the places written. */
+function range(kind: string, name: string, got: { min?: string; max?: string; step?: string; start?: string }): { min: string; max: string; step: string; start: string; places: number; k: number } {
+  if (got.min === undefined || got.max === undefined) throw new Error(`${kind} "${name}": it needs its bounds — \`min <n>\` and \`max <n>\`, one per line`)
+  if (Number(got.min) >= Number(got.max)) throw new Error(`${kind} "${name}": min (${got.min}) must be below max (${got.max})`)
+  const step = got.step ?? '1'
+  if (Number(step) <= 0) throw new Error(`${kind} "${name}": step must be above 0`)
+  const start = got.start ?? got.min
+  if (Number(start) < Number(got.min) || Number(start) > Number(got.max)) throw new Error(`${kind} "${name}": start (${start}) is outside ${got.min}..${got.max}`)
+  const places = Math.max(0, ...[got.min, got.max, step, start].map((v) => (v.split('.')[1] ?? '').length))
+  return { min: got.min, max: got.max, step, start, places, k: 10 ** places }
+}
+
+// − / + buttons. A press steps at once, then repeats while held (after 0.4 s, every 0.12 s); the keyboard
+// (Enter / Space on the focused button) steps once per key press.
+function expandStepper(name: string, body: string, theme: Theme, ctx: GestureContext): Expansion {
+  const { prefix: p, index: b } = ctx
+  const got: { min?: string; max?: string; step?: string; start?: string } = {}
+  let prompt = ''
+  let minus: { x: string; y: string } | undefined, plus: { x: string; y: string } | undefined, counter: { x: string; y: string } | undefined
+  for (const line of lines('stepper', name, body)) {
+    let x: RegExpMatchArray | null
+    if ((x = line.match(/^prompt\s+"(.*)"$/))) prompt = x[1]
+    else if ((x = line.match(new RegExp(`^(min|max|step|start)\\s+${NUMBER}$`)))) got[x[1] as 'min'] = x[2]
+    else if ((x = line.match(/^(minus|plus|counter)\s+at\s+(-?[\d.]+),(-?[\d.]+)$/))) {
+      const at = { x: x[2], y: x[3] }
+      if (x[1] === 'minus') minus = at; else if (x[1] === 'plus') plus = at; else counter = at
+    } else throw new Error(`stepper "${name}": unrecognised line: ${line}`)
+  }
+  const r = range('stepper', name, got)
+  if (!minus || !plus) throw new Error(`stepper "${name}": it needs its two buttons — \`minus at x,y\` and \`plus at x,y\``)
+
+  const v = `${p}value`
+  const vars = [`// ${p}— stepper "${q(name)}"`, ...(prompt ? [`// prompt: ${q(prompt)}`] : []),
+    `var ${v} = ${r.start}`, `var ${p}to = 0`, `var ${p}held = 0`, `var ${p}next = 0`, `var ${p}byPress = 0`, `var ${p}upAt = 0`]
+  const layers = [`  layer "${p}stepper" {`,
+    ...container(`${p}Minus`, minus.x, minus.y, theme.draw('chip', '\u2212'), theme.size('chip')),
+    ...container(`${p}Plus`, plus.x, plus.y, theme.draw('chip', '+'), theme.size('chip'))]
+  if (counter) {
+    const size = theme.size('counter') ?? { w: 180, h: 56 }
+    const art = (theme.draw('counter', '{}', size) ?? []).map((l) => (l.startsWith('text ') ? `${l} bind "${v}"${r.places ? ` decimals ${r.places}` : ''}` : l))
+    layers.push(...container(`${p}Value`, counter.x, counter.y, art))
+  }
+  layers.push('  }')
+
+  const sum = (d: string) => (r.places ? `round((${v} + ${d} * ${r.step}) * ${r.k}) / ${r.k}` : `${v} + ${d} * ${r.step}`)
+  const behavior: string[] = [
+    `fn ${p}stepBy(d) {`,
+    `  ${p}to = clamp(${sum('d')}, ${r.min}, ${r.max})`,
+    `  if ${p}to != ${v} {`, `    ${v} = ${p}to`, `    send "change", { block = ${b}, value = ${v} }`, '  }',
+    '}', '']
+  const button = (id: string, d: number, order: number, atBound: string) => behavior.push(
+    `object "${id}" {`, `  focusable order ${order}`,
+    // The mouse: a step at the press, then the repeat. The click that follows the release is that same
+    // press — only a click with no press before it (the keyboard) steps.
+    '  when pressed {', `    ${p}stepBy(${d})`, `    ${p}held = ${d}`, `    ${p}next = clock + 0.4`, `    ${p}byPress = 1`, '  }',
+    '  when released {', `    ${p}held = 0`, `    ${p}upAt = clock`, '  }',
+    '  when clicked {', `    if ${p}byPress == 1 {`, `      ${p}byPress = 0`, '    } else {', `      ${p}stepBy(${d})`, '    }', '  }',
+    // At its bound a button is dimmed: which way is still open is STATE, as the live step of a sequence is.
+    `  opacity = ${atBound} ? 0.45 : 1`, '}', '')
+  button(`${p}Minus`, -1, focusBase(b) + 1, `${v} <= ${r.min}`)
+  button(`${p}Plus`, 1, focusBase(b) + 2, `${v} >= ${r.max}`)
+  behavior.push('every frame {',
+    `  if ${p}held != 0 && clock >= ${p}next {`, `    ${p}stepBy(${p}held)`, `    ${p}next = clock + 0.12`, '  }',
+    // A press released OUTSIDE the button gets no click: forget it, or the next key press would be eaten.
+    `  if ${p}held == 0 && ${p}byPress == 1 && clock > ${p}upAt + 0.05 {`, `    ${p}byPress = 0`, '  }',
+    '}', '')
+  return {
+    vars, layers, behavior,
+    meta: { keyword: 'stepper', name, prompt, items: [], targets: [], objects: [`${p}Minus`, `${p}Plus`, ...(counter ? [`${p}Value`] : [])], doneVar: '', control: true },
+  }
+}
+
 /** `208x118` — the footprint of a role under a theme, for a summary or a prompt. */
 const footprint = (theme: Theme, role: Role): string => {
   const { w, h } = theme.size(role)
@@ -347,6 +425,11 @@ export function gestures(opts: GestureOptions = {}): Gesture[] {
       keyword: 'steps',
       summary: `steps <name> { prompt "…"  [shuffle]  step "…" at x,y }  — a gated sequence; a step tapped ahead of its turn sends "incorrect". Footprint: card ${footprint(theme, 'card')}`,
       expand: (name, body, _doc, ctx) => expandSteps(name, body, theme, ctx),
+    },
+    {
+      keyword: 'stepper',
+      summary: `stepper <name> { prompt "…"  min <n>  max <n>  [step <n>]  [start <n>]  minus at x,y  plus at x,y  [counter at x,y] }  — a CONTROL (not a task): − / + buttons writing <name>_value, repeating while held; sends "change". Footprint: chip ${footprint(theme, 'chip')}`,
+      expand: (name, body, _doc, ctx) => expandStepper(name, body, theme, ctx),
     },
   ]
 }

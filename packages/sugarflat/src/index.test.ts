@@ -487,3 +487,53 @@ describe('the gestures, played — flatink/flatink #55 #56 #58', async () => {
     expect(r.sends.map((s) => `${s.name}${s.fields?.item !== undefined ? ':' + s.fields.item : ''}`)).toEqual(['incorrect:2', 'step:0', 'step:1', 'step:2', 'part', 'completed'])
   })
 })
+
+// flatink/flatink#39 — the inputs every activity rewrote by hand (the kit's "briques"): − / + buttons that
+// repeat while held, a slider. They are CONTROLS: they write a value, they have no "done", and they do not
+// hold back the document's `completed`.
+describe('controls — stepper', async () => {
+  const { playHeadless } = await import('@flatkit/player/debug')
+  const run = (src: string, g: unknown[]) => {
+    const c = checkProgram(ensureHeader(desugar(src).flatink))
+    expect(c.errors, c.report).toBe(0)
+    return playHeadless(c.doc!, g as never)
+  }
+  const st = 'stepper etoiles {\n  min 0\n  max 5\n  start 2\n  minus at 100,200\n  plus at 300,200\n  counter at 200,200\n}\n'
+  const tap = (t: string) => ({ type: 'tap', target: t })
+
+  it('one tap, one step — and the value stays within its bounds', () => {
+    expect(run(st, [tap('etoiles_Plus')]).vars.etoiles_value).toBe(3)
+    expect(run(st, [tap('etoiles_Minus'), tap('etoiles_Minus'), tap('etoiles_Minus')]).vars.etoiles_value).toBe(0)
+    const r = run(st, [tap('etoiles_Plus'), tap('etoiles_Plus'), tap('etoiles_Plus'), tap('etoiles_Plus')])
+    expect(r.vars.etoiles_value).toBe(5)
+    expect(r.sends.map((s) => `${s.name}:${s.fields?.value}`)).toEqual(['change:3', 'change:4', 'change:5']) // nothing sent once at the bound
+  })
+  it('held, it steps at once, then repeats after 0.4 s every 0.12 s', () => {
+    const hold = (frames: number) => run('stepper n {\n  min 0\n  max 100\n  minus at 100,200\n  plus at 300,200\n}\n',
+      [{ type: 'down', x: 300, y: 200 }, { type: 'wait', frames }, { type: 'up', x: 300, y: 200 }, { type: 'wait', frames: 30 }]).vars.n_value
+    expect(hold(12)).toBe(1) // 0.2 s: the first step only
+    expect(hold(60)).toBeGreaterThanOrEqual(5) // 1 s: 1 + about five repeats (0.4, 0.52, 0.64, 0.76, 0.88, 1.0)
+    expect(hold(60)).toBeLessThanOrEqual(7)
+  })
+  it('a decimal step adds up exactly', () => {
+    const src = 'stepper v {\n  min 0\n  max 1\n  step 0.1\n  minus at 100,200\n  plus at 300,200\n}\n'
+    expect(run(src, [tap('v_Plus'), tap('v_Plus'), tap('v_Plus')]).vars.v_value).toBe(0.3)
+  })
+  it('is a control: it has no end, and does not hold back `completed`', () => {
+    const { meta } = desugar(st)
+    expect(meta[0]).toMatchObject({ keyword: 'stepper', control: true })
+    const both = st + 'compose c {\n  total 10\n  chip 10 at 100,400\n}\n'
+    expect(run(both, [tap('c_C0')]).sends.map((s) => s.name)).toEqual(['correct', 'part', 'completed'])
+    expect(run(st, [tap('etoiles_Plus')]).sends.map((s) => s.name)).toEqual(['change']) // alone: never `completed`
+  })
+  it('draws nothing of its own (BLANK), and names what a skin needs', () => {
+    const blank = desugar(st, { gestures: gestures({ theme: BLANK }) })
+    expect(blank.flatink).not.toMatch(/#[0-9a-f]{3}|font /)
+    expect(blank.meta[0].objects).toEqual(['etoiles_Minus', 'etoiles_Plus', 'etoiles_Value'])
+  })
+  it('a missing bound or button is refused, with the rule', () => {
+    expect(() => desugar('stepper n {\n  min 0\n  minus at 1,1\n  plus at 2,2\n}\n')).toThrow(/max/)
+    expect(() => desugar('stepper n {\n  min 0\n  max 5\n  plus at 2,2\n}\n')).toThrow(/minus/)
+    expect(() => desugar('stepper n {\n  min 5\n  max 0\n  minus at 1,1\n  plus at 2,2\n}\n')).toThrow(/min.*max/)
+  })
+})

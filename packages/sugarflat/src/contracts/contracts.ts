@@ -123,4 +123,30 @@ export const CONTRACTS: Contract[] = [
     sends: ['correct', 'correct', 'incorrect', 'correct', 'correct', 'correct', 'part', 'completed'],
     vars: { coins_total: 250, coins_done: 1 },
   },
+  {
+    // A CONTROL: it writes its value and says `change`; it has no end, so no `part` and no `completed`.
+    keyword: 'stepper',
+    source: `stepper stars {
+  prompt "How many stars?"
+  min 0
+  max 3
+  start 1
+  minus at 250,330
+  plus at 510,330
+  counter at 380,330
+}
+`,
+    script: [
+      { type: 'tap', target: 'stars_Plus' },
+      { type: 'tap', target: 'stars_Plus' },
+      { type: 'tap', target: 'stars_Plus' }, // already at max: nothing moves, nothing is sent
+      { type: 'tap', target: 'stars_Minus' },
+      { type: 'down', x: 250, y: 330 }, // held: one step at once, the repeat only after 0.4 s
+      { type: 'wait', frames: 12 },
+      { type: 'up', x: 250, y: 330 },
+      { type: 'wait', frames: 6 },
+    ],
+    sends: ['change', 'change', 'change', 'change'],
+    vars: { stars_value: 1 },
+  },
 ]

@@ -44,8 +44,11 @@ export type GestureMeta = {
   targets: string[]
   /** Every object id it emitted, prefixed — what a skin binds to, without having to guess the scheme. */
   objects: string[]
-  /** The variable that turns 1 when this block is finished. */
+  /** The variable that turns 1 when this block is finished. Empty for a `control`. */
   doneVar: string
+  /** `true` for an INPUT (a stepper, a slider): it writes a value, it has no end, and the document's
+   *  `completed` does not wait for it. Its value is the variable `<name>_value`. */
+  control?: boolean
   /** `true` when the block asked for `shuffle`: its elements do not stand where the source put them. */
   shuffle?: boolean
 }
@@ -225,7 +228,7 @@ function findBlocks(src: string, gestures: Gesture[]): Found[] {
  */
 function assemble(blocks: { expansion: Expansion }[], under: string[], over: string[], doc: DocumentSpec): string {
   const out: string[] = [`size ${doc.width} ${doc.height}`, `timeline ${doc.fps} ${doc.durationFrames}`]
-  const done = blocks.map((b) => b.expansion.meta.doneVar)
+  const done = blocks.filter((b) => !b.expansion.meta.control).map((b) => b.expansion.meta.doneVar) // a control has no end
   if (done.length) out.push('var allDone = 0')
   for (const b of blocks) out.push(...b.expansion.vars)
 
