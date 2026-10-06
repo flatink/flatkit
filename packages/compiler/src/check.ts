@@ -154,6 +154,36 @@ function unreachableBehaviorDiagnostics(doc: Doc, src: string): CheckDiagnostic[
 }
 
 /**
+ * Where a Doc-level warning's SUBJECT is written. Those passes reason on the Doc, which has no positions, so
+ * they said `1:1` (flatink/flatink#68, from #64): the message names its subject, and the subject has one
+ * spelling in the source. Unrecognised, or not found: undefined, and the warning keeps `1:1`.
+ */
+function locateDocWarning(message: string, src: string): number | undefined {
+  const e = escapeRe
+  const rules: [RegExp, (m: RegExpExecArray) => RegExp][] = [
+    [/^global variable "([^"]+)" never used/, (m) => new RegExp(`^[ \\t]*(?:var|let)[ \\t]+${e(m[1]!)}\\b`, 'm')],
+    [/^variable "([^"]+)" is hidden by/, (m) => new RegExp(`^[ \\t]*(?:var|let)[ \\t]+${e(m[1]!)}\\b`, 'm')],
+    [/^[\w.]+\(\) is hidden by the variable "([^"]+)"/, (m) => new RegExp(`^[ \\t]*(?:var|let)[ \\t]+${e(m[1]!)}\\b`, 'm')],
+    [/^fn ([\w.]+) is hidden/, (m) => new RegExp(`^[ \\t]*fn[ \\t]+${e(m[1]!)}\\b`, 'm')],
+    [/^parameter "[^"]+" of fn ([\w.]+)/, (m) => new RegExp(`^[ \\t]*fn[ \\t]+${e(m[1]!)}\\b`, 'm')],
+    [/^unknown drop zone "([^"]+)"/, (m) => new RegExp(`when[ \\t]+dropped[ \\t]+on[ \\t]+"?${e(m[1]!)}\\b`)],
+    [/^instance "([^"]+)":/, (m) => new RegExp(`\\binstance[ \\t]+"[^"]*"[ \\t]+as[ \\t]+"${e(m[1]!)}"|\\binstance[ \\t]+"${e(m[1]!)}"(?![ \\t]+as\\b)`)],
+    [/^([A-Za-z_]\w*)\.([A-Za-z_]\w*) = …:/, (m) => new RegExp(`\\b${e(m[1]!)}\\.${e(m[2]!)}[ \\t]*=(?!=)`)],
+    [/^no instance named "[^"]+" in the scene — `([A-Za-z_]\w*)\.([A-Za-z_]\w*) = …`/, (m) => new RegExp(`\\b${e(m[1]!)}\\.${e(m[2]!)}[ \\t]*=(?!=)`)],
+    [/^polyline: "([^"]+)"/, (m) => new RegExp(`\\bpolyline\\b[^\\n]*\\b${e(m[1]!)}\\b`)],
+    [/^(spring|smooth) (\w+):/, (m) => new RegExp(`\\b${m[1]}[ \\t]+${e(m[2]!)}\\b`)],
+    [/^"([^"]+)" is captured on `time`/, (m) => new RegExp(`\\b${e(m[1]!)}[ \\t]*=[ \\t]*time\\b`)],
+  ]
+  for (const [re, where] of rules) {
+    const m = re.exec(message)
+    if (!m) continue
+    const at = where(m).exec(src)
+    return at ? src.slice(0, at.index).split('\n').length : undefined
+  }
+  return undefined
+}
+
+/**
  * Every diagnostic of a program that HAS compiled: the source-level passes, then the semantic lint of the
  * whole Doc (read against `src`, so positions point into the author's file). Exact-duplicate lines are
  * dropped — a scene parse error is legitimately seen by both paths, which now both read the source.
@@ -167,7 +197,7 @@ export function programDiagnostics(doc: Doc, src: string): CheckDiagnostic[] {
   if (noSize) push(noSize)
   for (const { scope, diag } of duplicateBindingDiagnostics(src)) push({ scope, line: diag.line, col: diag.col, severity: diag.severity === 'error' ? 'error' : 'warning', message: diag.message })
   for (const d of unreachableBehaviorDiagnostics(doc, src)) push(d)
-  for (const { scope, diag } of lintDoc(doc, src)) push({ scope, line: diag.line, col: diag.col, severity: diag.severity === 'warning' ? 'warning' : 'error', message: diag.message, ...(diag.fix ? { fix: diag.fix } : {}) })
+  for (const { scope, diag } of lintDoc(doc, src)) push({ scope, ...(diag.line === 1 && diag.col === 1 ? { line: locateDocWarning(diag.message, src) ?? 1 } : { line: diag.line }), col: diag.col, severity: diag.severity === 'warning' ? 'warning' : 'error', message: diag.message, ...(diag.fix ? { fix: diag.fix } : {}) })
   // Collapse LAST: the same "unexpected statement" is reported by the source pass and by the Doc lint,
   // so folding one of them alone leaves the other's copy behind.
   return collapseMissingScene(out, src)

@@ -532,3 +532,35 @@ describe('checkProgram — the expressions written on scene items are linted', (
     expect(errs(prog('group "G" at 0,0 { layer "a" { circle 0 0 5 fill #000000 } }', 'object "G" {\n  x = qq\n}'))).toHaveLength(1)
   })
 })
+
+// flatink/flatink#68 (from #64.4c) — the Doc-level warnings were all placed at `1:1`: right file, no line.
+// Placed where their subject is written.
+describe('checkProgram — a Doc-level warning points at its line', () => {
+  const LIB = ['symbol "Robot" {', '  params {', '    number queue = 1 range 0 2', '  }', '  layer "l" {', '    rect 0 0 20 20 fill #cc3333', '  }', '}', ''].join('\n')
+  const src = [
+    'size 200 200', //                                   1
+    'var used = 0', //                                   2
+    'var dead = 0', //                                   3
+    'fn round(x) = x', //                                4
+    LIB.trimEnd(), //                                    5-12
+    'scene {', //                                        13
+    '  layer "c" {', //                                  14
+    '    instance "Robot" as "R" at 50,50 { queu = 1 }', // 15
+    '    group "B" at 100,100 { layer "a" { circle 0 0 10 fill #000000 } }', // 16
+    '  }', '}', //                                       17-18
+    'object "B" {', //                                   19
+    '  drag used, used', //                              20
+    '  when dropped on Nowhere { used = 1 }', //         21
+    '}', //                                              22
+    'when loaded {', //                                  23
+    '  R.queue = 5', //                                  24
+    '}', ''].join('\n')
+  const at = (re: RegExp) => checkProgram(src).diagnostics.filter((d) => re.test(d.message)).map((d) => d.line)
+  it('a variable, a function, an instance, an assignment, a drop zone', () => {
+    expect(at(/"dead" never used/)).toEqual([3])
+    expect(at(/fn round is hidden/)).toEqual([4])
+    expect(at(/unknown param "queu"/)).toEqual([15])
+    expect(at(/"queue" = 5 is outside/)).toEqual([24])
+    expect(at(/unknown drop zone "Nowhere"/)).toEqual([21])
+  })
+})
