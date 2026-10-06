@@ -201,7 +201,7 @@ function printText(t: Text, withExpr: boolean): string {
   if (t.italic) s += ' italic'
   // `box`/`wrap` are ignored for a path-laid run → not printed (keeps the round-trip clean).
   if (!tp) { s += ` box ${n(t.box.w)} ${n(t.box.h)}`; if (t.wrap) s += ' wrap' }
-  if (t.bind) s += ` bind ${q(t.bind)}`
+  if (t.bind) s += ` bind ${q(t.bind)}${(t.bindMore ?? []).map((b) => `, ${q(b)}`).join('')}`
   if (t.decimals != null) s += ` decimals ${n(t.decimals)}`
   if (t.locale) s += ` locale ${t.locale}`
   return s + printPoseAttrs(t, withExpr)
@@ -1983,7 +1983,7 @@ class FlatParser {
     const transform = this.transform(id) // texts refer by id (cf. as "<id>")
     let font = 'sans-serif', size = 16, align: Text['align'] = 'left', lineHeight = 1.2, color = '#000000'
     let weight: number | undefined, italic = false, box = { w: 0, h: 0 }
-    let wrap = false, bind: string | undefined, decimals: number | undefined, locale: 'fr' | undefined
+    let wrap = false, bind: string | undefined, bindMore: string[] | undefined, decimals: number | undefined, locale: 'fr' | undefined
     let stroke: Text['stroke']
     let alongRef: string | undefined, alongInline: string | undefined, startFrac: number | undefined // text-on-path (RFC)
     let side: 'over' | 'under' | undefined, spacing: number | undefined
@@ -2018,14 +2018,14 @@ class FlatParser {
       else if (this.is('italic')) { this.next(); italic = true }
       else if (this.is('box')) { this.next(); box = { w: this.num(), h: this.num() } }
       else if (this.is('wrap')) { this.next(); wrap = true }
-      else if (this.is('bind')) { this.next(); bind = this.str() }
+      else if (this.is('bind')) { this.next(); bind = this.str(); while (this.is(',')) { this.next(); (bindMore ??= []).push(this.str()) } } // `bind "a", "b"`: one per `{}` slot
       else if (this.is('decimals')) { this.next(); decimals = this.num() }
       else if (this.is('locale')) { this.next(); const l = this.oneOf('locale', ['fr', 'en'] as const); locale = l === 'fr' ? 'fr' : undefined } // `en` = the default spelling
       else break
     }
     const a = this.poseAttrs()
     this.groupOnly(a, 'a text')
-    const t: Text = { id: id ?? uid('t'), kind: 'text', name: content || 'Text', ...(id !== undefined ? { idExplicit: true } : {}), transform: this.placed(transform, a), content, ...(contentParam ? { contentParam } : {}), font, size, align, lineHeight, color, ...(stroke ? { stroke } : {}), ...(weight ? { weight } : {}), ...(italic ? { italic } : {}), box, ...(wrap ? { wrap: true } : {}), ...(bind ? { bind } : {}), ...(decimals != null ? { decimals } : {}), ...(locale ? { locale } : {}), ...leafAttrs(a), ...exprAttr(a), ...modAttr(a) }
+    const t: Text = { id: id ?? uid('t'), kind: 'text', name: content || 'Text', ...(id !== undefined ? { idExplicit: true } : {}), transform: this.placed(transform, a), content, ...(contentParam ? { contentParam } : {}), font, size, align, lineHeight, color, ...(stroke ? { stroke } : {}), ...(weight ? { weight } : {}), ...(italic ? { italic } : {}), box, ...(wrap ? { wrap: true } : {}), ...(bind ? { bind } : {}), ...(bindMore ? { bindMore } : {}), ...(decimals != null ? { decimals } : {}), ...(locale ? { locale } : {}), ...leafAttrs(a), ...exprAttr(a), ...modAttr(a) }
     // text-on-path: inline `along path "<d>"` is baked here (literal — author owns orientation); a named
     // `along "<id>"` defers to resolveTextPaths (forward refs allowed). `side over`/`spacing 0` = defaults → dropped.
     const tpAttrs = { ...(startFrac != null ? { start: startFrac } : {}), ...(side === 'under' ? { side } : {}), ...(spacing ? { spacing } : {}), ...(startExpr ? { startExpr } : {}), ...(spacingExpr ? { spacingExpr } : {}) }

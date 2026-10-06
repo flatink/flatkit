@@ -709,3 +709,13 @@ describe('formatBoundText — `locale fr`', () => {
     expect(formatBoundText({ content: '{}' }, 1234)).toBe('1234')
   })
 })
+
+// flatink/flatink#32 — several values in one text: `text "{} sur {}" bind "a", "b"` fills the slots in order.
+describe('formatBoundText — several values', () => {
+  it('one value per slot, in order; a single value still fills every slot', () => {
+    expect(formatBoundText({ content: '{} sur {}' }, [3, 5])).toBe('3 sur 5')
+    expect(formatBoundText({ content: '{} / {} ({})', decimals: 1, locale: 'fr' }, [1.5, 2, -0.25])).toBe('1,5 / 2,0 (\u22120,3)')
+    expect(formatBoundText({ content: '{} et {}' }, 7)).toBe('7 et 7')
+    expect(formatBoundText({ content: '{} {} {}' }, [1, 2])).toBe('1 2 2') // fewer values: the last one repeats
+  })
+})

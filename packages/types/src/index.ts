@@ -485,6 +485,7 @@ export type Text = {
   box: { w: number; h: number } // measured local extent (max line width × total height)
   wrap?: boolean // automatic line wrapping within `box.w` (absent = no wrap; honors explicit \n)
   bind?: string // numeric expression evaluated each frame → injected into `content` at the `{}` slot (read-only dynamic text; without `{}`, shows the value alone)
+  bindMore?: string[] // `bind "a", "b"`: the expressions of the 2nd, 3rd… `{}` slots (absent = `bind` fills every slot)
   decimals?: number // fixed decimals for the `bind` value (absent = integer if round, otherwise rounded to 3)
   locale?: 'fr' // number spelling of the `bind` value: 'fr' = decimal comma, minus sign U+2212, grouped thousands (absent = `-3.25`)
   textPath?: TextPath // present ⇒ lay glyphs along `textPath.path` (RFC text-on-path); `transform`/`box`/`wrap` ignored

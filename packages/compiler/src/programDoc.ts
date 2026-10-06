@@ -1043,6 +1043,7 @@ function itemExpressionDiagnostics(doc: Doc, editPath: EditFrame[], scope: strin
   const leaf = (it: Item): void => {
     if (isText(it)) {
       if (it.bind) check('bind', it.bind)
+      for (const b of it.bindMore ?? []) check('bind', b)
       if (it.textPath?.startExpr) check('start', it.textPath.startExpr)
       if (it.textPath?.spacingExpr) check('spacing', it.textPath.spacingExpr)
     } else if (isRegion(it)) {

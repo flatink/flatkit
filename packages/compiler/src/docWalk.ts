@@ -65,6 +65,7 @@ export function forEachItemExpression(it: Item, fn: (expr: string, channel: stri
 export function forEachLeafExpression(it: Item, fn: (expr: string) => void): void {
   if (isText(it)) {
     if (it.bind) fn(it.bind)
+    for (const b of it.bindMore ?? []) fn(b)
     if (it.textPath?.startExpr) fn(it.textPath.startExpr)
     if (it.textPath?.spacingExpr) fn(it.textPath.spacingExpr)
     return

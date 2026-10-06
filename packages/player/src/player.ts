@@ -1467,7 +1467,7 @@ export class FlatPlayer {
       return ''
     }
     // A bound text sends what the screen shows, not its template (flatink/flatink#67).
-    const shown = t.bind ? formatBoundText(t, this.#evalNumber(t.bind)) : t.content
+    const shown = t.bind ? formatBoundText(t, [t.bind, ...(t.bindMore ?? [])].map((src) => this.#evalNumber(src))) : t.content
     return shown.length > MAX_SEND_TEXT ? shown.slice(0, MAX_SEND_TEXT) : shown
   }
 

@@ -299,19 +299,27 @@ function leafOverlayFor(opts: ResolveOpts, time: number, frame: number): ReturnT
 }
 
 /** Resolved content of a `bind` text: the formatted numeric value, substituted into the `{}` slot (or alone). */
-function resolveBoundText(t: { content: string; bind?: string; decimals?: number }, frame: number, opts: ResolveOpts): string {
+function resolveBoundText(t: { content: string; bind?: string; bindMore?: string[]; decimals?: number; locale?: 'fr' }, frame: number, opts: ResolveOpts): string {
   if (!t.bind) return t.content
   const compiled = compileCached(t.bind)
   if (!compiled.ok) return t.content // invalid expression → literal content (the UI reports the error)
   const fps = opts.fps ?? 24
   const time = fps > 0 ? frame / fps : frame
-  return formatBoundText(t, evalExpr(compiled.node, leafOverlayFor(opts, time, frame), 0, opts.ctx))
+  const scope = leafOverlayFor(opts, time, frame)
+  const first = evalExpr(compiled.node, scope, 0, opts.ctx)
+  if (!t.bindMore?.length) return formatBoundText(t, first)
+  return formatBoundText(t, [first, ...t.bindMore.map((src) => { const c = compileCached(src); return c.ok ? evalExpr(c.node, scope, 0, opts.ctx) : 0 })])
 }
 /** What a bound text DISPLAYS for the value `v` of its `bind`: formatted, in the `{}` slot (or alone). One
  *  spelling for the renderer and for `text("…")`, which sends what is on screen. */
-export function formatBoundText(t: { content: string; decimals?: number; locale?: 'fr' }, v: number): string {
-  const s = t.locale === 'fr' ? frNum(fmtNum(v, t.decimals)) : fmtNum(v, t.decimals)
-  return t.content.includes('{}') ? t.content.replaceAll('{}', s) : s
+export function formatBoundText(t: { content: string; decimals?: number; locale?: 'fr' }, v: number | number[]): string {
+  const fmt = (x: number) => (t.locale === 'fr' ? frNum(fmtNum(x, t.decimals)) : fmtNum(x, t.decimals))
+  const vs = (Array.isArray(v) ? v : [v]).map(fmt)
+  if (!t.content.includes('{}')) return vs[0] ?? ''
+  // One value per slot, in order (flatink/flatink#32); fewer values than slots: the last one repeats — so
+  // a single `bind` still fills every `{}`, as it always did.
+  let i = 0
+  return t.content.replace(/\{\}/g, () => vs[Math.min(i++, vs.length - 1)] ?? '')
 }
 
 /** True if a LEAF needs per-frame re-resolution: a text's `bind` content or animated path channel

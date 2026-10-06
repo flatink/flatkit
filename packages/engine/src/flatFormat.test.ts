@@ -769,6 +769,12 @@ describe('flatFormat — text: wrap + bind (dynamic text)', () => {
     expect(printProgramFull(parseProgramFull(src))).toBe(src)
     expect(() => textItem('text "{}" at 0,0 bind "v" locale de')).toThrow(/locale/)
   })
+  it('`bind "a", "b"`: several expressions, printed back the same', () => {
+    const t = textItem('text "{} sur {}" at 0,0 bind "a", "b + 1"')
+    expect([t.bind, t.bindMore]).toEqual(['a', ['b + 1']])
+    const src = ['size 200 100', '', 'scene {', '  layer "L" {', '    text "{} sur {}" at 10,5 font "sans-serif" size 16 align left line 1.2 color #000000 box 80 20 bind "a", "b"', '  }', '}', ''].join('\n')
+    expect(printProgramFull(parseProgramFull(src))).toBe(src)
+  })
   it('stable round-trip with wrap/bind/decimals', () => {
     const src = ['size 200 100', '', 'scene {', '  layer "L" {', '    text "v={}" at 10,5 font "sans-serif" size 16 align left line 1.2 color #000000 box 80 20 wrap bind "score" decimals 2', '  }', '}', ''].join('\n')
     expect(printProgramFull(parseProgramFull(src))).toBe(src)

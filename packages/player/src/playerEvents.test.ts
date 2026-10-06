@@ -92,6 +92,14 @@ describe('FlatPlayer -- onEvent (send channel)', () => {
     p.destroy()
   })
 
+  it('text("id") of a text bound to several values sends them all (flatink/flatink#32)', () => {
+    const events: SendEvent[] = []
+    const two: Text = { ...textItem('ratio', '{} sur {}'), bind: 'a', bindMore: ['b'] }
+    const p = new FlatPlayer(fakeCanvas(), { ...makeDoc([{ do: 'send', event: 'r', payload: { kind: 'text', itemId: 'ratio' } }], [two]), variables: { a: 3, b: 5 } }, { onEvent: (e) => events.push(e) })
+    expect(events).toEqual([{ name: 'r', value: '3 sur 5' }])
+    p.destroy()
+  })
+
   it('text("absent") -> empty string + warning, no crash', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const events: SendEvent[] = []
