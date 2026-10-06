@@ -100,6 +100,19 @@ describe('FlatPlayer -- onEvent (send channel)', () => {
     p.destroy()
   })
 
+  // Review pass: a bound text inside a SYMBOL was evaluated against the scene's variables, not its
+  // instance's params — `--play` sent "Score 0" while the screen drew "Score 7".
+  it('text("id") of a bound text inside a symbol reads its instance\'s params', () => {
+    const events: SendEvent[] = []
+    const t: Text = { ...textItem('T', 'Score {}'), bind: 'n' }
+    const doc: Doc = { ...makeDoc([{ do: 'send', event: 't', payload: { kind: 'text', itemId: 'T' } }]),
+      symbols: [{ id: 'badge', name: 'Badge', params: [{ name: 'n', type: 'number', default: '5' }], layers: [{ id: 'SL', name: 's', visible: true, locked: false, opacity: 1, items: [t] }] }] }
+    doc.layers[0].items = [{ id: 'B', kind: 'instance', name: 'B', transform: IDENTITY, symbolId: 'badge', params: { n: '7' } }]
+    const p = new FlatPlayer(fakeCanvas(), doc, { onEvent: (e) => events.push(e) })
+    expect(events).toEqual([{ name: 't', value: 'Score 7' }])
+    p.destroy()
+  })
+
   it('text("absent") -> empty string + warning, no crash', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const events: SendEvent[] = []

@@ -134,3 +134,15 @@ describe('a compact document plays like the full one', async () => {
     expect(a.vars.hits).toBe(2)
   })
 })
+
+// Correctness pass over 0.41..0.43 — each reproduced first.
+describe('review pass — the playhead and the frame walk', () => {
+  const scene = 'scene { layer "c" { group "G" at 100,100 { layer "a" { circle 0 0 10 fill #cc3333 } } } }'
+  it('a `pause` run by a STEPPED-OVER frame holds the playhead on that frame', () => {
+    const src = ['size 200 200', 'timeline 120 240', 'var hit = -1', 'var f = -1', scene,
+      'at frame 9 {', '  hit = frame', '  pause', '}', 'every frame { f = frame }'].join('\n')
+    const v = play(src, [{ type: 'wait', frames: 20 }])
+    expect(Math.floor(v.hit as number)).toBe(9)
+    expect(Math.floor(v.f as number)).toBe(9)
+  })
+})

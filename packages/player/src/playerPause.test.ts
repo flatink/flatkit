@@ -84,6 +84,36 @@ describe('FlatPlayer — a script `pause` holds the playhead, the scene keeps li
     pl.destroy()
   })
 
+  // Review pass: `load()` kept the old document's frame counter, so a shorter document loaded mid-play
+  // read the drop as a loop wrap and fired a burst of its `at frame` scripts at once.
+  it('`load()` of another document does not fire a burst of its frame scripts', async () => {
+    const { FlatPlayer } = await import('./player')
+    const sends: string[] = []
+    const pl = new FlatPlayer(fakeCanvas(), doc([], []), { input: false, onEvent: (e) => sends.push(e.name) })
+    pl.play()
+    tick(48)
+    const d2 = doc([], [{ frame: 3, actions: [{ do: 'send', event: 'three' }] }, { frame: 10, actions: [{ do: 'send', event: 'ten' }] }])
+    d2.timeline!.durationFrames = 30
+    pl.load(d2)
+    tick(1)
+    expect(sends).toEqual([])
+    pl.destroy()
+  })
+
+  // Review pass: a held scene whose only motion is an instance playing on its own (`loop` / `once`, on
+  // the monotone clock) stopped asking for frames, so those clips froze — "the scene lives on" said otherwise.
+  it('an instance that plays on its own keeps the loop alive while the playhead is held', async () => {
+    const { FlatPlayer } = await import('./player')
+    const d = doc([], [{ frame: 3, actions: [{ do: 'pause' }] }])
+    d.symbols = [{ id: 'spin', name: 'Spin', layers: [{ id: 'SL', name: 's', visible: true, locked: false, opacity: 1, items: [] }], timeline: { fps: 24, durationFrames: 24, tracks: [] } }]
+    d.layers[0].items = [{ id: 'i', kind: 'instance', name: 'S', transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, symbolId: 'spin', playback: { mode: 'independent' } } as never]
+    const pl = new FlatPlayer(fakeCanvas(), d, { input: false })
+    pl.play()
+    tick(30)
+    expect(rafs).toBeGreaterThanOrEqual(30)
+    pl.destroy()
+  })
+
   it('a load-time `pause` holds against `autoplay`, which still runs the scene', async () => {
     const { FlatPlayer } = await import('./player')
     const d = doc(counting, [])

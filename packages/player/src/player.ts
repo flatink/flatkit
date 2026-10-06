@@ -533,11 +533,12 @@ export class FlatPlayer {
     this.#clearGrab()
   }
   #lastFrameInt = -1
-  #seekCount = 0
+  #seekCount = 0 // lets a frame-action walk notice a `go to` run by one of its scripts
   // The SCENE holds its playhead: a script `pause`, or the end of a timeline that does not loop. The scene
   // keeps living — `every frame`, `clock`, springs — like Flash's `stop()`; only the host's `pause()`
   // freezes the player (flatink/flatink#67: `at frame N { pause }` froze ambient `clock` motion too).
-  #held = false // lets a frame-action walk notice a `go to` run by one of its scripts
+  #held = false
+  #ownPlayback: boolean | undefined = undefined // cache of #playsOnItsOwn
   readonly #onResize = () => {
     this.#measure()
     this.render()
@@ -1474,7 +1475,14 @@ export class FlatPlayer {
       return ''
     }
     // A bound text sends what the screen shows, not its template (flatink/flatink#67).
-    const shown = t.bind ? formatBoundText(t, [t.bind, ...(t.bindMore ?? [])].map((src) => this.#evalNumber(src))) : t.content
+    // A text inside a symbol reads its INSTANCE's params, as the renderer does (the first instance of that
+    // symbol: `text("…")` names one text, not one per instance).
+    const sym = t.bind ? this.#symbolOfText(t) : undefined
+    if (sym) this.#instanceByName('')
+    const inst = sym ? [...this.#instNameCache!.values()].find((i) => i.symbolId === sym.id) : undefined
+    const params: ExprContext = sym && inst ? { ...resolveInstanceParams(sym, inst).numeric, ...this.paramsForInstance(inst.id) } : {}
+    const value = (src: string): number => { const c = compileCached(src); return c.ok ? evalExpr(c.node, params, 0, this.#exprCtx()) : 0 }
+    const shown = t.bind ? formatBoundText(t, [t.bind, ...(t.bindMore ?? [])].map(value)) : t.content
     return shown.length > MAX_SEND_TEXT ? shown.slice(0, MAX_SEND_TEXT) : shown
   }
 
@@ -1500,6 +1508,11 @@ export class FlatPlayer {
       return undefined
     }
     return find((t) => t.id === key) ?? find((t) => t.name === key)
+  }
+  /** The symbol whose layers hold this text, if it is not in the scene itself. */
+  #symbolOfText(t: Text): SymbolDef | undefined {
+    const holds = (layers: Layer[]): boolean => layers.some((l) => l.items.some((it) => it === t || (isGroup(it) && holds(it.layers))))
+    return holds(this.doc.layers) ? undefined : this.doc.symbols.find((s) => holds(s.layers))
   }
 
   /** Plays an audio clip (asset) as a one-shot (`sound "id"` DSL). No-op if audio is off / asset absent. */
@@ -1728,6 +1741,7 @@ export class FlatPlayer {
     // for a `trace`'s path to place its pen tip, and answering that from the PREVIOUS document is exactly
     // the kind of bug a cache introduces.
     this.#instNameCache = undefined // new document -> name→instance lookup stale
+    this.#ownPlayback = undefined
     this.#instFields = undefined
     this.#assetCache = undefined // …and so is the asset lookup
     this.#tracePathCache.clear() // …and the `trace` target geometry
@@ -1754,6 +1768,11 @@ export class FlatPlayer {
     this.#measure()
     this.render()
     this.#held = false
+    // The playhead stays where it was (a live reload keeps its place) — inside the new document's length,
+    // and its frame scripts count from there: a shorter document read the drop as a loop wrap and fired a
+    // burst of them at once.
+    if (this.#frame >= this.duration) this.#frame = this.#loop ? this.#frame % this.duration : this.duration
+    this.#lastFrameInt = Math.floor(this.#frame)
     this.#fireLoad()
   }
 
@@ -2172,13 +2191,19 @@ export class FlatPlayer {
     const crossed = (f: number): boolean => Number.isInteger(f) && (fi > from ? f > from && f <= fi : (f > from && f <= last) || (f >= 0 && f <= fi))
     const order = (f: number): number => (fi > from || f > from ? f : f + this.duration + 1) // after a wrap, 0..fi come last
     const due = fa.filter((e) => crossed(e.frame)).sort((a, b) => order(a.frame) - order(b.frame))
-    const seeks = this.#seekCount, wasPlaying = this.#playing
+    const seeks = this.#seekCount, wasPlaying = this.#playing, landed = this.#frame
     for (let i = 0; i < due.length; i++) {
+      // A frame stepped over runs its script WITH the playhead on it: `frame` reads it, and a `pause`
+      // there holds it there (not on the frame the step landed on).
+      const k = due[i]!.frame
+      if (k !== fi) this.#frame = k
       this.#run(due[i]!.actions)
       // A `go to` or `pause` ends the walk — after the scripts of the same frame, as before.
-      if (due[i + 1]?.frame === due[i]!.frame) continue
-      if (this.#seekCount !== seeks || this.#held || (wasPlaying && !this.#playing)) return
+      if (due[i + 1]?.frame === k) continue
+      if (this.#seekCount !== seeks) return
+      if (this.#held || (wasPlaying && !this.#playing)) { this.#lastFrameInt = Math.floor(this.#frame); return }
     }
+    this.#frame = landed
   }
 
   play(): void {
@@ -2267,9 +2292,18 @@ export class FlatPlayer {
     if (!this.#playing) this.play()
     else if (was) this.#startAudio(this.#frame)
   }
+  /** An instance plays its own timeline (`independent` / `once`, on the monotone clock): it keeps moving
+   *  while the scene's playhead is held. Found once per document. */
+  #playsOnItsOwn(): boolean {
+    if (this.#ownPlayback === undefined) {
+      const walk = (layers: Layer[]): boolean => layers.some((l) => l.items.some((it) => (isInstance(it) && (it.playback?.mode === 'independent' || it.playback?.mode === 'once')) || (isGroup(it) && walk(it.layers))))
+      this.#ownPlayback = walk(this.doc.layers) || this.doc.symbols.some((s) => walk(s.layers))
+    }
+    return this.#ownPlayback
+  }
   /** Something still moves while the playhead is held: a simulation, a spring, a picture reading `clock`. */
   #aliveWhileHeld(): boolean {
-    return !!this.doc.timeline?.onEnterFrame?.length || this.#activeSymbolTimelines(this.#frame).some((s) => s.tl.onEnterFrame?.length) || this.#hasModifiers || this.#reads.has('clock')
+    return !!this.doc.timeline?.onEnterFrame?.length || this.#activeSymbolTimelines(this.#frame).some((s) => s.tl.onEnterFrame?.length) || this.#hasModifiers || this.#reads.has('clock') || this.#playsOnItsOwn()
   }
 
   /** The HOST's pause: freezes the whole player — playhead, `every frame`, `clock`, springs. */
