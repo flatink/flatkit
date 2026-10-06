@@ -218,3 +218,20 @@ describe('lint — names that exist on Object.prototype', () => {
     expect(lint('x = toString.zoom', { objects: ['toString'] }).map((d) => d.message)).toEqual([expect.stringMatching(/no field "zoom"/)])
   })
 })
+
+// Correctness pass: a range-loop variable is the loop's own since 0.43 — read after its loop it is gone, and
+// the whole expression fell to 0 while `--check` stayed clean (the linter still knew the name everywhere).
+describe('lint — a range-loop variable outside its loop', () => {
+  const msgs = (src: string, ctx = {}) => lint(src, ctx).map((d) => `${d.line}: ${d.message}`)
+  it('is an error after the loop, fine inside it', () => {
+    const src = 'let m = 0\nwhen loaded {\n  repeat i from 0 to 3 {\n    m = m + i\n  }\n  m = m + i\n}'
+    expect(msgs(src)).toEqual([expect.stringMatching(/^6: .*"i".*only.*inside its loop/)])
+  })
+  it('a variable declared, or written elsewhere, is not the loop\'s alone', () => {
+    expect(msgs('let m = 0\nlet i = 0\nwhen loaded {\n  repeat i from 0 to 3 {\n    m = m + i\n  }\n  m = m + i\n}')).toEqual([])
+    expect(msgs('let m = 0\nlet i = 0\nwhen loaded {\n  repeat i from 0 to 3 {\n    m = m + i\n  }\n  m = i\n}', { variables: ['i'] })).toEqual([])
+  })
+  it('nested loops: each variable inside its own', () => {
+    expect(msgs('let m = 0\nwhen loaded {\n  repeat i from 0 to 2 {\n    repeat j from 0 to 2 {\n      m = m + i * j\n    }\n    m = m + j\n  }\n}')).toEqual([expect.stringMatching(/^7: .*"j"/)])
+  })
+})

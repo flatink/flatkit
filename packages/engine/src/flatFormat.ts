@@ -1190,8 +1190,9 @@ export function objectTargetDiagnostics(src: string): { scope: string; diag: Dia
       if (l.name) layerNames.add(l.name)
       for (const it of l.items) {
         if (isRegion(it) && it.name) shapes.add(it.name)
-        const nm = itemName(it)
-        if (nm && !isRegion(it) && !isNamedByContent(it)) named.set(nm, (named.get(nm) ?? 0) + 1)
+        // A text answers to its `as` name (its `name` is its content); one without is not addressable.
+        const nm = isText(it) ? (it.idExplicit ? it.id : '') : itemName(it)
+        if (nm && !isRegion(it)) named.set(nm, (named.get(nm) ?? 0) + 1)
         if (isGroup(it)) walk(it.layers)
       }
     }
@@ -1518,6 +1519,7 @@ class FlatParser {
     }
     if (end < 0) this.fail(`"${close}" expected to close the list`)
     cells.push(cur.trim())
+    if (cells.length > 1 && cells[cells.length - 1] === '') cells.pop() // a trailing comma, as before
     while (this.peek() && this.peek()!.at <= end) this.next()
     if (cells.length === 1 && cells[0] === '') return []
     return cells.map((stmt) => {
@@ -2012,6 +2014,7 @@ class FlatParser {
           else if (this.is('join')) { this.next(); st.join = this.oneOf('join', JOINS) }
           else if (this.is('miter')) { this.next(); st.miterLimit = this.num() }
           else if (this.is('dash')) { this.next(); const ds: number[] = [this.num()]; while (this.is(',')) { this.eat(','); ds.push(this.num()) } st.dash = ds }
+          else if (this.is('fixed')) this.fail('`fixed` keeps a SHAPE\'s stroke width when the shape is stretched; a text stroke follows its text — draw the outline as a shape if it must not scale')
           else break
         }
         stroke = st

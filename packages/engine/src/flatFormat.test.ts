@@ -1814,6 +1814,10 @@ describe('program header — an array literal of constant expressions', () => {
     const v = parseProgram(prog0('var t = [PI / 2, 1]\nvar u = [rad(30), deg(1)]\nvar n = [-1, 2.5e-1, (1 + 2) * 3]\nvar e = []')).variables
     expect(v).toEqual({ t: [Math.PI / 2, 1], u: [Math.PI / 6, 180 / Math.PI], n: [-1, 0.25, 9], e: [] })
   })
+  it('a trailing comma is allowed, as it was (review pass)', () => {
+    expect(parseProgram(prog0('var t = [1, 2, 3,]\nvar u = [\n  1,\n  2,\n]')).variables).toEqual({ t: [1, 2, 3], u: [1, 2] })
+    expect(() => parseProgram(prog0('var t = [1, , 2]'))).toThrow(/constant/)
+  })
   it('can span several lines and end on a comment', () => {
     expect(parseProgram(prog0('var t = [1,\n  2, // two\n  3]')).variables).toEqual({ t: [1, 2, 3] })
   })
@@ -2075,6 +2079,9 @@ describe('`.flatink` — a closed-set word is checked where it is written', () =
     expect(() => parseProgram(sceneWith('path "M0 0L10 0L10 10Z" fill #abc'))).not.toThrow()
     expect(() => parseProgram(sceneWith('path "M0 0L10 0L10 10Z" fill #aabbcc80'))).not.toThrow()
   })
+  it('`fixed` on a TEXT stroke says it is for shapes (review pass: it said "must come directly after stroke")', () => {
+    expect(() => parseProgram(sceneWith('text "A" at 10,10 stroke #000000 2 fixed'))).toThrow(/fixed.*shape/)
+  })
   it('`clip` on a text or an image is refused (it clipped nothing) — a group clips', () => {
     expect(() => parseProgram(sceneWith('text "Hi" at 10,10 clip 0 0 5 5'))).toThrow(/clip/)
     expect(() => parseProgram(sceneWith('image "a" 10 10 at 0,0 clip 0 0 5 5', 'asset "a" "a.png" image'))).toThrow(/clip/)
@@ -2096,5 +2103,10 @@ describe('objectTargetDiagnostics — an object name that matches two items', ()
   })
   it('a single one says nothing', () => {
     expect(objectTargetDiagnostics(prog([`group "B" at 10,10 ${art}`, `group "C" at 50,50 ${art}`]))).toEqual([])
+  })
+  // Review pass: a text named with `as` answers to THAT name; it was counted under its content, so a group
+  // "B" holding `text "B" as "lblB"` read as two items named "B" (9 false warnings on real files).
+  it('a text named with `as` is counted under that name, not its content', () => {
+    expect(objectTargetDiagnostics(prog([`group "B" at 10,10 { layer "a" { text "B" as "lblB" at 0,0 } }`]))).toEqual([])
   })
 })

@@ -235,7 +235,8 @@ function instanceParamWarnings(doc: Doc): string[] {
     const states = stateNames(sym, a.param)
     if (!def && !states) { say(`${who}: unknown param "${a.param}" (symbol "${sym.name}")${didYouMean(a.param, names(sym))}`); return }
     // `= B from A` replays a state transition from A (flatink/flatink#14): both ends are checked as states.
-    const replay = /^(\S+)\s+from\s+(\S+)$/.exec(a.value.trim()) // single words: linear on any input
+    // Single words: linear on any input. A quoted value is a text, whatever words it holds.
+    const replay = a.value.trim().startsWith('"') ? null : /^(\S+)\s+from\s+(\S+)$/.exec(a.value.trim())
     if (replay && !states) { say(`${who}: \`from\` replays a STATE transition — "${a.param}" is not a state param`); return }
     for (const value of replay ? [replay[1]!.trim(), replay[2]!.trim()] : [a.value.trim()]) {
       if (states) {
@@ -262,29 +263,39 @@ function instanceParamWarnings(doc: Doc): string[] {
 function loopsSeamlessly(doc: Doc, expr: string, channel: string, loopSecs: number): boolean {
   const fps = doc.timeline?.fps ?? 24
   const fns = [...importedFunctions(doc.imports), ...(doc.functions ?? [])].filter((f) => f.kind === 'value')
-  const at = (time: number): number => {
-    const base: ExprContext = { ...(doc.variables ?? {}) }
-    let depth = 0
-    for (const f of fns) {
-      const c = compileExpr(f.expr)
-      base[f.name] = (...args: number[]) => {
-        if (!c.ok || depth > 32) return Number.NaN
-        const local = exprScope(base, time, time * fps, undefined, time)
-        f.params.forEach((p, i) => { local[p] = args[i] ?? 0 })
-        depth++
-        const r = evalExpr(c.node, local, Number.NaN)
-        depth--
-        return r
+  // A variable the program WRITES is not a constant: tried at its start value AND at another one, so a
+  // `bad` that starts at 0 cannot cancel the `time` term it gates (review pass).
+  const written = new Set<string>()
+  forEachAction(doc, (a) => { if (a.do === 'setVar') written.add(a.name) })
+  for (const i of doc.interactors ?? []) for (const v of [i.varX, i.varY, i.varT]) if (v) written.add(v)
+  const variants: Record<string, number | number[]>[] = [{ ...(doc.variables ?? {}) }]
+  if ([...written].some((n) => typeof doc.variables?.[n] === 'number')) variants.push(Object.fromEntries(Object.entries(doc.variables ?? {}).map(([k, v]) => [k, written.has(k) && typeof v === 'number' ? v + 1.37 : v])))
+  return variants.every((vars) => endsWhereItStarts(vars))
+  function endsWhereItStarts(vars: Record<string, number | number[]>): boolean {
+    const at = (time: number): number => {
+      const base: ExprContext = { ...vars }
+      let depth = 0
+      for (const f of fns) {
+        const c = compileExpr(f.expr)
+        base[f.name] = (...args: number[]) => {
+          if (!c.ok || depth > 32) return Number.NaN
+          const local = exprScope(base, time, time * fps, undefined, time)
+          f.params.forEach((p, i) => { local[p] = args[i] ?? 0 })
+          depth++
+          const r = evalExpr(c.node, local, Number.NaN)
+          depth--
+          return r
+        }
       }
+      const c = compileExpr(expr)
+      return c.ok ? evalExpr(c.node, exprScope(base, time, time * fps, undefined, time), Number.NaN) : Number.NaN
     }
-    const c = compileExpr(expr)
-    return c.ok ? evalExpr(c.node, exprScope(base, time, time * fps, undefined, time), Number.NaN) : Number.NaN
+    const a = at(0), b = at(loopSecs)
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return false
+    const eps = 1e-6 * Math.max(1, Math.abs(a), Math.abs(b))
+    if (channel === 'rotation') { const d = Math.abs(b - a) % (2 * Math.PI); return d < eps || 2 * Math.PI - d < eps }
+    return Math.abs(b - a) < eps
   }
-  const a = at(0), b = at(loopSecs)
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return false
-  const eps = 1e-6 * Math.max(1, Math.abs(a), Math.abs(b))
-  if (channel === 'rotation') { const d = Math.abs(b - a) % (2 * Math.PI); return d < eps || 2 * Math.PI - d < eps }
-  return Math.abs(b - a) < eps
 }
 
 /** STRUCTURAL warnings (non-blocking) of a Doc: phantom drop zones, dead variables. */

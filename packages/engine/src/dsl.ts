@@ -61,6 +61,8 @@ export type Site =
   | { kind: 'label-ref'; name: string; line: number; col: number }
   /** A procedure call statement `name(args)`: the linter checks the name and the argument count. */
   | { kind: 'call-ref'; name: string; argc: number; line: number; col: number }
+  /** The lines a `repeat <var> from … to …` body spans: its variable exists there only. */
+  | { kind: 'loop-scope'; name: string; line: number; col: number; endLine: number }
 
 export type ParseResult = { units: ScriptUnit[]; diagnostics: Diagnostic[]; sites: Site[] }
 
@@ -963,7 +965,9 @@ class Parser {
       this.exprSite(from, m)
       this.exprSite(to, m)
       if (!this.expectBrace()) return null
-      return { do: 'repeatRange', var: range[1], from, to, body: this.body() }
+      const body = this.body()
+      this.sites.push({ kind: 'loop-scope', name: range[1], line: m.line, col: m.col, endLine: this.line })
+      return { do: 'repeatRange', var: range[1], from, to, body }
     }
     // Bounded form: `repeat <n> times`.
     let count = head

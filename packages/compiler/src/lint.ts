@@ -66,7 +66,7 @@ function collectAssigned(actions: Action[], into: Set<string>): void {
       collectAssigned(a.then, into)
       if (a.else) collectAssigned(a.else, into)
     } else if (a.do === 'repeat') collectAssigned(a.body, into)
-    else if (a.do === 'repeatRange') { into.add(a.var); collectAssigned(a.body, into) } // i is known in the body
+    else if (a.do === 'repeatRange') collectAssigned(a.body, into) // `i` is known in its body only: see the loop scopes in `lint`
   }
 }
 
@@ -143,6 +143,12 @@ export function lint(src: string, ctx: LintContext = {}): Diagnostic[] {
   for (const o of ctx.objects ?? []) knownObjs.add(o) // scene objects (Hero.x…)
   const labels = ctx.labels ? new Set(ctx.labels) : null
 
+  // A range-loop variable exists inside its loop only (it is restored after it): read elsewhere, it is gone
+  // and the whole expression falls to 0 — unless the program also declares or writes it.
+  const loops = sites.filter((s): s is Extract<typeof s, { kind: 'loop-scope' }> => s.kind === 'loop-scope')
+  const inLoopOf = (name: string, line: number): boolean => loops.some((l) => l.name === name && line >= l.line && line <= l.endLine)
+  const loopVars = new Set(loops.map((l) => l.name).filter((n) => !knownIds.has(n)))
+
   for (const s of sites) {
     if (s.kind === 'expr') {
       // `text(…)` is valid ONLY as a `send` payload (consumed by the parser, never
@@ -177,13 +183,17 @@ export function lint(src: string, ctx: LintContext = {}): Diagnostic[] {
         if (!allowed.includes(f)) out.push({ line: s.line, col: s.col, severity: 'warning', message: `${o === 'mouse' || o === 'self' ? o : `"${o}"`} has no field "${f}" — it reads 0 (${allowed.join(', ')})${didYouMean(f, allowed)}` })
       }
       for (const id of a.refs.ids)
-        if (!knownIds.has(id))
+        if (loopVars.has(id)) {
+          if (!inLoopOf(id, s.line)) out.push({ line: s.line, col: s.col, message: `"${id}" only exists inside its loop (\`repeat ${id} from … to …\`) — after it, it is gone and the expression reads 0. Declare it (\`var ${id} = 0\`) to keep a value` })
+        } else if (!knownIds.has(id))
           // The hint names the DOCUMENT declaration (`var`, at the top level of the program), because that
           // is the one every scope can read. `let` declares in the scope it sits in — which is why the old
           // hint sent a reader in a circle: they declared with `let`, the binding still could not see it,
           // and the message repeated itself. (Both spellings mean the same thing at the top level of a
           // program; inside an `object` block a declaration is refused outright, with its own message.)
           out.push({ line: s.line, col: s.col, message: `unknown variable "${id}"${variables.size ? '' : ` — declare it at the top level of the program: \`var ${id} = 0\``}` })
+    } else if (s.kind === 'loop-scope') {
+      continue
     } else if (s.kind === 'call-ref') {
       // A call statement naming nothing was skipped at runtime, while the same name in an expression was
       // already an error (flatink/flatink#65).

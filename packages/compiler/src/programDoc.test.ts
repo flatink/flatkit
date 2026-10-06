@@ -249,6 +249,11 @@ describe('programDoc — structural warnings', () => {
     expect(hit(mk(on('x', '50 + sin(time * PI) * 10'), 60))).toHaveLength(1) // 2.5 s: half a period off
     expect(hit(mk(on('x', 'time * 10'), 48))).toHaveLength(1) // a ramp jumps back
     expect(hit(mk(on('x', 'mouse.x + time'), 48))).toHaveLength(1) // cannot be evaluated: still warned
+    // Review pass: a variable the program WRITES is not a constant — `bad` starts at 0 and cancels the
+    // shake at both ends, but once a handler sets it the motion jumps every loop.
+    const gated = mk(on('x', '50 + bad * sin(time * 30) * 6'), 96, { bad: 0 })
+    gated.interactions = [{ id: 'w', targetId: 'g', event: 'click', actions: [{ do: 'setVar', name: 'bad', value: '1' }] }]
+    expect(hit(gated)).toHaveLength(1)
   })
 
   it('follows `time` THROUGH a function and names it (the channel text holds no `time` at all)', () => {
@@ -1120,6 +1125,8 @@ describe('programDoc — the params and states given to an instance', () => {
     expect(about('', 'when loaded {\n  R.bras = leve from repos\n}')).toEqual([])
     expect(about('', 'when loaded {\n  R.bras = leve from repoz\n}')).toEqual([expect.stringMatching(/"repoz" is not a state of "bras"/)])
     expect(about('', 'when loaded {\n  R.queue = 2 from 0\n}')).toEqual([expect.stringMatching(/from.*state/)])
+    // Review pass: a quoted text that happens to contain "from" is a text, not a replay.
+    expect(about('', 'when loaded {\n  R.nom = "Greetings from Paris"\n}')).toEqual([])
   })
   it('an unknown param is named, with the one it probably meant', () => {
     const ws = about(' { corp = #2e86de }')
