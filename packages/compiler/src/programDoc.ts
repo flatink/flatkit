@@ -24,9 +24,10 @@ import { makePathSampler, softVertexCount, smoothingDeviation } from '@flatkit/e
 import { bboxIntersects, ringsBBox } from '@flatkit/engine/bbox'
 import { lint, localVariables, type LintContext } from './lint'
 import { didYouMean } from './suggest'
+import { lineIndex } from './sourceLines'
 import { forEachAction, forEachExpression } from './docWalk'
 import { parseUnits } from '@flatkit/engine/dsl'
-import { MATH_CTX, STD_CONSTANTS, STD_FUNCTIONS, STD_IDS, compileExpr, evalExpr, exprScope, type ExprContext } from '@flatkit/engine/expr'
+import { MATH_CTX, STD_CONSTANTS, STD_FUNCTIONS, STD_IDS, compileCached, evalExpr, exprScope, type ExprContext } from '@flatkit/engine/expr'
 import type { Image, Item, Layer, ParamDef, Region, SymbolDef, Text, Transform } from '@flatkit/types'
 
 /** Rebuilds the "program" text of a scope (imports + variables + functions + scene cycle
@@ -276,7 +277,7 @@ function loopsSeamlessly(doc: Doc, expr: string, channel: string, loopSecs: numb
       const base: ExprContext = { ...vars }
       let depth = 0
       for (const f of fns) {
-        const c = compileExpr(f.expr)
+        const c = compileCached(f.expr) // once per text, not once per expression checked
         base[f.name] = (...args: number[]) => {
           if (!c.ok || depth > 32) return Number.NaN
           const local = exprScope(base, time, time * fps, undefined, time)
@@ -287,7 +288,7 @@ function loopsSeamlessly(doc: Doc, expr: string, channel: string, loopSecs: numb
           return r
         }
       }
-      const c = compileExpr(expr)
+      const c = compileCached(expr)
       return c.ok ? evalExpr(c.node, exprScope(base, time, time * fps, undefined, time), Number.NaN) : Number.NaN
     }
     const a = at(0), b = at(loopSecs)
@@ -1037,20 +1038,10 @@ export function lintDoc(doc: Doc, src?: string): { scope: string; diag: Diagnost
  * `expressions` as an `expr` attribute) is not repeated. Positions: the quoted expression in `src`, or 1:1.
  */
 function itemExpressionDiagnostics(doc: Doc, editPath: EditFrame[], scope: string, ctx: LintContext, src: string | undefined, already: { scope: string; diag: Diagnostic }[]): { scope: string; diag: Diagnostic }[] {
-  const out: { scope: string; diag: Diagnostic }[] = []
-  // From the source, the scene's behavior is reported under `object "X"` scopes: compare against all of them.
-  const seen = new Set(already.filter((x) => src || x.scope === scope).map((x) => x.diag.message))
-  const lineOf = (expr: string): number => {
-    const at = src ? src.indexOf(`"${expr}"`) : -1
-    return at < 0 ? 1 : src!.slice(0, at).split('\n').length
-  }
-  const check = (what: string, expr: string): void => {
-    for (const d of lint(`opacity = ${expr}`, ctx)) {
-      if (seen.has(d.message)) continue
-      seen.add(d.message)
-      out.push({ scope, diag: { ...d, line: lineOf(expr), col: 1, message: `${what} "${expr}": ${d.message}`, fix: undefined } })
-    }
-  }
+  // Collected first, linted in ONE pass: a `lint()` per expression rebuilt its tables (known objects,
+  // variables, arities) every time — 5,000 valid `bind`s more than doubled `--check`.
+  const found: { what: string; expr: string }[] = []
+  const check = (what: string, expr: string): void => { found.push({ what, expr }) }
   const leaf = (it: Item): void => {
     if (isText(it)) {
       if (it.bind) check('bind', it.bind)
@@ -1075,6 +1066,36 @@ function itemExpressionDiagnostics(doc: Doc, editPath: EditFrame[], scope: strin
     }
   }
   visit(contextLayers(doc, editPath))
+  if (!found.length) return []
+
+  const out: { scope: string; diag: Diagnostic }[] = []
+  // From the source, the scene's behavior is reported under `object "X"` scopes: compare against all of them.
+  const seen = new Set(already.filter((x) => src || x.scope === scope).map((x) => x.diag.message))
+  // Where each expression is written: its quoted text, searched FORWARD from the last one found (the Doc is
+  // in source order), from the top when that fails. A scan from the top for each was quadratic.
+  const lineAt = src ? lineIndex(src) : undefined
+  let cursor = 0
+  const lineOf = (expr: string): number => {
+    if (!src || !lineAt) return 1
+    const q = `"${expr}"`
+    let at = src.indexOf(q, cursor)
+    if (at < 0) at = src.indexOf(q)
+    if (at < 0) return 1
+    cursor = at
+    return lineAt(at)
+  }
+  // One synthetic binding per line; an expression that could swallow the lines after it (a brace, a line
+  // break) is linted on its own.
+  const batch = found.map((f, i) => ({ ...f, i })).filter((f) => !/[{}\n]/.test(f.expr))
+  const diags: { i: number; d: Diagnostic }[] = lint(batch.map((f) => `opacity = ${f.expr}`).join('\n'), ctx).map((d) => ({ i: batch[d.line - 1]?.i ?? -1, d }))
+  found.forEach((f, i) => { if (/[{}\n]/.test(f.expr)) for (const d of lint(`opacity = ${f.expr}`, ctx)) diags.push({ i, d }) })
+  diags.sort((a, b) => a.i - b.i)
+  for (const { i, d } of diags) {
+    const f = found[i]
+    if (!f || seen.has(d.message)) continue
+    seen.add(d.message)
+    out.push({ scope, diag: { ...d, line: lineOf(f.expr), col: 1, message: `${f.what} "${f.expr}": ${d.message}`, fix: undefined } })
+  }
   return out
 }
 

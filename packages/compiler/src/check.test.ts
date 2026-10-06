@@ -564,3 +564,30 @@ describe('checkProgram — a Doc-level warning points at its line', () => {
     expect(at(/unknown drop zone "Nowhere"/)).toEqual([21])
   })
 })
+
+// Performance pass over 0.41..0.43 — measured before: locating each Doc warning re-scanned the whole source
+// and re-counted its lines (20k warnings: 1.1 s -> 8.6 s), and each scene expression was linted on its own,
+// rebuilding the linter's tables every time (20k binds: 0.7 s -> 6 s). Bounds are loose on purpose.
+describe('checkProgram — stays linear on a large program', () => {
+  const scene = (items: string[]) => ['scene {', '  layer "c" {', ...items.map((i) => `    ${i}`), '  }', '}'].join('\n')
+  it('many located warnings', () => {
+    const n = 12000
+    const src = ['size 200 200', ...Array.from({ length: n }, (_, i) => `var dead${i} = 0`), scene(['circle 0 0 5 fill #000000']), ''].join('\n')
+    const t0 = performance.now()
+    const r = checkProgram(src)
+    const ms = performance.now() - t0
+    expect(r.diagnostics.filter((d) => /never used/.test(d.message))).toHaveLength(n)
+    expect(r.diagnostics.find((d) => /"dead11999"/.test(d.message))?.line).toBe(12001)
+    expect(ms).toBeLessThan(2500)
+  }, 60000)
+  it('many scene expressions, wrong and right', () => {
+    const n = 8000
+    const src = ['size 200 200', 'var p = 0', scene(Array.from({ length: n }, (_, i) => `text "{}" at 0,${i} bind "${i % 2 ? 'p + ' + i : 'qq' + i}"`)), ''].join('\n')
+    const t0 = performance.now()
+    const r = checkProgram(src)
+    const ms = performance.now() - t0
+    expect(r.diagnostics.filter((d) => /unknown variable "qq/.test(d.message))).toHaveLength(n / 2)
+    expect(r.diagnostics.find((d) => /"qq7998"/.test(d.message))?.line).toBe(4 + 7999)
+    expect(ms).toBeLessThan(2500)
+  }, 60000)
+})

@@ -18,6 +18,7 @@
 import type { Doc, Layer } from '@flatkit/types'
 import { isGroup, isText } from '@flatkit/engine/layers'
 import { forEachAction } from './docWalk'
+import { declarationLines, lineIndex } from './sourceLines'
 import type { TextEdit } from '@flatkit/engine/dsl'
 import { FlatSyntaxError, behaviorDiagnostics, duplicateBindingDiagnostics, objectTargetDiagnostics, sceneOnlyUnitDiagnostics, itemOnlyUnitDiagnostics } from '@flatkit/engine/flatFormat'
 import { compileFlatpack, type MediaMap } from './compile'
@@ -115,7 +116,7 @@ function missingSizeDiagnostic(src: string, doc: Doc): CheckDiagnostic | null {
 }
 
 /** 1-based line of the first match of `re` in `src`, or 1. */
-const lineOf = (src: string, re: RegExp): number => { const m = re.exec(src); return m ? src.slice(0, m.index).split('\n').length : 1 }
+const lineOf = (src: string, re: RegExp): number => { const m = re.exec(src); return m ? lineIndex(src)(m.index) : 1 }
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /**
@@ -160,12 +161,20 @@ function unreachableBehaviorDiagnostics(doc: Doc, src: string): CheckDiagnostic[
  */
 function locateDocWarning(message: string, src: string): number | undefined {
   const e = escapeRe
+  // A declaration is looked up in an index built ONCE for the source: one regex scan per warning made ten
+  // thousand unused variables cost seconds.
+  const byDecl: [RegExp, 'vars' | 'fns'][] = [
+    [/^global variable "([^"]+)" never used/, 'vars'],
+    [/^variable "([^"]+)" is hidden by/, 'vars'],
+    [/^[\w.]+\(\) is hidden by the variable "([^"]+)"/, 'vars'],
+    [/^fn ([\w.]+) is hidden/, 'fns'],
+    [/^parameter "[^"]+" of fn ([\w.]+)/, 'fns'],
+  ]
+  for (const [re, kind] of byDecl) {
+    const m = re.exec(message)
+    if (m) return declarationLines(src)[kind].get(m[1]!)
+  }
   const rules: [RegExp, (m: RegExpExecArray) => RegExp][] = [
-    [/^global variable "([^"]+)" never used/, (m) => new RegExp(`^[ \\t]*(?:var|let)[ \\t]+${e(m[1]!)}\\b`, 'm')],
-    [/^variable "([^"]+)" is hidden by/, (m) => new RegExp(`^[ \\t]*(?:var|let)[ \\t]+${e(m[1]!)}\\b`, 'm')],
-    [/^[\w.]+\(\) is hidden by the variable "([^"]+)"/, (m) => new RegExp(`^[ \\t]*(?:var|let)[ \\t]+${e(m[1]!)}\\b`, 'm')],
-    [/^fn ([\w.]+) is hidden/, (m) => new RegExp(`^[ \\t]*fn[ \\t]+${e(m[1]!)}\\b`, 'm')],
-    [/^parameter "[^"]+" of fn ([\w.]+)/, (m) => new RegExp(`^[ \\t]*fn[ \\t]+${e(m[1]!)}\\b`, 'm')],
     [/^unknown drop zone "([^"]+)"/, (m) => new RegExp(`when[ \\t]+dropped[ \\t]+on[ \\t]+"?${e(m[1]!)}\\b`)],
     [/^instance "([^"]+)":/, (m) => new RegExp(`\\binstance[ \\t]+"[^"]*"[ \\t]+as[ \\t]+"${e(m[1]!)}"|\\binstance[ \\t]+"${e(m[1]!)}"(?![ \\t]+as\\b)`)],
     [/^([A-Za-z_]\w*)\.([A-Za-z_]\w*) = …:/, (m) => new RegExp(`\\b${e(m[1]!)}\\.${e(m[2]!)}[ \\t]*=(?!=)`)],
@@ -178,7 +187,7 @@ function locateDocWarning(message: string, src: string): number | undefined {
     const m = re.exec(message)
     if (!m) continue
     const at = where(m).exec(src)
-    return at ? src.slice(0, at.index).split('\n').length : undefined
+    return at ? lineIndex(src)(at.index) : undefined
   }
   return undefined
 }

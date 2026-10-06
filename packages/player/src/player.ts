@@ -454,7 +454,7 @@ export class FlatPlayer {
   #hasModifiers = false // doc declares ≥1 modifier → run the advance pass (else zero overhead)
   #hasSymbolTimelines = false // any symbol carries a timeline? (else `activeSymbolTimelines` is empty by construction)
   #instNameCache?: Map<string, { id: string; symbolId: string; params?: Record<string, string> }>
-  #instFields?: { name: string; id: string; sym: SymbolDef; params?: Record<string, string>; read: string[] }[] // instances whose params a program reads by name
+  #instFields?: { name: string; id: string; base: Record<string, number>; read: string[] }[] // instances whose params a program reads by name, with their call-site / default values
   #assetCache?: Map<string, Asset> // asset id -> asset (see `assetById`); rebuilt on load
   // WORLD path of a `trace` target by name. It is built from the scene's ROSTER transforms, so playback
   // never moves it — yet it was rebuilt (a full document walk, plus a transformed copy of every subpath) on
@@ -1411,7 +1411,9 @@ export class FlatPlayer {
         const sym = getSymbol(this.doc, inst.symbolId)
         const names = [...(sym?.params ?? []).filter((p) => p.type !== 'color' && p.type !== 'text').map((p) => p.name), ...(sym?.states ?? []).map((sm) => sm.param)]
         const read = names.filter((p) => !DANGEROUS_KEYS.has(p) && pairs.has(`${name}.${p}`))
-        if (sym && read.length) this.#instFields.push({ name, id: inst.id, sym, ...(inst.params ? { params: inst.params } : {}), read })
+        // The call-site / default values never change: resolved here, not at every context build (a handler
+        // rebuilds its context per statement).
+        if (sym && read.length) this.#instFields.push({ name, id: inst.id, base: resolveInstanceParams(sym, { params: inst.params }).numeric, read })
       }
     }
     for (const f of this.#instFields) {
@@ -1419,9 +1421,8 @@ export class FlatPlayer {
       if (!Object.hasOwn(ctx, f.name)) continue
       const target = ctx[f.name]
       if (!target || typeof target !== 'object' || Array.isArray(target)) continue
-      const base = resolveInstanceParams(f.sym, { params: f.params }).numeric
-      const live = this.paramsForInstance(f.id)
-      for (const p of f.read) if (!CHANNEL_KEYS.has(p)) (target as Record<string, number>)[p] = live?.[p] ?? base[p] ?? 0
+      const live = this.#paramRt.get(f.id)
+      for (const p of f.read) if (!CHANNEL_KEYS.has(p)) (target as Record<string, number>)[p] = live?.get(p)?.value ?? f.base[p] ?? 0
     }
   }
   #evalNumber(src: string): number {
