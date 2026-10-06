@@ -1,5 +1,38 @@
 # @flatkit/engine
 
+## 0.43.0
+
+### Minor Changes
+
+- [`aec31e0`](https://github.com/flatink/flatkit/commit/aec31e03a01e5092388833b1b92d227cc6429456) Thanks [@kaelhem](https://github.com/kaelhem)! - flatink/flatink#20: `stroke ... fixed` keeps a shape's stroke width in scene units whatever its own scale (a
+  rail stretched by `scaleX = 4` no longer gets thick sides). flatink/flatink#32: a bound text takes several
+  values, one per `{}` slot (`bind "a", "b"`; new optional `Text.bindMore`). flatink/flatink#68: an instance's
+  params and states read by name (`R.bras`, live value, else call site, else default); `--check` warns on a
+  field an object does not have (`B.zoom`, `mouse.down`), places Doc-level warnings on the line of their
+  subject instead of 1:1, and no longer warns about `time` on a motion that loops seamlessly.
+
+- [`80568af`](https://github.com/flatink/flatkit/commit/80568af00b74e5ea8ae4ab8215be961a1b24708f) Thanks [@kaelhem](https://github.com/kaelhem)! - flatink/flatink#14: `Inst.state = B from A` replays a state transition from its start (jump to `A`, play to
+  `B`, even when already at `B`); `--check` checks both states. flatink/flatink#32: `bind ... locale fr`
+  spells the bound number the French way (minus sign U+2212, decimal comma, narrow no-break space between
+  thousands); `text()` sends that spelling. flatink/flatink#68: the expressions written on scene items
+  (`bind`, `draw`, `from`, `count`, text-on-path `start` / `spacing`, an `expr` attribute) are linted by
+  `--check`.
+
+### Patch Changes
+
+- [`87a8912`](https://github.com/flatink/flatkit/commit/87a8912d75e52fcc48623442e7919f78ad2c6576) Thanks [@kaelhem](https://github.com/kaelhem)! - A security / correctness / performance pass before release. Security: an untrusted document could write to
+  the host page's Object.prototype through an instance named `__proto__` (by-name param reads, unreleased),
+  freeze the player with a param name used as a regex, allocate gigabytes per tick with a huge `fps` (the
+  `at frame` walk of 0.41), or stall on a long `from` value; `--check` crashed on an object named `toString`.
+  Correctness: `text()` of a bound text inside a symbol reads its instance's params; a `pause` on a
+  stepped-over frame holds that frame; `load()` of a shorter document no longer fires a burst of frame scripts;
+  an instance playing on its own keeps a held scene alive; a range-loop variable read after its loop is an
+  error; fewer false warnings (text named with `as`, quoted `from`, gated `time` motions); a trailing comma in
+  a `var` array is allowed again. Performance: `--check` stays linear on large programs (12k located warnings:
+  8.2 s to 0.7 s). `@flatkit/mcp` moves to `@modelcontextprotocol/sdk` 1.31+ (advisory).
+- Updated dependencies []:
+  - @flatkit/types@0.43.0
+
 ## 0.42.0
 
 ### Minor Changes
