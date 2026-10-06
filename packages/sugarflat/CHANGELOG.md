@@ -1,5 +1,21 @@
 # @flatkit/sugarflat
 
+## 0.5.0
+
+### Minor Changes
+
+- [`5bff5b7`](https://github.com/flatink/flatkit/commit/5bff5b7aa149db6eaa46df23509d90a7297c1bef) Thanks [@kaelhem](https://github.com/kaelhem)! - flatink/flatink#55 [#56](https://github.com/flatink/flatkit/issues/56) [#57](https://github.com/flatink/flatkit/issues/57) [#58](https://github.com/flatink/flatkit/issues/58): `compose` takes decimal values (rounded to the places written, so 0.1 + 0.2
+  reaches 0.3), chip labels (`chip 200 "2 EUR" at x,y`), a block `unit`, and an opt-in `counter at x,y` showing
+  the running total (a new `counter` theme role; a theme that predates it draws nothing). A `place` target
+  takes `size w,h` (or `targets size w,h` for the block); `Theme.draw` receives the size as an optional third
+  argument. GREYBOX labels are 20 px at least, in the same footprints. A `steps` card tapped ahead of its turn
+  now sends `incorrect` (`{ block, item }`); nothing else moves.
+
+### Patch Changes
+
+- Updated dependencies [[`f1022d8`](https://github.com/flatink/flatkit/commit/f1022d89d50c5b0df822473346d12a780249905f)]:
+  - @flatkit/compiler@0.42.0
+
 ## 0.4.8
 
 ### Patch Changes
