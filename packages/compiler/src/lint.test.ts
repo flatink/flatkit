@@ -209,3 +209,12 @@ describe('lint — a field the object does not have', () => {
     expect(warns('x = R.brass', { objects: ['R'], fields: { R: ['bras'] } })).toEqual([expect.stringMatching(/no field "brass".*did you mean "bras"/)])
   })
 })
+
+// Security pass: an object named like an `Object.prototype` member made the field check read a FUNCTION from
+// the table of built-in fields (`allowed.includes is not a function`) and `--check` crashed.
+describe('lint — names that exist on Object.prototype', () => {
+  it('an object named `toString` or `constructor` is an ordinary object', () => {
+    expect(() => lint('x = toString.x + constructor.y', { objects: ['toString', 'constructor'] })).not.toThrow()
+    expect(lint('x = toString.zoom', { objects: ['toString'] }).map((d) => d.message)).toEqual([expect.stringMatching(/no field "zoom"/)])
+  })
+})

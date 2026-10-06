@@ -17,7 +17,7 @@ import { renderLayers, collectModifierTargets, docHasModifiers, type FilterCache
 import { restState, advanceModifier, type ModState } from '@flatkit/engine/channelModifiers'
 import { withCels } from '@flatkit/engine/migrateCel'
 import { formatBoundText } from '@flatkit/engine/cel'
-import { sanitizeDoc } from '@flatkit/engine/validateDoc'
+import { sanitizeDoc, DANGEROUS_KEYS } from '@flatkit/engine/validateDoc'
 import { applyInstanceBinds } from '@flatkit/engine/instanceBind'
 import { importedFunctions } from '@flatkit/engine/stdlib'
 import { namedChannels, objectChannelsById, objectPlacementById, objectWorldById, type NamedChannels, type ObjectChannels } from '@flatkit/engine/sceneRefs'
@@ -1399,16 +1399,23 @@ export class FlatPlayer {
   #putInstanceFields(ctx: ExprContext): void {
     if (!this.#instFields) {
       this.#instanceByName('')
-      const text = programText(this.doc)
+      // ONE scan with a fixed pattern: every `name.field` the program writes. A pattern built from the
+      // document's own names was a ReDoS (a param named `(a+)+x`) and a crash (`(`), and one scan per
+      // instance × param was quadratic on a large document.
+      const pairs = new Set<string>()
+      for (const m of programText(this.doc).matchAll(/(?<![\w.])([A-Za-z_]\w*)\.([A-Za-z_]\w*)/g)) pairs.add(`${m[1]}.${m[2]}`)
       this.#instFields = []
       for (const [name, inst] of this.#instNameCache!) {
+        if (DANGEROUS_KEYS.has(name)) continue
         const sym = getSymbol(this.doc, inst.symbolId)
         const names = [...(sym?.params ?? []).filter((p) => p.type !== 'color' && p.type !== 'text').map((p) => p.name), ...(sym?.states ?? []).map((sm) => sm.param)]
-        const read = names.filter((p) => new RegExp(`(?<![\\w.])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.${p}\\b`).test(text))
+        const read = names.filter((p) => !DANGEROUS_KEYS.has(p) && pairs.has(`${name}.${p}`))
         if (sym && read.length) this.#instFields.push({ name, id: inst.id, sym, ...(inst.params ? { params: inst.params } : {}), read })
       }
     }
     for (const f of this.#instFields) {
+      // Only an object the context OWNS under that name: never one reached through the prototype chain.
+      if (!Object.hasOwn(ctx, f.name)) continue
       const target = ctx[f.name]
       if (!target || typeof target !== 'object' || Array.isArray(target)) continue
       const base = resolveInstanceParams(f.sym, { params: f.params }).numeric
@@ -1924,7 +1931,7 @@ export class FlatPlayer {
     }
     // `= open from closed` (a state machine only): jump to the origin, then play the transition — a state is
     // a POSITION, so replaying an effect used to mean going back through it, backwards (flatink/flatink#14).
-    const replay = sm ? /^(.+?)\s+from\s+(.+)$/.exec(trimmed) : null
+    const replay = sm ? /^(\S+)\s+from\s+(\S+)$/.exec(trimmed) : null // single words: linear on any input
     let targetVal = resolve(replay ? replay[1]!.trim() : trimmed)
     const fromVal = replay ? resolve(replay[2]!.trim()) : undefined
     if (!Number.isFinite(targetVal) || (fromVal !== undefined && !Number.isFinite(fromVal))) return false
@@ -2156,14 +2163,20 @@ export class FlatPlayer {
     this.#lastFrameInt = fi
     const fa = this.doc.timeline?.frameActions
     if (!fa?.length) return
+    // Forward: (from, fi]. Wrapped (fi < from): (from, end], then [0, fi]. Never more than one lap. Only
+    // the frames that HAVE a script are visited — the span crossed can be huge (a doc's fps is untrusted),
+    // the list of scripts is not.
+    // Whole frames only (the playhead never enters 59.5 — `--check` says so), and on a wrap nothing past
+    // the last frame.
     const last = Math.ceil(this.duration) - 1
-    // Forward: from+1..fi. Wrapped (fi < from): from+1..last, then 0..fi. Never more than one lap.
-    const frames: number[] = []
-    if (fi > from) for (let k = from + 1; k <= fi; k++) frames.push(k)
-    else { for (let k = from + 1; k <= last; k++) frames.push(k); for (let k = 0; k <= fi; k++) frames.push(k) }
+    const crossed = (f: number): boolean => Number.isInteger(f) && (fi > from ? f > from && f <= fi : (f > from && f <= last) || (f >= 0 && f <= fi))
+    const order = (f: number): number => (fi > from || f > from ? f : f + this.duration + 1) // after a wrap, 0..fi come last
+    const due = fa.filter((e) => crossed(e.frame)).sort((a, b) => order(a.frame) - order(b.frame))
     const seeks = this.#seekCount, wasPlaying = this.#playing
-    for (const k of frames) {
-      for (const e of fa) if (e.frame === k) this.#run(e.actions)
+    for (let i = 0; i < due.length; i++) {
+      this.#run(due[i]!.actions)
+      // A `go to` or `pause` ends the walk — after the scripts of the same frame, as before.
+      if (due[i + 1]?.frame === due[i]!.frame) continue
       if (this.#seekCount !== seeks || this.#held || (wasPlaying && !this.#playing)) return
     }
   }

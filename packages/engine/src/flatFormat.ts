@@ -1606,7 +1606,7 @@ class FlatParser {
         // The kind is not optional: a missing one took the NEXT word — `scene` — and the whole scene went with
         // it, in silence (flatink/flatink#66).
         const kw = this.peek()
-        if (kw?.k === 'id' && FILE_TYPE_KIND[kw.v.toLowerCase()]) kw.v = FILE_TYPE_KIND[kw.v.toLowerCase()]! // `png` → image
+        if (kw?.k === 'id' && Object.hasOwn(FILE_TYPE_KIND, kw.v.toLowerCase())) kw.v = FILE_TYPE_KIND[kw.v.toLowerCase()]! // `png` → image
         if (!kw || kw.k !== 'id' || !ASSET_KINDS.has(kw.v)) this.fail(`an asset names its kind after the file — ${[...ASSET_KINDS].join(' | ')} — as in \`asset "${id}" "${path}" image\`${kw ? `, "${kw.v}" found` : ''}`)
         const kind = this.next().v as Asset['kind']
         // Optional family alias for `font` assets: `asset "id" "f.woff2" font "Quicksand"`.

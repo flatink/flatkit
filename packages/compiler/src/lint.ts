@@ -172,7 +172,8 @@ export function lint(src: string, ctx: LintContext = {}): Diagnostic[] {
       // A field the object does not have read 0 in silence. A warning: an instance's fields are its symbol's.
       for (const [o, f] of a.refs.fields) {
         if (o === 'keys' || !knownObjs.has(o)) continue
-        const allowed = BUILTIN_FIELDS[o] ?? [...CHANNEL_FIELDS, ...(ctx.fields?.[o] ?? [])]
+        // Own keys only: `toString.x` must not read Object.prototype.toString out of these tables.
+        const allowed = Object.hasOwn(BUILTIN_FIELDS, o) ? BUILTIN_FIELDS[o]! : [...CHANNEL_FIELDS, ...(ctx.fields && Object.hasOwn(ctx.fields, o) ? ctx.fields[o]! : [])]
         if (!allowed.includes(f)) out.push({ line: s.line, col: s.col, severity: 'warning', message: `${o === 'mouse' || o === 'self' ? o : `"${o}"`} has no field "${f}" — it reads 0 (${allowed.join(', ')})${didYouMean(f, allowed)}` })
       }
       for (const id of a.refs.ids)

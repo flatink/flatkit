@@ -2003,6 +2003,9 @@ describe('`.flatink` / `.flat` — malformed input is refused where it is writte
     const kinds = parseProgram(prog0('asset "a" "a.png" png\nasset "b" "b.mp3" mp3\nasset "c" "c.woff2" woff2\nasset "d" "d.jpg" jpeg')).assets?.map((a) => a.kind)
     expect(kinds).toEqual(['image', 'sound', 'font', 'image'])
   })
+  it('a kind named like an Object.prototype member is refused like any unknown word', () => {
+    expect(() => parseProgram(prog0('asset "a" "a.png" constructor'))).toThrow(/kind.*"constructor"/)
+  })
   it('`timeline` takes two numbers — `timeline 24` lost the duration AND the scene', () => {
     expect(() => parseProgram(prog0('timeline 24'))).toThrow(/number/)
   })

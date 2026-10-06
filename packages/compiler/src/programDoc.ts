@@ -235,7 +235,7 @@ function instanceParamWarnings(doc: Doc): string[] {
     const states = stateNames(sym, a.param)
     if (!def && !states) { say(`${who}: unknown param "${a.param}" (symbol "${sym.name}")${didYouMean(a.param, names(sym))}`); return }
     // `= B from A` replays a state transition from A (flatink/flatink#14): both ends are checked as states.
-    const replay = /^(.+?)\s+from\s+(.+)$/.exec(a.value.trim())
+    const replay = /^(\S+)\s+from\s+(\S+)$/.exec(a.value.trim()) // single words: linear on any input
     if (replay && !states) { say(`${who}: \`from\` replays a STATE transition — "${a.param}" is not a state param`); return }
     for (const value of replay ? [replay[1]!.trim(), replay[2]!.trim()] : [a.value.trim()]) {
       if (states) {
@@ -741,7 +741,7 @@ export function docPaintParamWarnings(doc: Doc): { scope: string; diag: Diagnost
   const checkScope = (scope: string, layers: Layer[], known: Set<string>) => {
     const flag = (param: string, where: string, who?: string) => {
       if (known.has(param)) return
-      const css = CSS_COLORS[param.toLowerCase()]
+      const css = Object.hasOwn(CSS_COLORS, param.toLowerCase()) ? CSS_COLORS[param.toLowerCase()] : undefined
       const hint = (css ? `a colour is written in hex — \`${css}\` for ${param}; ` : '') + (known.size ? `declared color params: ${[...known].join(', ')}` : 'this scope declares no color params')
       out.push({ scope, diag: { line: 1, col: 1, severity: 'warning', message: `unknown color param "${param}" in ${where}${who ? ` (${who})` : ''} — ${hint}` } })
     }
