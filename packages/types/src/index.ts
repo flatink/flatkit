@@ -70,6 +70,7 @@ export type Stroke = {
   join?: 'miter' | 'round' | 'bevel' // default 'round'
   miterLimit?: number
   dash?: number[] // dash pattern (empty/absent = solid line)
+  fixed?: boolean // width in SCENE units whatever the shape's own scale (SVG non-scaling-stroke); regions only
 }
 
 // ── Filters ──────────────────────────────────────────────────────────────────

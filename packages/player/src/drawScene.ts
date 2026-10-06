@@ -1073,14 +1073,14 @@ function renderOneItem(
           if (lb) expandRect(acc, matOf(ctx.getTransform()), lb.minX, lb.minY, lb.maxX, lb.maxY)
           return acc
         }
-        paintLeafCached(ctx, rctx, doc, reg, reg.filters, opacity, devBBox, (c) => paintRegion(c, reg, rctx.colorParams))
+        paintLeafCached(ctx, rctx, doc, reg, reg.filters, opacity, devBBox, (c) => paintRegion(c, reg, rctx.colorParams, parent))
       } else if (opacity < 1) {
         // Semi-transparent: scope globalAlpha with save/restore (paintRegion sets its own fill/stroke style).
-        ctx.save(); ctx.globalAlpha *= opacity; paintRegion(ctx, reg, rctx.colorParams); ctx.restore()
+        ctx.save(); ctx.globalAlpha *= opacity; paintRegion(ctx, reg, rctx.colorParams, parent); ctx.restore()
       } else {
         // HOT path (opaque regions, the majority): no save/restore — paintRegion overwrites fill/stroke
         // style and draws with an explicit Path2D, leaving no state to restore.
-        paintRegion(ctx, reg, rctx.colorParams)
+        paintRegion(ctx, reg, rctx.colorParams, parent)
       }
     }
   }
@@ -1178,7 +1178,7 @@ function fillPath(c: CanvasRenderingContext2D, path: Path2D): void {
 }
 
 /** Paints a region (fill + outline) into `c`. Module function (zero allocation per call). */
-function paintRegion(c: CanvasRenderingContext2D, reg: Region, colorParams?: Record<string, string>) {
+function paintRegion(c: CanvasRenderingContext2D, reg: Region, colorParams?: Record<string, string>, world?: Transform) {
   const trim = strokeWindow(reg)
   // The whole outline is needed to FILL, and to stroke when there is no window — so an ink trail
   // (`nofill` + `draw`, the tracing case, rebuilt every frame) never pays for it.
@@ -1198,6 +1198,19 @@ function paintRegion(c: CanvasRenderingContext2D, reg: Region, colorParams?: Rec
     c.setLineDash(s.dash ?? [])
     const paramColor = reg.strokeParam ? colorParams?.[reg.strokeParam] : undefined // `stroke <param>` → instance color
     c.strokeStyle = paramColor || paintStyle(c, s.paint, () => regionBBox(reg), reg.color, colorParams) // empty/undefined → literal paint (gradient stops resolved per param)
+    if (s.fixed && world) {
+      // `fixed` (flatink/flatink#20): stroke in SCENE space, so the shape's own scale (a rail stretched by
+      // `scaleX = 4`) does not widen it; the view's zoom still applies. `world` maps the region's space to
+      // the scene, so the view is what is left of the context once `world` is taken out.
+      const view = compose(matOf(c.getTransform()), invert(world))
+      const scenePath = new Path2D()
+      scenePath.addPath(line, { a: world.a, b: world.b, c: world.c, d: world.d, e: world.e, f: world.f })
+      c.save()
+      c.setTransform(view.a, view.b, view.c, view.d, view.e, view.f)
+      c.stroke(scenePath)
+      c.restore()
+      return
+    }
     c.stroke(line)
     // A zero-length subpath shows its cap, as in SVG: a disc (round) or a square, of the stroke width.
     if (!trim && c.lineCap !== 'butt') for (const d of pathDots(reg.path)) {

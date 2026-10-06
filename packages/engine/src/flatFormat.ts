@@ -155,6 +155,7 @@ function printRegion(r: Region, d: string): string {
     if (r.stroke.join) s += ` join ${r.stroke.join}`
     if (r.stroke.miterLimit != null) s += ` miter ${n(r.stroke.miterLimit)}`
     if (r.stroke.dash?.length) s += ` dash ${r.stroke.dash.map(n).join(',')}`
+    if (r.stroke.fixed) s += ' fixed'
   }
   // `draw <to> [from <start>]` — stroke extent by arc length; a quoted value is an expression (per frame).
   // `from` only ever follows a `draw`, so a window that starts late still prints its (implicit) end.
@@ -1386,7 +1387,7 @@ function expandHoldCels(cels: Cel[]): void {
 const POLY_WORDS = new Set(['count', 'closed', 'smooth', 'as', 'fill', 'nofill', 'stroke', 'draw', 'opacity', 'nohit', 'filter'])
 
 /** Options that belong to a `stroke`, not to the item carrying it — see the ordering error in `eat`. */
-const STROKE_OPTIONS = new Set(['cap', 'join', 'miter', 'dash'])
+const STROKE_OPTIONS = new Set(['cap', 'join', 'miter', 'dash', 'fixed'])
 
 class FlatParser {
   private p = 0
@@ -1890,6 +1891,7 @@ class FlatParser {
           else if (this.is('join')) { this.next(); st.join = this.oneOf('join', JOINS) }
           else if (this.is('miter')) { this.next(); st.miterLimit = this.num() }
           else if (this.is('dash')) { this.next(); const ds: number[] = [this.num()]; while (this.is(',')) { this.eat(','); ds.push(this.num()) } st.dash = ds }
+          else if (this.is('fixed')) { this.next(); st.fixed = true } // the width stays in scene units, whatever the shape's scale
           else break
         }
         stroke = st; if (!paint && !noFill && !strokeParam) color = paintColor(sp)

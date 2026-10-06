@@ -37,10 +37,16 @@ wants. `flatc --check` points at a long run of points with gentle turns that doe
 
 ```
 circle 0 0 20 fill #ff3366
-path "…" fill #000 stroke #ffffff 3 cap round join round       # stroke: <color> <width> [cap] [join] [miter n] [dash a,b]
+path "…" fill #000 stroke #ffffff 3 cap round join round       # stroke: <color> <width> [cap] [join] [miter n] [dash a,b] [fixed]
 path "…" nofill stroke #888 2                                   # outline only (a line, a thread)
 rect 0 0 40 40 fill #00aaff opacity 0.5                         # 0..1 (8-digit hex alpha also works)
 ```
+
+A stroke is drawn in the shape's own space, so it scales with its group — and a shape STRETCHED by
+`scaleX = 4` gets sides four times as thick as the others. `fixed` keeps the width in scene units whatever
+the shape's scale (SVG's non-scaling stroke): `rect 0 0 60 30 nofill stroke #000 2 fixed` stays an even
+2-unit line on a rail or a gauge stretched at run time. The view's zoom still applies. With a gradient
+stroke, the gradient then follows the scene; the touch area of an outline-only shape keeps its own width.
 
 ### A shape computed while the scene runs (`polyline`)
 

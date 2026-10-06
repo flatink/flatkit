@@ -246,3 +246,31 @@ describe('rendering after a script paints once, at the capture', () => {
     } finally { paints.mockRestore(); r.close() }
   }, 60_000)
 })
+
+// flatink/flatink#20 — a stroke is drawn in the shape's own space, so a shape STRETCHED by `scaleX = 4` had
+// vertical sides four times as thick as its horizontal ones. `stroke … fixed` keeps the width in scene units,
+// whatever the shape's scale (SVG's non-scaling-stroke) — and still follows the view's zoom.
+describe('rendering — `stroke … fixed` keeps its width on a stretched shape', () => {
+  const thickness = async (fixed: boolean) => {
+    const src = `size 400 120\nbackground #ffffff\n\nscene {\n  layer "c" {\n    group "E" at 20,30 pivot 0,0 {\n      layer "a" {\n        rect 0 0 60 30 nofill stroke #000000 4${fixed ? ' fixed' : ''}\n      }\n    }\n  }\n}\nobject "E" {\n  scaleX = 4\n}\n`
+    const skiaPkg = 'skia-canvas'
+    const { loadImage, Canvas } = (await import(skiaPkg)) as { loadImage: (b: Buffer) => Promise<{ width: number; height: number }>; Canvas: new (w: number, h: number) => { getContext(t: '2d'): CanvasRenderingContext2D } }
+    const img = await loadImage(png(await renderDocToPng(compileFlatpack(src), { scale: 1 })))
+    const g = new Canvas(img.width, img.height).getContext('2d')
+    g.drawImage(img as unknown as CanvasImageSource, 0, 0)
+    const dark = (x: number, y: number) => g.getImageData(x, y, 1, 1).data[0]! < 128
+    let across = 0, down = 0
+    for (let x = 0; x < 60; x++) if (dark(x, 45)) across++ // through the LEFT side (x = 20, stretched)
+    for (let y = 20; y < 45; y++) if (dark(150, y)) down++ // through the TOP side (y = 30)
+    return { across, down }
+  }
+  it('without it, the stretched side is about four times thicker', async () => {
+    const t = await thickness(false)
+    expect(t.across).toBeGreaterThanOrEqual(3 * t.down)
+  })
+  it('with it, both sides are the same width', async () => {
+    const t = await thickness(true)
+    expect(Math.abs(t.across - t.down)).toBeLessThanOrEqual(1)
+    expect(t.down).toBeGreaterThanOrEqual(3)
+  })
+})
