@@ -132,7 +132,46 @@ cards) swap places when the activity loads, so playing it again is a new attempt
 does the order of a `steps` sequence. The draw comes from `random()`: pass the player a `seed` to get the
 same layout again (`flatc --play` always does). `meta[].shuffle` says a block asked for it.
 
-Each emits `send "correct" / "incorrect" / "step" / "completed"` with a record payload naming the index
+## Controls
+
+A control is an INPUT, not a task: it writes a value, it has no end, and the document's `completed` does
+not wait for it (`meta[].control` is `true`, `doneVar` empty). Its value is the variable `<name>_value`;
+it sends `change` with `{ block, value }` when the value moves. They are the recipes activities kept
+copying by hand — the bounds, the rounding, the repeat while held.
+
+| | |
+|---|---|
+| `stepper <name> { min <n>  max <n>  [step <n>]  [start <n>]  minus at x,y  plus at x,y  [counter at x,y] }` | − / + buttons: a step at the press, then a repeat while held (after 0.4 s, every 0.12 s). Enter or Space on the focused button steps once |
+| `slider <name> { min <n>  max <n>  [step <n>]  [start <n>]  rail x,y to x,y  [minus at x,y  plus at x,y]  [counter at x,y] }` | a handle on a horizontal or vertical rail (the first point is the minimum): press the rail or drag. `change` is sent once, at the release |
+
+```
+slider volume {
+  min 0
+  max 1
+  step 0.05
+  rail 200,150 to 500,150
+  minus at 110,150
+  plus at 590,150
+  counter at 350,250
+}
+raw scene {
+  layer "decor" {
+    group "Speaker" at 680,150 { layer "a" { circle 0 0 20 fill #cc3333 } }
+  }
+}
+raw {
+  object "Speaker" {
+    scaleX = 1 + volume_value
+    scaleY = 1 + volume_value
+  }
+}
+```
+
+The − / + ends of a slider are its **keyboard** way in: a scene cannot read which object holds the focus,
+so arrow keys on a focused handle cannot be written in FlatInk today. Objects: `<name>_Minus`,
+`<name>_Plus`, `<name>_Rail`, `<name>_Handle`, `<name>_Value` (all in `meta[].objects`).
+
+Each gesture emits `send "correct" / "incorrect" / "step" / "completed"` with a record payload naming the index
 (`{ item = 2 }`), so a host reads which one without depending on what the theme drew. `desugar()` returns
 the labels behind those indices, and the prompt, in `meta` — the host displays them, the gesture never
 draws them:
