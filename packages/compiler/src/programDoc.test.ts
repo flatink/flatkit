@@ -237,6 +237,20 @@ describe('programDoc — structural warnings', () => {
     expect(docHasErrors(mk('50 + sin(time * 2) * 10', 60))).toBe(false) // warning only, non-blocking
   })
 
+  // flatink/flatink#68 (from #64.4b) — a motion that ends where it starts loops seamlessly: `rotation = time
+  // * PI` on a 2 s timeline, `sin(time * PI)` too. It was warned all the same.
+  it('a motion that LOOPS SEAMLESSLY is not warned; one that jumps still is', () => {
+    const on = (ch: string, expr: string): Group => ({ ...group('g', 'G'), expressions: { [ch]: expr } })
+    const mk = (it: Group, dur: number, variables?: Doc['variables']): Doc => ({ width: 100, height: 100, symbols: [], layers: [layer([it])], ...(variables ? { variables } : {}), timeline: { fps: 24, durationFrames: dur, tracks: [] } })
+    const hit = (d: Doc) => docStructureWarnings(d).filter((w) => /resets each loop/.test(w.diag.message))
+    expect(hit(mk(on('rotation', 'time * PI'), 48))).toEqual([]) // one turn per 2 s loop: 2π ≡ 0
+    expect(hit(mk(on('x', '50 + sin(time * PI) * 10'), 48))).toEqual([]) // a whole period per loop
+    expect(hit(mk(on('x', '50 + sin(time * PI * k) * 10'), 48, { k: 2 }))).toEqual([]) // variables at their start value
+    expect(hit(mk(on('x', '50 + sin(time * PI) * 10'), 60))).toHaveLength(1) // 2.5 s: half a period off
+    expect(hit(mk(on('x', 'time * 10'), 48))).toHaveLength(1) // a ramp jumps back
+    expect(hit(mk(on('x', 'mouse.x + time'), 48))).toHaveLength(1) // cannot be evaluated: still warned
+  })
+
   it('follows `time` THROUGH a function and names it (the channel text holds no `time` at all)', () => {
     const ambient = (expr: string): Group => ({ ...group('cloud', 'Cloud'), expressions: { opacity: expr } })
     const mk = (expr: string, fns: Doc['functions'], dur = 60): Doc => ({

@@ -25,7 +25,7 @@ import { bboxIntersects, ringsBBox } from '@flatkit/engine/bbox'
 import { lint, localVariables, type LintContext } from './lint'
 import { forEachAction, forEachExpression } from './docWalk'
 import { parseUnits } from '@flatkit/engine/dsl'
-import { MATH_CTX, STD_CONSTANTS, STD_FUNCTIONS, STD_IDS } from '@flatkit/engine/expr'
+import { MATH_CTX, STD_CONSTANTS, STD_FUNCTIONS, STD_IDS, compileExpr, evalExpr, exprScope, type ExprContext } from '@flatkit/engine/expr'
 import type { Image, Item, Layer, ParamDef, Region, SymbolDef, Text, Transform } from '@flatkit/types'
 
 /** Rebuilds the "program" text of a scope (imports + variables + functions + scene cycle
@@ -253,6 +253,40 @@ function instanceParamWarnings(doc: Doc): string[] {
   return out
 }
 
+/**
+ * A channel driven by `time` that ENDS a loop where it started does not jump when `time` resets: one turn
+ * per loop, a whole number of periods (flatink/flatink#68, from #64.4b). Evaluated at `time` 0 and at the
+ * loop length, variables at their start value; a rotation is compared modulo a turn. An expression that
+ * cannot be evaluated here (it reads `mouse`, `self`, an object, `random()`) is not presumed seamless.
+ */
+function loopsSeamlessly(doc: Doc, expr: string, channel: string, loopSecs: number): boolean {
+  const fps = doc.timeline?.fps ?? 24
+  const fns = [...importedFunctions(doc.imports), ...(doc.functions ?? [])].filter((f) => f.kind === 'value')
+  const at = (time: number): number => {
+    const base: ExprContext = { ...(doc.variables ?? {}) }
+    let depth = 0
+    for (const f of fns) {
+      const c = compileExpr(f.expr)
+      base[f.name] = (...args: number[]) => {
+        if (!c.ok || depth > 32) return Number.NaN
+        const local = exprScope(base, time, time * fps, undefined, time)
+        f.params.forEach((p, i) => { local[p] = args[i] ?? 0 })
+        depth++
+        const r = evalExpr(c.node, local, Number.NaN)
+        depth--
+        return r
+      }
+    }
+    const c = compileExpr(expr)
+    return c.ok ? evalExpr(c.node, exprScope(base, time, time * fps, undefined, time), Number.NaN) : Number.NaN
+  }
+  const a = at(0), b = at(loopSecs)
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false
+  const eps = 1e-6 * Math.max(1, Math.abs(a), Math.abs(b))
+  if (channel === 'rotation') { const d = Math.abs(b - a) % (2 * Math.PI); return d < eps || 2 * Math.PI - d < eps }
+  return Math.abs(b - a) < eps
+}
+
 /** STRUCTURAL warnings (non-blocking) of a Doc: phantom drop zones, dead variables. */
 export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnostic }[] {
   const out: { scope: string; diag: Diagnostic }[] = []
@@ -409,6 +443,8 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
       for (const l of layers) for (const it of l.items) {
         if (isPoseable(it) && it.expressions) for (const k in it.expressions) {
           const expr = it.expressions[k as keyof typeof it.expressions] ?? ''
+          const reads = /\btime\b/.test(expr) || viaFn.some((fn) => new RegExp(`\\b${escapeRe(fn)}\\s*\\(`).test(expr))
+          if (!reads || loopsSeamlessly(doc, expr, k, dur / fps)) continue
           if (/\btime\b/.test(expr)) culprits.add('`time`')
           for (const fn of viaFn) if (new RegExp(`\\b${escapeRe(fn)}\\s*\\(`).test(expr)) culprits.add(`\`${fn}()\`` + ' (which reads `time`)')
         }
