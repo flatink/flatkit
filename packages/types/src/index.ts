@@ -486,6 +486,7 @@ export type Text = {
   wrap?: boolean // automatic line wrapping within `box.w` (absent = no wrap; honors explicit \n)
   bind?: string // numeric expression evaluated each frame → injected into `content` at the `{}` slot (read-only dynamic text; without `{}`, shows the value alone)
   decimals?: number // fixed decimals for the `bind` value (absent = integer if round, otherwise rounded to 3)
+  locale?: 'fr' // number spelling of the `bind` value: 'fr' = decimal comma, minus sign U+2212, grouped thousands (absent = `-3.25`)
   textPath?: TextPath // present ⇒ lay glyphs along `textPath.path` (RFC text-on-path); `transform`/`box`/`wrap` ignored
 
   /** `id` explicitly set by the author via `text "…" as "<id>"` (≠ auto-generated id). Drives the

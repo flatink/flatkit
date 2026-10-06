@@ -113,7 +113,8 @@
   `\n`). Opt-in on purpose, to avoid breaking existing layouts.
 - **Dynamic text (read-only)**: `text "Angle: {}°" … bind "round(aDeg)" decimals 1`. The
   expression is evaluated every frame; its formatted value fills the **`{}`** slot in the
-  content (or is shown alone when there is no `{}`). `decimals` sets the decimal count.
+  content (or is shown alone when there is no `{}`). `decimals` sets the decimal count, `locale fr` the
+  French spelling (`−3,25`).
   No more gauges/needles just to display a measurement (angle, timer, score…).
 - **Centering an `image`**: the origin is the top-left corner → center with `at -W/2,-H/2`.
 

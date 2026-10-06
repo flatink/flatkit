@@ -761,6 +761,14 @@ describe('flatFormat — text: wrap + bind (dynamic text)', () => {
     expect(t.bind).toBe('round(aDeg)')
     expect(t.decimals).toBe(1)
   })
+  // flatink/flatink#32 — French school activities need `−3,25` and `12,50`, not `-3.25` / `12.50`.
+  it('`locale fr` is parsed, printed back, and checked', () => {
+    const t = textItem('text "{}" at 0,0 bind "v" decimals 2 locale fr')
+    expect(t.locale).toBe('fr')
+    const src = ['size 200 100', '', 'scene {', '  layer "L" {', '    text "v={}" at 10,5 font "sans-serif" size 16 align left line 1.2 color #000000 box 80 20 bind "score" decimals 2 locale fr', '  }', '}', ''].join('\n')
+    expect(printProgramFull(parseProgramFull(src))).toBe(src)
+    expect(() => textItem('text "{}" at 0,0 bind "v" locale de')).toThrow(/locale/)
+  })
   it('stable round-trip with wrap/bind/decimals', () => {
     const src = ['size 200 100', '', 'scene {', '  layer "L" {', '    text "v={}" at 10,5 font "sans-serif" size 16 align left line 1.2 color #000000 box 80 20 wrap bind "score" decimals 2', '  }', '}', ''].join('\n')
     expect(printProgramFull(parseProgramFull(src))).toBe(src)

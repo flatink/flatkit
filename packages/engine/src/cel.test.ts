@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveLayerAt, type Cel } from './cel'
+import { resolveLayerAt, formatBoundText, type Cel } from './cel'
 import { IDENTITY, translation, decompose, recompose } from './transform'
 import type { Group, Instance, Layer, Region } from '@flatkit/types'
 import { polygonsToPath } from './path'
@@ -689,5 +689,23 @@ describe('resolveLayerAt — `self.focused` (flatink/flatink#35)', () => {
     expect(resolveLayerAt(l, 0, {})[0].opacity).toBe(0.5)
     expect(resolveLayerAt(l, 0, { itemState: () => ({ hovered: 0, grabbed: 0, pressed: 0, focused: 1 }) })[0].opacity).toBe(1)
     expect(resolveLayerAt(l, 0, { itemState: () => ({ hovered: 1, grabbed: 0, pressed: 0 }) })[0].opacity).toBe(0.5)
+  })
+})
+
+// flatink/flatink#32 — a bound value in French: comma, the real minus sign (U+2212), and a narrow no-break
+// space (U+202F) between thousands. Written by hand rather than through `Intl`, so every renderer agrees.
+describe('formatBoundText — `locale fr`', () => {
+  const fr = (v: number, decimals?: number, content = '{}') => formatBoundText({ content, decimals, locale: 'fr' }, v)
+  it('comma, minus sign, grouped thousands', () => {
+    expect(fr(-3.25, 2)).toBe('\u22123,25')
+    expect(fr(12.5, 2)).toBe('12,50')
+    expect(fr(1234)).toBe('1\u202f234')
+    expect(fr(-1234567.5, 1)).toBe('\u22121\u202f234\u202f567,5')
+    expect(fr(0.125)).toBe('0,125')
+    expect(fr(3, 0, '{} sur 5')).toBe('3 sur 5')
+  })
+  it('without a locale, nothing changes', () => {
+    expect(formatBoundText({ content: '{}', decimals: 2 }, -3.25)).toBe('-3.25')
+    expect(formatBoundText({ content: '{}' }, 1234)).toBe('1234')
   })
 })

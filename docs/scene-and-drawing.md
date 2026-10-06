@@ -170,7 +170,9 @@ text "OUTLINE" font "sans-serif" size 64 color #ffd23f stroke #e23b3b 6 join rou
   paint too (`stroke linear(…) 4`).
 - **Word-wrap is opt-in**: add `wrap` to break at spaces within the box width (otherwise only explicit `\n` wraps).
 - **Live text**: `text "Angle: {}°" bind "round(a)" decimals 1` evaluates the expression every frame and
-  fills the `{}` slot (or replaces the whole string if there's no `{}`).
+  fills the `{}` slot (or replaces the whole string if there's no `{}`). `locale fr` spells the number the
+  French way: `bind "v" decimals 2 locale fr` shows `−3,25` (minus sign, decimal comma, a narrow no-break
+  space between thousands), and `text("…")` sends it that way too.
 - **Stable id**: `text "…" as "myId"` lets behavior reference it via `text("myId")` (e.g. in a `send`
   payload). Without `as`, the id is auto-generated and not referenceable.
 

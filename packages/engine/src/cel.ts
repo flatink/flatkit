@@ -266,6 +266,15 @@ function lerpTintPair(a: Tint | undefined, b: Tint | undefined, t: number): Tint
 }
 
 // ── Dynamic text (read-only): `bind` evaluates an expression → injected into `content`. ──
+/** `-1234567.5` → `−1 234 567,5` in French: the minus sign U+2212, a narrow no-break space U+202F between
+ *  thousands, the decimal comma (flatink/flatink#32). By hand rather than through `Intl`, so every renderer
+ *  — a browser, the headless `--render` — spells it the same. */
+const frNum = (s: string): string => {
+  const neg = s.startsWith('-')
+  const [int, frac] = (neg ? s.slice(1) : s).split('.')
+  const grouped = int!.replace(/\B(?=(\d{3})+$)/g, '\u202f')
+  return (neg ? '\u2212' : '') + grouped + (frac !== undefined ? ',' + frac : '')
+}
 const fmtNum = (v: number, decimals?: number): string => {
   if (!Number.isFinite(v)) return '0'
   if (decimals != null) return v.toFixed(Math.max(0, Math.floor(decimals)))
@@ -300,8 +309,8 @@ function resolveBoundText(t: { content: string; bind?: string; decimals?: number
 }
 /** What a bound text DISPLAYS for the value `v` of its `bind`: formatted, in the `{}` slot (or alone). One
  *  spelling for the renderer and for `text("…")`, which sends what is on screen. */
-export function formatBoundText(t: { content: string; decimals?: number }, v: number): string {
-  const s = fmtNum(v, t.decimals)
+export function formatBoundText(t: { content: string; decimals?: number; locale?: 'fr' }, v: number): string {
+  const s = t.locale === 'fr' ? frNum(fmtNum(v, t.decimals)) : fmtNum(v, t.decimals)
   return t.content.includes('{}') ? t.content.replaceAll('{}', s) : s
 }
 
