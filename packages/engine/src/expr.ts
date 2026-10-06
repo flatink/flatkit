@@ -387,9 +387,9 @@ export function exprScope(extra: ExprContext | undefined, time: number, frame: n
 
 // ── Static analysis (for the linter) ─────────────────────────────────────────
 /** Identifiers referenced by an expression: bare ids, member objects, functions. */
-export type ExprRefs = { ids: string[]; members: string[]; calls: string[]; /** each call with its argument count, in order */ arity: [string, number][] }
+export type ExprRefs = { ids: string[]; members: string[]; calls: string[]; /** each call with its argument count, in order */ arity: [string, number][]; /** each `obj.field` read */ fields: [string, string][] }
 
-function collectRefs(node: Node, ids: Set<string>, members: Set<string>, calls: Set<string>, arity?: [string, number][]): void {
+function collectRefs(node: Node, ids: Set<string>, members: Set<string>, calls: Set<string>, arity?: [string, number][], fields?: [string, string][]): void {
   switch (node.t) {
     case 'num':
       return
@@ -398,31 +398,32 @@ function collectRefs(node: Node, ids: Set<string>, members: Set<string>, calls: 
       return
     case 'member':
       members.add(node.obj)
+      fields?.push([node.obj, node.prop])
       return
     case 'un':
-      collectRefs(node.x, ids, members, calls, arity)
+      collectRefs(node.x, ids, members, calls, arity, fields)
       return
     case 'bin':
-      collectRefs(node.l, ids, members, calls, arity)
-      collectRefs(node.r, ids, members, calls, arity)
+      collectRefs(node.l, ids, members, calls, arity, fields)
+      collectRefs(node.r, ids, members, calls, arity, fields)
       return
     case 'cond':
-      collectRefs(node.c, ids, members, calls, arity)
-      collectRefs(node.a, ids, members, calls, arity)
-      collectRefs(node.b, ids, members, calls, arity)
+      collectRefs(node.c, ids, members, calls, arity, fields)
+      collectRefs(node.a, ids, members, calls, arity, fields)
+      collectRefs(node.b, ids, members, calls, arity, fields)
       return
     case 'call':
       calls.add(node.name)
       arity?.push([node.name, node.args.length])
-      for (const a of node.args) collectRefs(a, ids, members, calls, arity)
+      for (const a of node.args) collectRefs(a, ids, members, calls, arity, fields)
       return
     case 'index':
       ids.add(node.name) // the array is a known variable
-      collectRefs(node.idx, ids, members, calls, arity)
+      collectRefs(node.idx, ids, members, calls, arity, fields)
       return
     case 'pick':
-      for (const it of node.items) collectRefs(it, ids, members, calls, arity)
-      collectRefs(node.idx, ids, members, calls, arity)
+      for (const it of node.items) collectRefs(it, ids, members, calls, arity, fields)
+      collectRefs(node.idx, ids, members, calls, arity, fields)
       return
   }
 }
@@ -435,8 +436,9 @@ export function analyzeExpr(src: string): { ok: true; refs: ExprRefs } | { ok: f
   const members = new Set<string>()
   const calls = new Set<string>()
   const arity: [string, number][] = []
-  collectRefs(c.node, ids, members, calls, arity)
-  return { ok: true, refs: { ids: [...ids], members: [...members], calls: [...calls], arity } }
+  const fields: [string, string][] = []
+  collectRefs(c.node, ids, members, calls, arity, fields)
+  return { ok: true, refs: { ids: [...ids], members: [...members], calls: [...calls], arity, fields } }
 }
 
 /** Table of math functions/constants exposed to expressions. */

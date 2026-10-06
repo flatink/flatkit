@@ -23,6 +23,7 @@ import { IDENTITY, apply, compose } from '@flatkit/engine/transform'
 import { makePathSampler, softVertexCount, smoothingDeviation } from '@flatkit/engine/path'
 import { bboxIntersects, ringsBBox } from '@flatkit/engine/bbox'
 import { lint, localVariables, type LintContext } from './lint'
+import { didYouMean } from './suggest'
 import { forEachAction, forEachExpression } from './docWalk'
 import { parseUnits } from '@flatkit/engine/dsl'
 import { MATH_CTX, STD_CONSTANTS, STD_FUNCTIONS, STD_IDS, compileExpr, evalExpr, exprScope, type ExprContext } from '@flatkit/engine/expr'
@@ -65,7 +66,24 @@ export function docLintContext(doc: Doc, editPath: EditFrame[] = [], extraVars?:
     functions: [...(doc.functions ?? []).map((f) => f.name), ...importedFunctions(doc.imports).map((f) => f.name)],
     arities: Object.fromEntries([...importedFunctions(doc.imports), ...(doc.functions ?? [])].map((f) => [f.name, f.params.length])),
     objects: objectNames(contextLayers(doc, editPath)),
+    fields: instanceFields(doc, contextLayers(doc, editPath)),
   }
+}
+
+/** The params and state params each instance of these layers answers to, by name (`R.bras`). */
+function instanceFields(doc: Doc, layers: Layer[]): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  const visit = (ls: Layer[]): void => {
+    for (const l of ls) for (const it of l.items) {
+      if (isGroup(it)) visit(it.layers)
+      else if (isInstance(it) && it.name) {
+        const sym = doc.symbols.find((s) => s.id === it.symbolId)
+        if (sym) out[it.name] = [...(sym.params ?? []).map((p) => p.name), ...(sym.states ?? []).map((sm) => sm.param)]
+      }
+    }
+  }
+  visit(layers)
+  return out
 }
 
 /** Names exposed as variables by the symbol of `editPath` (its `params` + state params), or `[]` for the
@@ -165,24 +183,6 @@ function timeCapturedVars(doc: Doc): Set<string> {
   return out
 }
 
-/** The closest of `names` to `word` (edit distance <= 2), as a ` — did you mean "…"?` suffix, or ''. */
-function didYouMean(word: string, names: string[]): string {
-  // A suggestion is for a TYPO: a name within two edits. Two names whose lengths differ by more than that
-  // cannot be, and a full edit distance between two names of thousands of characters was 22 s of `--check`
-  // on a 181 KB program. Nobody types a 64-character name with a typo they need help with.
-  if (word.length > 64) return ''
-  names = names.filter((n) => n.length <= 64 && Math.abs(n.length - word.length) <= 2)
-  const dist = (a: string, b: string): number => {
-    const row = Array.from({ length: b.length + 1 }, (_, j) => j)
-    for (let i = 1; i <= a.length; i++) {
-      let prev = row[0]; row[0] = i
-      for (let j = 1; j <= b.length; j++) { const t = row[j]; row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = t }
-    }
-    return row[b.length]
-  }
-  const best = names.map((n) => ({ n, d: dist(word, n) })).filter((x) => x.d <= 2).sort((a, b) => a.d - b.d)[0]
-  return best ? ` — did you mean "${best.n}"?` : ''
-}
 
 const COLOR_LITERAL = /^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
 

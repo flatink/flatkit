@@ -17,6 +17,7 @@ import { analyzeExpr, MATH_CTX, STD_CONSTANTS, STD_FUNCTIONS, STD_IDS, STD_OBJEC
 import { packageFunctionNames, resolvePackage } from '@flatkit/engine/stdlib'
 import { parseUnits, type Diagnostic, type ScriptUnit, type TextEdit } from '@flatkit/engine/dsl'
 import type { Action } from '@flatkit/engine/actions'
+import { didYouMean } from './suggest'
 
 export type LintContext = {
   /** Known variables in addition to those declared/assigned in the source. */
@@ -29,6 +30,16 @@ export type LintContext = {
   objects?: Iterable<string>
   /** Parameter count of the caller's functions (`functions`), so a call to one is counted too. */
   arities?: Record<string, number>
+  /** Fields an object answers to beyond its channels: an instance's params and states (`R.bras`). */
+  fields?: Record<string, string[]>
+}
+
+/** What `obj.field` may read (flatink/flatink#68, from #65.5c). An object's channels; `self` adds its
+ *  interaction state; `mouse` its pointer; `keys` is open-ended. */
+const CHANNEL_FIELDS = ['x', 'y', 'scaleX', 'scaleY', 'rotation', 'opacity']
+const BUILTIN_FIELDS: Record<string, string[]> = {
+  mouse: ['x', 'y', 'dx', 'dy', 'wheel'],
+  self: [...CHANNEL_FIELDS, 'hovered', 'grabbed', 'pressed', 'focused'],
 }
 
 /** Arguments a built-in takes: a count, or `'1+'` for the variadic ones. Arguments were never counted —
@@ -158,6 +169,12 @@ export function lint(src: string, ctx: LintContext = {}): Diagnostic[] {
       for (const [fn, got] of a.refs.arity) { const m = arityMessage(fn, got, arities); if (m) out.push({ line: s.line, col: s.col, message: m }) }
       for (const o of a.refs.members)
         if (!knownObjs.has(o)) out.push({ line: s.line, col: s.col, message: `unknown object "${o}" (expected: ${[...knownObjs].join(', ')})` })
+      // A field the object does not have read 0 in silence. A warning: an instance's fields are its symbol's.
+      for (const [o, f] of a.refs.fields) {
+        if (o === 'keys' || !knownObjs.has(o)) continue
+        const allowed = BUILTIN_FIELDS[o] ?? [...CHANNEL_FIELDS, ...(ctx.fields?.[o] ?? [])]
+        if (!allowed.includes(f)) out.push({ line: s.line, col: s.col, severity: 'warning', message: `${o === 'mouse' || o === 'self' ? o : `"${o}"`} has no field "${f}" — it reads 0 (${allowed.join(', ')})${didYouMean(f, allowed)}` })
+      }
       for (const id of a.refs.ids)
         if (!knownIds.has(id))
           // The hint names the DOCUMENT declaration (`var`, at the top level of the program), because that

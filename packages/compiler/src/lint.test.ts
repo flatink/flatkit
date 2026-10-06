@@ -191,3 +191,21 @@ describe('lint — a call has the right number of arguments', () => {
     expect(msgs('fn hop() {\n  x = 1\n}\nwhen clicked {\n  hop()\n}')).toEqual([])
   })
 })
+
+// flatink/flatink#68 (from #65.5c) — an unknown FIELD read 0 in silence (`B.zoom`, `mouse.down`), while an
+// unknown object was already an error. A warning: an instance's fields depend on its symbol.
+describe('lint — a field the object does not have', () => {
+  const warns = (src: string, ctx = {}) => lint(src, ctx).map((d) => `${d.severity ?? 'error'}: ${d.message}`)
+  it('mouse, self and named objects', () => {
+    expect(warns('x = mouse.down')).toEqual([expect.stringMatching(/^warning: .*mouse.*no field "down".*wheel/)])
+    expect(warns('x = mouse.x + mouse.dy + mouse.wheel')).toEqual([])
+    expect(warns('x = self.hovered + self.rotation')).toEqual([])
+    expect(warns('x = B.zoom', { objects: ['B'] })).toEqual([expect.stringMatching(/^warning: .*"B" has no field "zoom"/)])
+    expect(warns('x = B.rotation + B.opacity', { objects: ['B'] })).toEqual([])
+    expect(warns('x = keys.Space + keys.ArrowLeft')).toEqual([]) // keys are open-ended
+  })
+  it('an instance also answers to its params and states', () => {
+    expect(warns('x = R.bras + R.queue', { objects: ['R'], fields: { R: ['bras', 'queue'] } })).toEqual([])
+    expect(warns('x = R.brass', { objects: ['R'], fields: { R: ['bras'] } })).toEqual([expect.stringMatching(/no field "brass".*did you mean "bras"/)])
+  })
+})
