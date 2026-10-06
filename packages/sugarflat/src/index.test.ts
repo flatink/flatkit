@@ -537,3 +537,52 @@ describe('controls — stepper', async () => {
     expect(() => desugar('stepper n {\n  min 5\n  max 0\n  minus at 1,1\n  plus at 2,2\n}\n')).toThrow(/min.*max/)
   })
 })
+
+describe('controls — slider', async () => {
+  const { playHeadless } = await import('@flatkit/player/debug')
+  const run = (src: string, g: unknown[]) => {
+    const c = checkProgram(ensureHeader(desugar(src).flatink))
+    expect(c.errors, c.report).toBe(0)
+    return playHeadless(c.doc!, g as never)
+  }
+  const sl = (extra = '') => `slider volume {\n  min 0\n  max 1\n  step 0.25\n  start 0.5\n  rail 160,170 to 360,170\n${extra}}\n`
+
+  it('a press on the rail jumps there; a drag follows; the value snaps to its step', () => {
+    expect(run(sl(), [{ type: 'tap', x: 310, y: 170 }]).vars.volume_value).toBe(0.75)
+    expect(run(sl(), [{ type: 'tap', x: 300, y: 170 }]).vars.volume_value).toBe(0.75) // 0.7 snaps to 0.75
+    const r = run(sl(), [{ type: 'down', x: 170, y: 170 }, { type: 'move', x: 250, y: 170 }, { type: 'move', x: 420, y: 190 }, { type: 'up', x: 420, y: 190 }])
+    expect(r.vars.volume_value).toBe(1) // past the end: clamped; off the rail: still followed
+    expect(r.sends.map((s) => `${s.name}:${s.fields?.value}`)).toEqual(['change:1']) // once, at the release
+  })
+  it('a release where it started sends nothing', () => {
+    expect(run(sl(), [{ type: 'tap', x: 260, y: 170 }]).sends).toEqual([])
+  })
+  it('a vertical rail: the first point is the minimum', () => {
+    const src = 'slider charge {\n  min 0\n  max 10\n  rail 100,300 to 100,100\n}\n'
+    expect(run(src, [{ type: 'tap', x: 100, y: 150 }]).vars.charge_value).toBe(8) // 7.5 -> the step is 1
+    expect(run(src, [{ type: 'tap', x: 100, y: 300 }]).vars.charge_value).toBe(0)
+  })
+  it('the handle stands where the value is', () => {
+    const c = checkProgram(ensureHeader(desugar(sl()).flatink))
+    const r = playHeadless(c.doc!, [{ type: 'tap', x: 360, y: 170 }, { type: 'wait', frames: 1 }] as never)
+    expect(r.vars.volume_value).toBe(1)
+    expect(desugar(sl()).flatink).toMatch(/object "volume_Handle" \{[^}]*x = 160 \+ \(360 - 160\) \* \(volume_value - 0\) \/ \(1 - 0\)/)
+  })
+  it('optional − / + ends step it, as a stepper does — the keyboard way in', () => {
+    const r = run(sl('  minus at 110,170\n  plus at 410,170\n'), [{ type: 'tap', target: 'volume_Plus' }, { type: 'tap', target: 'volume_Plus' }, { type: 'tap', target: 'volume_Minus' }])
+    expect(r.vars.volume_value).toBe(0.75)
+    expect(r.sends.map((s) => s.name)).toEqual(['change', 'change', 'change'])
+  })
+  it('is a control, draws nothing of its own, and names its parts', () => {
+    const blank = desugar(sl('  counter at 260,230\n'), { gestures: gestures({ theme: BLANK }) })
+    expect(blank.meta[0]).toMatchObject({ keyword: 'slider', control: true, objects: ['volume_Rail', 'volume_Handle', 'volume_Value'] })
+    expect(blank.flatink).not.toMatch(/#[0-9a-f]{3}|font /)
+  })
+  it('expands with no warning at all, with or without its ends', () => {
+    for (const extra of ['', '  minus at 110,170\n  plus at 410,170\n  counter at 260,240\n']) expect(checkProgram(ensureHeader(desugar(sl(extra)).flatink)).diagnostics).toEqual([])
+  })
+  it('a rail that is neither horizontal nor vertical, or a missing one, is refused', () => {
+    expect(() => desugar('slider v {\n  min 0\n  max 1\n  rail 0,0 to 100,50\n}\n')).toThrow(/horizontal or vertical/)
+    expect(() => desugar('slider v {\n  min 0\n  max 1\n}\n')).toThrow(/rail/)
+  })
+})

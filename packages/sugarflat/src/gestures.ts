@@ -334,18 +334,58 @@ function range(kind: string, name: string, got: { min?: string; max?: string; st
   return { min: got.min, max: got.max, step, start, places, k: 10 ** places }
 }
 
-// − / + buttons. A press steps at once, then repeats while held (after 0.4 s, every 0.12 s); the keyboard
-// (Enter / Space on the focused button) steps once per key press.
+type Range = ReturnType<typeof range>
+type At = { x: string; y: string }
+
+/**
+ * The − / + mechanics, shared by `stepper` and by a `slider`'s optional ends. A press steps at once, then
+ * repeats while held (after 0.4 s, every 0.12 s); the keyboard (Enter / Space on the focused button) steps
+ * once per key press.
+ */
+function stepping(p: string, b: number, v: string, r: Range): { vars: string[]; fn: string[]; button: (id: string, d: number, order: number) => string[]; tick: string[] } {
+  const sum = r.places ? `round((${v} + d * ${r.step}) * ${r.k}) / ${r.k}` : `${v} + d * ${r.step}`
+  return {
+    vars: [`var ${p}to = 0`, `var ${p}held = 0`, `var ${p}next = 0`, `var ${p}byPress = 0`, `var ${p}upAt = 0`],
+    fn: [
+      `fn ${p}stepBy(d) {`,
+      `  ${p}to = clamp(${sum}, ${r.min}, ${r.max})`,
+      `  if ${p}to != ${v} {`, `    ${v} = ${p}to`, `    send "change", { block = ${b}, value = ${v} }`, '  }',
+      '}', ''],
+    button: (id, d, order) => [
+      `object "${id}" {`, `  focusable order ${order}`,
+      // The mouse: a step at the press, then the repeat. The click that follows the release is that same
+      // press — only a click with no press before it (the keyboard) steps.
+      '  when pressed {', `    ${p}stepBy(${d})`, `    ${p}held = ${d}`, `    ${p}next = clock + 0.4`, `    ${p}byPress = 1`, '  }',
+      '  when released {', `    ${p}held = 0`, `    ${p}upAt = clock`, '  }',
+      '  when clicked {', `    if ${p}byPress == 1 {`, `      ${p}byPress = 0`, '    } else {', `      ${p}stepBy(${d})`, '    }', '  }',
+      // At its bound a button is dimmed: which way is still open is STATE, as the live step of a sequence is.
+      `  opacity = ${d < 0 ? `${v} <= ${r.min}` : `${v} >= ${r.max}`} ? 0.45 : 1`, '}', ''],
+    tick: [
+      `  if ${p}held != 0 && clock >= ${p}next {`, `    ${p}stepBy(${p}held)`, `    ${p}next = clock + 0.12`, '  }',
+      // A press released OUTSIDE the button gets no click: forget it, or the next key press would be eaten.
+      `  if ${p}held == 0 && ${p}byPress == 1 && clock > ${p}upAt + 0.05 {`, `    ${p}byPress = 0`, '  }'],
+  }
+}
+
+/** The optional readout of a control: the theme's `counter`, its text bound to the value. */
+function readout(p: string, v: string, r: Range, at: At, theme: Theme): string[] {
+  const size = theme.size('counter') ?? { w: 180, h: 56 }
+  const art = (theme.draw('counter', '{}', size) ?? []).map((l) => (l.startsWith('text ') ? `${l} bind "${v}"${r.places ? ` decimals ${r.places}` : ''}` : l))
+  return container(`${p}Value`, at.x, at.y, art)
+}
+
+const AT = '(-?[\\d.]+),(-?[\\d.]+)'
+
 function expandStepper(name: string, body: string, theme: Theme, ctx: GestureContext): Expansion {
   const { prefix: p, index: b } = ctx
   const got: { min?: string; max?: string; step?: string; start?: string } = {}
   let prompt = ''
-  let minus: { x: string; y: string } | undefined, plus: { x: string; y: string } | undefined, counter: { x: string; y: string } | undefined
+  let minus: At | undefined, plus: At | undefined, counter: At | undefined
   for (const line of lines('stepper', name, body)) {
     let x: RegExpMatchArray | null
     if ((x = line.match(/^prompt\s+"(.*)"$/))) prompt = x[1]
     else if ((x = line.match(new RegExp(`^(min|max|step|start)\\s+${NUMBER}$`)))) got[x[1] as 'min'] = x[2]
-    else if ((x = line.match(/^(minus|plus|counter)\s+at\s+(-?[\d.]+),(-?[\d.]+)$/))) {
+    else if ((x = line.match(new RegExp(`^(minus|plus|counter)\\s+at\\s+${AT}$`)))) {
       const at = { x: x[2], y: x[3] }
       if (x[1] === 'minus') minus = at; else if (x[1] === 'plus') plus = at; else counter = at
     } else throw new Error(`stepper "${name}": unrecognised line: ${line}`)
@@ -354,43 +394,82 @@ function expandStepper(name: string, body: string, theme: Theme, ctx: GestureCon
   if (!minus || !plus) throw new Error(`stepper "${name}": it needs its two buttons — \`minus at x,y\` and \`plus at x,y\``)
 
   const v = `${p}value`
-  const vars = [`// ${p}— stepper "${q(name)}"`, ...(prompt ? [`// prompt: ${q(prompt)}`] : []),
-    `var ${v} = ${r.start}`, `var ${p}to = 0`, `var ${p}held = 0`, `var ${p}next = 0`, `var ${p}byPress = 0`, `var ${p}upAt = 0`]
+  const st = stepping(p, b, v, r)
+  const vars = [`// ${p}— stepper "${q(name)}"`, ...(prompt ? [`// prompt: ${q(prompt)}`] : []), `var ${v} = ${r.start}`, ...st.vars]
   const layers = [`  layer "${p}stepper" {`,
     ...container(`${p}Minus`, minus.x, minus.y, theme.draw('chip', '\u2212'), theme.size('chip')),
-    ...container(`${p}Plus`, plus.x, plus.y, theme.draw('chip', '+'), theme.size('chip'))]
-  if (counter) {
-    const size = theme.size('counter') ?? { w: 180, h: 56 }
-    const art = (theme.draw('counter', '{}', size) ?? []).map((l) => (l.startsWith('text ') ? `${l} bind "${v}"${r.places ? ` decimals ${r.places}` : ''}` : l))
-    layers.push(...container(`${p}Value`, counter.x, counter.y, art))
-  }
-  layers.push('  }')
-
-  const sum = (d: string) => (r.places ? `round((${v} + ${d} * ${r.step}) * ${r.k}) / ${r.k}` : `${v} + ${d} * ${r.step}`)
-  const behavior: string[] = [
-    `fn ${p}stepBy(d) {`,
-    `  ${p}to = clamp(${sum('d')}, ${r.min}, ${r.max})`,
-    `  if ${p}to != ${v} {`, `    ${v} = ${p}to`, `    send "change", { block = ${b}, value = ${v} }`, '  }',
-    '}', '']
-  const button = (id: string, d: number, order: number, atBound: string) => behavior.push(
-    `object "${id}" {`, `  focusable order ${order}`,
-    // The mouse: a step at the press, then the repeat. The click that follows the release is that same
-    // press — only a click with no press before it (the keyboard) steps.
-    '  when pressed {', `    ${p}stepBy(${d})`, `    ${p}held = ${d}`, `    ${p}next = clock + 0.4`, `    ${p}byPress = 1`, '  }',
-    '  when released {', `    ${p}held = 0`, `    ${p}upAt = clock`, '  }',
-    '  when clicked {', `    if ${p}byPress == 1 {`, `      ${p}byPress = 0`, '    } else {', `      ${p}stepBy(${d})`, '    }', '  }',
-    // At its bound a button is dimmed: which way is still open is STATE, as the live step of a sequence is.
-    `  opacity = ${atBound} ? 0.45 : 1`, '}', '')
-  button(`${p}Minus`, -1, focusBase(b) + 1, `${v} <= ${r.min}`)
-  button(`${p}Plus`, 1, focusBase(b) + 2, `${v} >= ${r.max}`)
-  behavior.push('every frame {',
-    `  if ${p}held != 0 && clock >= ${p}next {`, `    ${p}stepBy(${p}held)`, `    ${p}next = clock + 0.12`, '  }',
-    // A press released OUTSIDE the button gets no click: forget it, or the next key press would be eaten.
-    `  if ${p}held == 0 && ${p}byPress == 1 && clock > ${p}upAt + 0.05 {`, `    ${p}byPress = 0`, '  }',
-    '}', '')
+    ...container(`${p}Plus`, plus.x, plus.y, theme.draw('chip', '+'), theme.size('chip')),
+    ...(counter ? readout(p, v, r, counter, theme) : []),
+    '  }']
+  const behavior = [...st.fn, ...st.button(`${p}Minus`, -1, focusBase(b) + 1), ...st.button(`${p}Plus`, 1, focusBase(b) + 2), 'every frame {', ...st.tick, '}', '']
   return {
     vars, layers, behavior,
     meta: { keyword: 'stepper', name, prompt, items: [], targets: [], objects: [`${p}Minus`, `${p}Plus`, ...(counter ? [`${p}Value`] : [])], doneVar: '', control: true },
+  }
+}
+
+// A handle on a rail. A press on the rail jumps there, a drag follows (the pointer stays captured off the
+// rail); the value snaps to its step. `change` is sent once, at the release, if the value moved.
+function expandSlider(name: string, body: string, theme: Theme, ctx: GestureContext): Expansion {
+  const { prefix: p, index: b } = ctx
+  const got: { min?: string; max?: string; step?: string; start?: string } = {}
+  let prompt = ''
+  let rail: { x0: number; y0: number; x1: number; y1: number } | undefined
+  let minus: At | undefined, plus: At | undefined, counter: At | undefined
+  for (const line of lines('slider', name, body)) {
+    let x: RegExpMatchArray | null
+    if ((x = line.match(/^prompt\s+"(.*)"$/))) prompt = x[1]
+    else if ((x = line.match(new RegExp(`^(min|max|step|start)\\s+${NUMBER}$`)))) got[x[1] as 'min'] = x[2]
+    else if ((x = line.match(new RegExp(`^rail\\s+${AT}\\s+to\\s+${AT}$`)))) rail = { x0: Number(x[1]), y0: Number(x[2]), x1: Number(x[3]), y1: Number(x[4]) }
+    else if ((x = line.match(new RegExp(`^(minus|plus|counter)\\s+at\\s+${AT}$`)))) {
+      const at = { x: x[2], y: x[3] }
+      if (x[1] === 'minus') minus = at; else if (x[1] === 'plus') plus = at; else counter = at
+    } else throw new Error(`slider "${name}": unrecognised line: ${line}`)
+  }
+  const r = range('slider', name, got)
+  if (!rail) throw new Error(`slider "${name}": it needs its rail — \`rail x,y to x,y\` (the first point is the minimum)`)
+  const horizontal = rail.y0 === rail.y1 && rail.x0 !== rail.x1
+  if (!horizontal && !(rail.x0 === rail.x1 && rail.y0 !== rail.y1)) throw new Error(`slider "${name}": the rail is horizontal or vertical — \`rail 160,170 to 360,170\` or \`rail 100,300 to 100,100\``)
+  if (!!minus !== !!plus) throw new Error(`slider "${name}": the two ends go together — \`minus at x,y\` and \`plus at x,y\``)
+
+  const v = `${p}value`
+  const st = minus && plus ? stepping(p, b, v, r) : null
+  const [a0, a1] = horizontal ? [rail.x0, rail.x1] : [rail.y0, rail.y1]
+  const len = Math.abs(a1 - a0)
+  const vars = [`// ${p}— slider "${q(name)}"`, ...(prompt ? [`// prompt: ${q(prompt)}`] : []), `var ${v} = ${r.start}`, `var ${p}grab = 0`, `var ${p}from = 0`, ...(st ? st.vars : [])]
+
+  // The rail takes the touch (a generous band around it); the handle is drawn on top and lets it through.
+  const band = horizontal ? { w: len + 48, h: 56 } : { w: 56, h: len + 48 }
+  const railSize = horizontal ? { w: len + 24, h: 20 } : { w: 20, h: len + 24 }
+  const layers = [`  layer "${p}slider" {`,
+    ...container(`${p}Rail`, String((rail.x0 + rail.x1) / 2), String((rail.y0 + rail.y1) / 2), theme.draw('target', '', railSize), band),
+    `    group "${p}Handle" at ${rail.x0},${rail.y0} pivot 0,0 nohit {`, '      layer "art" {', ...theme.draw('item', '', { w: 44, h: 44 }).map((l) => `        ${l}`), '      }', '    }',
+    ...(minus && plus ? [...container(`${p}Minus`, minus.x, minus.y, theme.draw('chip', '\u2212'), theme.size('chip')), ...container(`${p}Plus`, plus.x, plus.y, theme.draw('chip', '+'), theme.size('chip'))] : []),
+    ...(counter ? readout(p, v, r, counter, theme) : []),
+    '  }']
+
+  const raw = `${r.min} + round((a - ${a0}) / (${a1} - ${a0}) * (${r.max} - ${r.min}) / ${r.step}) * ${r.step}`
+  const axis = horizontal ? 'mouse.x' : 'mouse.y'
+  const share = `(${v} - ${r.min}) / (${r.max} - ${r.min})`
+  const behavior = [
+    `fn ${p}setAt(a) {`, // `a`: the pointer along the rail's axis
+    `  ${v} = clamp(${r.places ? `round((${raw}) * ${r.k}) / ${r.k}` : raw}, ${r.min}, ${r.max})`,
+    '}', '',
+    `object "${p}Rail" {`,
+    '  when pressed {', `    ${p}grab = 1`, `    ${p}from = ${v}`, `    ${p}setAt(${axis})`, '  }',
+    '  when dragged {', `    if ${p}grab == 1 {`, `      ${p}setAt(${axis})`, '    }', '  }',
+    '  when released {', `    ${p}grab = 0`, `    if ${v} != ${p}from {`, `      send "change", { block = ${b}, value = ${v} }`, '    }', '  }',
+    '}', '',
+    // The handle's place always comes from the value. Held, it grows a little: that it is held is STATE.
+    `object "${p}Handle" {`,
+    `  x = ${rail.x0} + (${rail.x1} - ${rail.x0}) * ${share}`, `  y = ${rail.y0} + (${rail.y1} - ${rail.y0}) * ${share}`,
+    `  scaleX = ${p}grab == 1 ? 1.15 : 1`, `  scaleY = ${p}grab == 1 ? 1.15 : 1`,
+    '}', '',
+    ...(st ? [...st.fn, ...st.button(`${p}Minus`, -1, focusBase(b) + 1), ...st.button(`${p}Plus`, 1, focusBase(b) + 2), 'every frame {', ...st.tick, '}', ''] : []),
+  ]
+  return {
+    vars, layers, behavior,
+    meta: { keyword: 'slider', name, prompt, items: [], targets: [], objects: [`${p}Rail`, `${p}Handle`, ...(minus && plus ? [`${p}Minus`, `${p}Plus`] : []), ...(counter ? [`${p}Value`] : [])], doneVar: '', control: true },
   }
 }
 
@@ -430,6 +509,11 @@ export function gestures(opts: GestureOptions = {}): Gesture[] {
       keyword: 'stepper',
       summary: `stepper <name> { prompt "…"  min <n>  max <n>  [step <n>]  [start <n>]  minus at x,y  plus at x,y  [counter at x,y] }  — a CONTROL (not a task): − / + buttons writing <name>_value, repeating while held; sends "change". Footprint: chip ${footprint(theme, 'chip')}`,
       expand: (name, body, _doc, ctx) => expandStepper(name, body, theme, ctx),
+    },
+    {
+      keyword: 'slider',
+      summary: 'slider <name> { prompt "…"  min <n>  max <n>  [step <n>]  [start <n>]  rail x,y to x,y  [minus at x,y  plus at x,y]  [counter at x,y] }  — a CONTROL: a handle on a horizontal or vertical rail (first point = min) writing <name>_value; press the rail or drag; sends "change" at the release. The − / + ends are the keyboard way in. Footprint: handle 44x44; the rail takes touches in a band 56 wide',
+      expand: (name, body, _doc, ctx) => expandSlider(name, body, theme, ctx),
     },
   ]
 }

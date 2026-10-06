@@ -149,4 +149,30 @@ export const CONTRACTS: Contract[] = [
     sends: ['change', 'change', 'change', 'change'],
     vars: { stars_value: 1 },
   },
+  {
+    // A CONTROL too. `change` is sent once per gesture, at the release — not at every move of a drag.
+    keyword: 'slider',
+    source: `slider volume {
+  prompt "Set the volume"
+  min 0
+  max 1
+  step 0.25
+  start 0.5
+  rail 180,330 to 580,330
+  minus at 110,330
+  plus at 650,330
+}
+`,
+    script: [
+      { type: 'tap', x: 480, y: 330 }, // a press on the rail jumps there: 0.75
+      { type: 'down', x: 480, y: 330 },
+      { type: 'move', x: 300, y: 330 },
+      { type: 'move', x: 100, y: 400 }, // past the end, off the rail: clamped to the minimum, still followed
+      { type: 'up', x: 100, y: 400 },
+      { type: 'tap', target: 'volume_Plus' }, // the keyboard way in: one step
+      { type: 'wait', frames: 6 },
+    ],
+    sends: ['change', 'change', 'change'],
+    vars: { volume_value: 0.25 },
+  },
 ]
