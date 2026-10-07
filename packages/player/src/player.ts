@@ -325,8 +325,24 @@ const offlineAudio = (): (new (channels: number, length: number, sampleRate: num
 const LATE_SOUND_MS = 400
 /** No WebAudio outside a browser (Node, `flatc --play`): every audio entry point is then a silent no-op. */
 const hasAudio = (): boolean => typeof window !== 'undefined' && !!(window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)
+/** The live players' "put my clips back on the playhead", called once the context is unlocked (below). */
+const playerAudioResync = new Set<() => void>()
+/** The events a browser counts as a user gesture (a touch activates on its release, a mouse on its press). */
+const GESTURES = ['pointerdown', 'pointerup', 'keydown', 'touchend']
+/** A context opened outside a gesture — `autoplay`, a clip at frame 0 — is born SUSPENDED, and a browser
+ *  (Safari first) refuses the `resume()` asked there. So the first gesture anywhere on the page asks again,
+ *  from inside its handler, where it is granted. The clips scheduled meanwhile sit at the context's frozen
+ *  clock, not at the playhead: each playing player reschedules its own. On the window and in the capture
+ *  phase, so a host that stops the event does not keep the sound locked; one listener for every player. */
+const unlockAudio = (): void => {
+  const c = playerAudioCtx
+  if (c && c.state !== 'running') void c.resume().then(() => { for (const resync of playerAudioResync) resync() }, () => {})
+}
 function getAudioCtx(): AudioContext {
-  if (!playerAudioCtx) playerAudioCtx = new (window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
+  if (!playerAudioCtx) {
+    playerAudioCtx = new (window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
+    for (const g of GESTURES) window.addEventListener(g, unlockAudio, { capture: true, passive: true })
+  }
   return playerAudioCtx
 }
 
@@ -1180,6 +1196,7 @@ export class FlatPlayer {
     this.render()
     this.#fireLoad()
     window.addEventListener('resize', this.#onResize)
+    playerAudioResync.add(this.#resyncAudio)
     this.#fontSet()?.addEventListener?.('loadingdone', this.#onFontsLoaded)
     if (opts.input ?? true) { // false (gallery preview): plays the anim but does not attach the inputs
       globalThis.addEventListener('keydown', this.#onKeyDown)
@@ -2110,6 +2127,7 @@ export class FlatPlayer {
     if (!on) this.#stopAudio()
     else if (this.isPlaying) this.#startAudio(this.#frame)
   }
+  readonly #resyncAudio = (): void => { if (this.isPlaying) this.#startAudio(this.#frame) }
   #stopAudio(): void {
     for (const s of this.#activeSources) { try { s.stop() } catch { /* already stopped */ } }
     this.#activeSources = []
@@ -2353,6 +2371,7 @@ export class FlatPlayer {
     this.#cancelHitWarm()
     if (this.#transRaf) { cancelAnimationFrame(this.#transRaf); this.#transRaf = 0 } // stop the transition driver on a torn-down player
     window.removeEventListener('resize', this.#onResize)
+    playerAudioResync.delete(this.#resyncAudio)
     this.#fontSet()?.removeEventListener?.('loadingdone', this.#onFontsLoaded)
     globalThis.removeEventListener('keydown', this.#onKeyDown)
     globalThis.removeEventListener('keyup', this.#onKeyUp)

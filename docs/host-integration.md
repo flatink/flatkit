@@ -25,7 +25,7 @@ const player = new FlatPlayer(canvas, doc, {
 | `autoplay` | `false` | runs the player on mount; a `pause` in `when loaded` still holds the playhead |
 | `loop` | `true` | loops the timeline |
 | `padding` | `0` | margin around the page, in CSS px |
-| `audio` | `true` | `false` mutes `sound "…"` and audio tracks. Sounds are decoded when the document loads, so the first one plays on time |
+| `audio` | `true` | `false` mutes `sound "…"` and audio tracks. Sounds are decoded when the document loads, so the first one plays on time. A browser keeps the sound locked until the user touches the page: with `autoplay`, the clips start at the first click, key or tap anywhere on it, in step with the playhead — nothing to wire on the host side |
 | `input` | `true` | `false` = non-interactive preview: it animates but ignores pointer **and keyboard** |
 | `render` | `true` | `false` = headless (logic + `send`s only, no Canvas API needed) |
 | `resolveAsset` | embedded only | maps an asset to a URL. Default: embedded `data:` URIs only — see [Security](#security) |
