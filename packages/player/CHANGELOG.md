@@ -1,5 +1,21 @@
 # @flatkit/player
 
+## 0.46.0
+
+### Minor Changes
+
+- [`dc5313b`](https://github.com/flatink/flatkit/commit/dc5313b05e860e04d3a8bef10bf9642522010ca6) Thanks [@kaelhem](https://github.com/kaelhem)! - The sound starts at the first gesture on the page when the browser kept it locked. With `autoplay`, the clips are scheduled at load, outside any gesture: Safari leaves the AudioContext suspended and no later click asked again, so a looping clip at frame 0 stayed silent until a pause/play. The first pointer press or release, key or tap anywhere on the page now resumes the context and puts the clips of every playing player back on its playhead. A host that worked around it (audio off then on at the first gesture) can drop that.
+
+- [`65b7ae0`](https://github.com/flatink/flatkit/commit/65b7ae0b0ffd5926d376cd1939b5083f92f9da38) Thanks [@kaelhem](https://github.com/kaelhem)! - `reveal ... erase` leaves nothing of the veil where the finger went, and its edge is as soft as documented. Each frame's discs used to be blurred on their own before being added to the mask: a disc blurred alone is not opaque at its centre, so the stamps of successive frames never added up to a hole (faint rings inside the rubbed area, up to 13% of the veil left), and the blur was wide enough to spread the edge over two to three grains. The mask now keeps hard discs and the blur is applied once, to their union: measured on a scratch card with `brush 44 grain 11`, the edge goes from 34 units to 3. The outline follows the grid more visibly at a coarse grain; use a finer `grain` for a cleaner one.
+
+- [`5cb7e7f`](https://github.com/flatink/flatkit/commit/5cb7e7fabad42a37f48bd48e600fc75a1ca2bd66) Thanks [@kaelhem](https://github.com/kaelhem)! - `valign top|middle|bottom` on a text places its lines in the height of its box. `top` is the default and changes nothing. `middle` centres what the eye reads, from the top of the first line's capitals to the baseline of the last line, so a label sits in the middle of its frame whatever the font: no more nudging `at` by eye. `bottom` brings the last line down until its descenders touch the bottom of the box. Both count the lines actually drawn (`wrap`, line breaks); with no box height, `middle` centres the text on its `at` line.
+
+### Patch Changes
+
+- Updated dependencies [[`eca701d`](https://github.com/flatink/flatkit/commit/eca701dcd29f4a27c5e0d1bf36f9c315b54e2355), [`5cb7e7f`](https://github.com/flatink/flatkit/commit/5cb7e7fabad42a37f48bd48e600fc75a1ca2bd66)]:
+  - @flatkit/engine@0.46.0
+  - @flatkit/types@0.46.0
+
 ## 0.45.0
 
 ### Patch Changes
