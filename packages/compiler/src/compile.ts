@@ -11,7 +11,8 @@
 //  v1: no binary optimization nor media embedding (P2b). Pure, no DOM.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Doc, Item, Layer } from '@flatkit/types'
-import { parseFlatLib, parseProgramFull } from '@flatkit/engine/flatFormat'
+import { itemExpressionCalls, parseFlatLib, parseProgramFull } from '@flatkit/engine/flatFormat'
+import { providingPackage } from '@flatkit/engine/stdlib'
 import { isGroup, isInstance } from '@flatkit/engine/layers'
 import { compactDoc } from '@flatkit/engine/validateDoc'
 
@@ -55,6 +56,16 @@ export function compileFlatpack(programSrc: string, assetSrcs: string[] = [], me
     return r.kind === 'font' && !r.family ? { ...r, family: r.id } : r
   })
 
+  // A package function called by a LIBRARY symbol's expression (`draw "easeInOut(…)"` in a `.flat`): the
+  // program's own text and items were scanned by the parser, the libraries' were not. The author's own `fn`
+  // of that name still wins.
+  const own = new Set((prog.functions ?? []).map((f) => f.name))
+  const imports = [...(prog.imports ?? [])]
+  for (const lib of libs) for (const sym of lib.symbols) for (const call of itemExpressionCalls(sym.layers)) {
+    const pkg = own.has(call) ? undefined : providingPackage(call)
+    if (pkg && !imports.includes(pkg)) imports.push(pkg)
+  }
+
   return {
     width: prog.width,
     height: prog.height,
@@ -63,7 +74,7 @@ export function compileFlatpack(programSrc: string, assetSrcs: string[] = [], me
     ...(folders.length ? { folders } : {}),
     layers: prog.layers,
     ...(prog.variables && Object.keys(prog.variables).length ? { variables: prog.variables } : {}),
-    ...(prog.imports?.length ? { imports: prog.imports } : {}),
+    ...(imports.length ? { imports } : {}),
     ...(prog.functions?.length ? { functions: prog.functions } : {}),
     timeline: prog.timeline ?? { fps: 24, durationFrames: 60, tracks: [] },
     ...(prog.interactions?.length ? { interactions: prog.interactions } : {}),

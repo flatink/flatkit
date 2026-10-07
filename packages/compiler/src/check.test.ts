@@ -564,3 +564,62 @@ describe('checkProgram — a Doc-level warning points at its line', () => {
     expect(at(/unknown drop zone "Nowhere"/)).toEqual([21])
   })
 })
+
+// Reported by flatink: `each "Eclat" as i { … }` over GROUPS named Eclat0, Eclat1… did nothing, in silence —
+// `each` walks the instances of a SYMBOL. The five rings of the demo stayed frozen in a corner.
+describe('checkProgram — `each` on a name that is no symbol', () => {
+  const groups = 'scene { layer "c" { group "Eclat0" at 50,50 { layer "c" { circle 0 0 10 fill #ee3333 } }  group "Eclat1" at 150,50 { layer "c" { circle 0 0 10 fill #ee3333 } } } }'
+  const about = (src: string) => checkProgram(src).diagnostics.filter((d) => /each "/.test(d.message)).map((d) => `${d.severity} ${d.line}: ${d.message}`)
+  it('is warned, on its line, naming the groups it probably meant', () => {
+    const w = about(['size 300 200', 'var v = [0, 0]', groups, 'each "Eclat" as i { opacity = v[i] }', ''].join('\n'))
+    expect(w).toEqual([expect.stringMatching(/^warning 4: each "Eclat".*no symbol.*Eclat0, Eclat1/)])
+  })
+  it('an `each` over a real symbol, plain or parameterized, says nothing', () => {
+    const plain = ['size 300 200', 'var v = [0, 0]', 'symbol "Ring" {', '  layer "l" {', '    circle 0 0 10 fill #ee3333', '  }', '}',
+      'scene { layer "c" { instance "Ring" as "A" at 50,50  instance "Ring" as "B" at 150,50 } }', 'each "Ring" as i { opacity = v[i] }', ''].join('\n')
+    expect(about(plain)).toEqual([])
+    const param = ['size 300 200', 'var v = [0, 0]', 'symbol "Dot"(r) {', '  layer "l" {', '    circle 0 0 $(r) fill #ee3333', '  }', '}',
+      'scene { layer "c" { instance "Dot"(5) as "A" at 50,50  instance "Dot"(8) as "B" at 150,50 } }', 'each "Dot" as i { opacity = v[i] }', ''].join('\n')
+    expect(about(param)).toEqual([])
+  })
+})
+
+// Reported by flatink: a stroked line in a group stretched along ONE axis (`scaleY 100`) ran across the whole
+// canvas. A stroke scales with its group — its width, and its round caps (2 units of radius became 200 px).
+// It renders as documented, so the fix is the author's (`stroke … fixed`): `--check` now points at it.
+describe('checkProgram — a stroke inside a group stretched along one axis', () => {
+  const prog = (items: string[], behavior = '') => ['size 400 300', 'var fil = 100', 'scene {', '  layer "a" {', ...items.map((i) => `    ${i}`), '  }', '}', behavior, ''].join('\n')
+  const about = (src: string) => checkProgram(src).diagnostics.filter((d) => /stretched/.test(d.message)).map((d) => `${d.severity} ${d.line}: ${d.message}`)
+  const line = 'layer "c" { path "M0 0 L0 1" nofill stroke #ee3333 4 }'
+  it('an `expr` on one axis, a written scale, a binding in an object block', () => {
+    expect(about(prog([`group "A" at 100,50 pivot 0,0 expr scaleY "fil" { ${line} }`]))).toEqual([expect.stringMatching(/^warning 5: "A" is stretched along one axis.*fixed/)])
+    expect(about(prog([`group "C" at 300,50 pivot 0,0 scaleY 100 { ${line} }`]))).toHaveLength(1)
+    expect(about(prog([`group "D" at 300,50 pivot 0,0 { ${line} }`], 'object "D" {\n  scaleX = fil\n}'))).toHaveLength(1)
+  })
+  it('nothing to say when the stroke is `fixed`, the shape is filled, or the scale is even', () => {
+    expect(about(prog(['group "A" at 100,50 pivot 0,0 expr scaleY "fil" { layer "c" { path "M0 0 L0 1" nofill stroke #ee3333 4 fixed } }']))).toEqual([])
+    expect(about(prog(['group "B" at 200,50 pivot 0,0 expr scaleY "fil" { layer "c" { rect -2 0 4 1 fill #3333ee } }']))).toEqual([])
+    expect(about(prog([`group "E" at 100,50 pivot 0,0 scale 3 { ${line} }`]))).toEqual([])
+    expect(about(prog([`group "F" at 100,50 pivot 0,0 { ${line} }`], 'object "F" {\n  feedback lift tilt\n}'))).toEqual([]) // both axes move together
+  })
+  // Measured on real decks: a reveal wipe (`scaleX` running 0 → 1) fired the first version of this warning on
+  // 97 files. The stroke is never ENLARGED there. Only an axis at least twice the other, and at least 2.
+  it('a wipe-in that never enlarges, or a scale that cannot be known, is not warned', () => {
+    expect(about(prog([`group "W" at 100,50 pivot 0,0 { ${line} }`], 'object "W" {\n  scaleX = clamp(time / 0.25, 0, 1)\n}'))).toEqual([])
+    expect(about(prog([`group "H" at 100,50 pivot 0,0 scale 0.2 { ${line} }`], 'object "H" {\n  scaleY = 0.6\n}'))).toEqual([])
+    expect(about(prog([`group "M" at 100,50 pivot 0,0 { ${line} }`], 'object "M" {\n  scaleX = mouse.x\n}'))).toEqual([])
+  })
+})
+
+// Found while measuring the path rule on real libraries: a curve short of a number (`C-5,-59 -5,-54 L…`)
+// yields points that are not numbers. It still compiles — it always drew what it could — but it is said.
+describe('checkProgram — path data that is only partly readable', () => {
+  const prog = (d: string) => `size 300 200\nscene {\n  layer "c" {\n    path "${d}" fill #ee3333\n  }\n}\n`
+  const about = (src: string) => checkProgram(src).diagnostics.filter((d) => /path data/.test(d.message)).map((d) => `${d.severity} ${d.line}: ${d.message}`)
+  it('is warned, on its line, with the data', () => {
+    expect(about(prog('M-5,2 L-4,2 L-4,-52 C-5,-59 -5,-54 L-5,2 Z'))).toEqual([expect.stringMatching(/^warning 4: .*path data.*M-5 2 L-4 2/)])
+  })
+  it('a well-formed path says nothing', () => {
+    expect(about(prog('M0 0 C10 0 10 10 0 10 Z'))).toEqual([])
+  })
+})

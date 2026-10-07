@@ -217,3 +217,13 @@ describe('compile — `draw` and `reveal … cells` reach the .flatpack', () => 
     expect(pack.interactors?.[0]).toMatchObject({ axis: 'reveal', varX: 'covered', grid: 25, erase: true, cells: 'grid' })
   })
 })
+
+// Reported by flatink (the same gap, one level down): a symbol of a `.flat` library calling a package
+// function in one of its expressions. The library's text was never looked at for imports.
+describe('compile — a package function called from a library symbol is imported', () => {
+  it('`draw "easeInOut(…)"` inside a `.flat`', () => {
+    const lib = 'symbol "Trail" {\n  layer "l" {\n    path "M0 0 L100 0" nofill stroke #ee3333 4 draw "easeInOut(clamp(frame / 48, 0, 1))"\n  }\n}\n'
+    const doc = compileFlatpack('size 200 200\nscene {\n  layer "c" {\n    instance "Trail" as "T" at 10,10\n  }\n}\n', [lib])
+    expect(doc.imports ?? []).toContain('easing')
+  })
+})

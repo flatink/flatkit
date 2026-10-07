@@ -43,7 +43,9 @@ rect 0 0 40 40 fill #00aaff opacity 0.5                         # 0..1 (8-digit 
 ```
 
 A stroke is drawn in the shape's own space, so it scales with its group — and a shape STRETCHED by
-`scaleX = 4` gets sides four times as thick as the others. `fixed` keeps the width in scene units whatever
+`scaleX = 4` gets sides four times as thick as the others. Its round caps stretch too: a 4-unit line in a
+group at `scaleY 100` ends in caps 200 px long and runs across the canvas (`--check` warns on a stroked
+shape in a group stretched along one axis). `fixed` keeps the width in scene units whatever
 the shape's scale (SVG's non-scaling stroke): `rect 0 0 60 30 nofill stroke #000 2 fixed` stays an even
 2-unit line on a rail or a gauge stretched at run time. The view's zoom still applies. With a gradient
 stroke, the gradient then follows the scene; the touch area of an outline-only shape keeps its own width.
@@ -119,6 +121,10 @@ alpha, since a param is a 6-digit hue:
 params { color teinte = #ffe9a8 }
 circle 0 0 60 fill radial(0.5, 0.5, 0.5, 0:teinte@0.8, 1:teinte@0)   # same hue, alpha fading 0.8 → 0
 ```
+
+A gradient fades THROUGH the hue of its transparent stop, as any canvas gradient does: `0:#ffe9b000,
+1:#000000d0` shows a cream edge on its way to black. Give the transparent stop the hue it fades to
+(`0:#00000000`) for a clean fade.
 
 Param and literal stops mix freely (`0:teinte@0.8, 0.5:#3366ffcc, 1:teinte@0`). See
 [exposed parameters](animating-symbols.md#exposed-parameters-params).

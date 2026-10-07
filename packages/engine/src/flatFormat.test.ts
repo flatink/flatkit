@@ -2110,3 +2110,78 @@ describe('objectTargetDiagnostics — an object name that matches two items', ()
     expect(objectTargetDiagnostics(prog([`group "B" at 10,10 { layer "a" { text "B" as "lblB" at 0,0 } }`]))).toEqual([])
   })
 })
+
+// Reported by flatink (demos written on 0.40): `flatc: compile error: "join" belongs to stroke …` came with
+// no file, no line — eleven parser errors were plain `Error`s. Every one now says where.
+describe('parser errors — every one carries its position', () => {
+  const at = (src: string): { line: number; col: number; message: string } | null => {
+    try { parseProgram(src) } catch (e) { const x = e as { line?: number; col?: number; message: string }; return typeof x.line === 'number' ? { line: x.line, col: x.col ?? 0, message: x.message } : null }
+    return null
+  }
+  it('a stroke option out of place (the reported one)', () => {
+    const e = at('size 300 200\nscene {\n  layer "c" {\n    circle 150 100 60 nofill stroke #e33 2 dash 6,8 draw 1 join round\n  }\n}\n')
+    expect(e).toMatchObject({ line: 4, col: 60 }) // the `join` itself
+    expect(e!.message).toMatch(/"join" belongs to `stroke`/)
+  })
+  it('the others too: `as` out of place, `fill none`, a cel with neither pose nor matter', () => {
+    expect(at('size 300 200\nscene {\n  layer "c" {\n    rect 0 0 10 10 fill #ffffff as "R"\n  }\n}\n')).toMatchObject({ line: 4 })
+    expect(at('size 300 200\nscene {\n  layer "c" {\n    rect 0 0 10 10 fill none\n  }\n}\n')).toMatchObject({ line: 4 })
+    expect(at('size 300 200\nscene {\n  layer "c" {\n    cel 0 {\n      circle 0 0 5 fill #000000\n    }\n  }\n}\n')).toMatchObject({ line: 5 })
+  })
+})
+
+// Reported by flatink: `def P = "M20 20 L280 180"` then `path "$(P)"` compiled to a path with NO subpath,
+// drawn as nothing, and `--check` passed. The need is the obvious one — the same outline used four times
+// (trace guide, ink, halo, dashes). A `def` whose value is a quoted text is inserted as written.
+describe('`def` — a text value, inserted where `$(name)` is written', () => {
+  const prog = (lines: string[]) => ['size 300 200', ...lines, ''].join('\n')
+  const paths = (src: string) => (parseProgram(src).layers[0].items as Region[]).map((r) => r.path.subpaths.length)
+  it('the same path data reused, inside a quoted string', () => {
+    const src = prog(['def P = "M20 20 L280 180"', 'scene { layer "c" {', '  path "$(P)" nofill stroke #ee3333 4', '  path "$(P)" nofill stroke #333333 1 dash 4,4', '} }'])
+    expect(paths(src)).toEqual([1, 1])
+    expect((parseProgram(src).layers[0].items[0] as Region).path.subpaths[0].segments.map((s) => s.anchor)).toEqual([{ x: 20, y: 20 }, { x: 280, y: 180 }])
+  })
+  it('numeric defs keep working, and may sit next to a text one', () => {
+    const src = prog(['def W = 40', 'def P = "M0 0 L10 0"', 'scene { layer "c" {', '  path "$(P)" nofill stroke #ee3333 $(W / 10)', '  rect 0 0 $(W) $(W * 2) fill #000000', '} }'])
+    expect(paths(src)).toEqual([1, 1])
+  })
+  it('a text def works inside a `repeat`, and the line numbers below it do not move', () => {
+    const src = prog(['def P = "M0 0 L10 10"', 'scene { layer "c" {', '  repeat i from 0 to 2 {', '    path "$(P)" nofill stroke #ee3333 1', '  }', '  rect 0 0 10 10 fill nope', '} }'])
+    let line = 0
+    try { parseProgram(src.replace('fill nope', 'fill none')) } catch (e) { line = (e as { line: number }).line }
+    expect(line).toBe(7)
+    expect(paths(src.replace('  rect 0 0 10 10 fill nope\n', ''))).toEqual([1, 1, 1])
+  })
+})
+
+// …and when path data cannot be read at all, that is said: an empty path used to compile and draw nothing.
+describe('`path` — data that yields no subpath is refused', () => {
+  const one = (d: string) => () => parseProgram(`size 300 200\nscene { layer "c" { path "${d}" nofill stroke #ee3333 4 } }\n`)
+  it('an unresolved `$(…)`, an empty string', () => {
+    expect(one('$(Nope)')).toThrow(/path.*\$\(Nope\)/)
+    expect(one('')).toThrow(/path/)
+    expect(one('12 34')).toThrow(/path/)
+    expect(one('M0 0 L10 10')).not.toThrow()
+  })
+  // Measured on real libraries: two `.flat` files hold a curve short of a number. They compiled and drew;
+  // refusing them would break every program beside them. Partly readable data is a `--check` warning.
+  it('data that is only partly readable still compiles', () => {
+    expect(one('M-5,2 L-4,2 C-5,-59 -5,-54 L-5,2 Z')).not.toThrow()
+  })
+})
+
+// Reported by flatink: `draw "easeInOut(…)"` drew the whole stroke at once. A package is imported because
+// the program CALLS one of its functions — but the call was looked for in the program text with its strings
+// removed, and a scene expression (`draw`, `bind`, `expr x`, a spring target) IS a string.
+describe('auto-import — a package function called from a scene expression', () => {
+  const imports = (item: string) => parseProgramFull(['size 300 200', 'var v = 0', 'scene { layer "c" {', `  ${item}`, '} }', ''].join('\n')).imports ?? []
+  it('in `draw`, `bind`, an `expr` attribute, a modifier target', () => {
+    expect(imports('path "M20 100 L280 100" nofill stroke #ee3333 6 draw "easeInOut(clamp(frame / 48, 0, 1))"')).toContain('easing')
+    expect(imports('text "{}" at 0,0 bind "snap(v, 5)"')).toContain('gesture')
+    expect(imports('group "G" at 0,0 expr x "easeOut(v) * 100" { layer "a" { circle 0 0 5 fill #000000 } }')).toContain('easing')
+    expect(imports('group "G" at 0,0 smooth x "easeIn(v) * 100" k 0.2 { layer "a" { circle 0 0 5 fill #000000 } }')).toContain('easing')
+  })
+  it('a quoted text that only LOOKS like a call imports nothing', () => {
+    expect(imports('text "easeInOut(x) is a curve" at 0,0')).toEqual([])
+  })
+})

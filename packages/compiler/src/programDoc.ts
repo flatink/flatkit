@@ -28,7 +28,7 @@ import { lineIndex } from './sourceLines'
 import { forEachAction, forEachExpression } from './docWalk'
 import { parseUnits } from '@flatkit/engine/dsl'
 import { MATH_CTX, STD_CONSTANTS, STD_FUNCTIONS, STD_IDS, compileCached, evalExpr, exprScope, type ExprContext } from '@flatkit/engine/expr'
-import type { Image, Item, Layer, ParamDef, Region, SymbolDef, Text, Transform } from '@flatkit/types'
+import type { FuncDef, Image, Item, Layer, ParamDef, Region, SymbolDef, Text, Transform } from '@flatkit/types'
 
 /** Rebuilds the "program" text of a scope (imports + variables + functions + scene cycle
  *  + one `object "Name" { … }` block per scripted container with a unique name). Pure, round-trip via printUnits. */
@@ -255,6 +255,28 @@ function instanceParamWarnings(doc: Doc): string[] {
   return out
 }
 
+/** An expression evaluated OUTSIDE a player: at a given `time`, with the given variables and the program's
+ *  value functions. NaN when it needs what only a running scene has (`mouse`, `self`, an object, `random()`). */
+function evalStatically(expr: string, time: number, fps: number, vars: Record<string, number | number[]>, fns: FuncDef[]): number {
+  const base: ExprContext = { ...vars }
+  let depth = 0
+  for (const f of fns) {
+    if (f.kind !== 'value') continue
+    const c = compileCached(f.expr) // once per text, not once per expression checked
+    base[f.name] = (...args: number[]) => {
+      if (!c.ok || depth > 32) return Number.NaN
+      const local = exprScope(base, time, time * fps, undefined, time)
+      f.params.forEach((p, i) => { local[p] = args[i] ?? 0 })
+      depth++
+      const r = evalExpr(c.node, local, Number.NaN)
+      depth--
+      return r
+    }
+  }
+  const c = compileCached(expr)
+  return c.ok ? evalExpr(c.node, exprScope(base, time, time * fps, undefined, time), Number.NaN) : Number.NaN
+}
+
 /**
  * A channel driven by `time` that ENDS a loop where it started does not jump when `time` resets: one turn
  * per loop, a whole number of periods (flatink/flatink#68, from #64.4b). Evaluated at `time` 0 and at the
@@ -273,25 +295,7 @@ function loopsSeamlessly(doc: Doc, expr: string, channel: string, loopSecs: numb
   if ([...written].some((n) => typeof doc.variables?.[n] === 'number')) variants.push(Object.fromEntries(Object.entries(doc.variables ?? {}).map(([k, v]) => [k, written.has(k) && typeof v === 'number' ? v + 1.37 : v])))
   return variants.every((vars) => endsWhereItStarts(vars))
   function endsWhereItStarts(vars: Record<string, number | number[]>): boolean {
-    const at = (time: number): number => {
-      const base: ExprContext = { ...vars }
-      let depth = 0
-      for (const f of fns) {
-        const c = compileCached(f.expr) // once per text, not once per expression checked
-        base[f.name] = (...args: number[]) => {
-          if (!c.ok || depth > 32) return Number.NaN
-          const local = exprScope(base, time, time * fps, undefined, time)
-          f.params.forEach((p, i) => { local[p] = args[i] ?? 0 })
-          depth++
-          const r = evalExpr(c.node, local, Number.NaN)
-          depth--
-          return r
-        }
-      }
-      const c = compileCached(expr)
-      return c.ok ? evalExpr(c.node, exprScope(base, time, time * fps, undefined, time), Number.NaN) : Number.NaN
-    }
-    const a = at(0), b = at(loopSecs)
+    const a = evalStatically(expr, 0, fps, vars, fns), b = evalStatically(expr, loopSecs, fps, vars, fns)
     if (!Number.isFinite(a) || !Number.isFinite(b)) return false
     const eps = 1e-6 * Math.max(1, Math.abs(a), Math.abs(b))
     if (channel === 'rotation') { const d = Math.abs(b - a) % (2 * Math.PI); return d < eps || 2 * Math.PI - d < eps }
@@ -310,6 +314,61 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
       out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `unknown drop zone "${it.over}" (object "${who}") — no item of the scene carries this name` } })
     }
   }
+  // (a bis) `each "Name"` walks the INSTANCES OF A SYMBOL. Over a name that is no symbol — a family of
+  //     groups `Name0`, `Name1`… is the usual one — it binds nothing, and nothing said so.
+  const symbolNames = new Set(doc.symbols.map((s) => s.name))
+  for (const tl of [doc.timeline, ...doc.symbols.map((s) => s.timeline)]) for (const b of tl?.binds ?? []) {
+    if (symbolNames.has(b.symbol)) continue
+    const near = [...names].filter((n) => n.startsWith(b.symbol)).slice(0, 4)
+    out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `each "${b.symbol}": no symbol of that name — \`each\` walks the instances of a symbol, so this binds nothing${near.length ? ` (${near.join(', ')}… are groups: make them instances of one symbol, or bind each in its own \`object\` block)` : didYouMean(b.symbol, [...symbolNames])}` } })
+  }
+  // (a quater) Path data that is only PARTLY readable: a curve short of a number leaves points that are not
+  //     numbers. It compiles and draws what it can (real libraries hold some), so it is a warning.
+  const partly = (layers: Layer[]): void => {
+    for (const l of layers) for (const it of [...l.items, ...(l.cels ?? []).flatMap((c) => c.matter ?? [])]) {
+      if (isGroup(it)) { partly(it.layers); continue }
+      if (!isRegion(it) || it.poly) continue
+      const pts = it.path.subpaths.flatMap((sp) => sp.segments.flatMap((sg) => [sg.anchor, sg.inHandle, sg.outHandle]))
+      if (!pts.some((p) => p && !(Number.isFinite(p.x) && Number.isFinite(p.y)))) continue
+      const start = it.path.subpaths[0]!.segments.slice(0, 2).map((sg, i) => `${i ? 'L' : 'M'}${sg.anchor.x} ${sg.anchor.y}`).join(' ')
+      out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `path data starting "${start}" is only partly readable — a command is short of a number (a curve \`C\` takes six, an arc \`A\` seven): the shape is drawn up to there, and wrong after` } })
+    }
+  }
+  partly(doc.layers)
+  for (const sym of doc.symbols) partly(sym.layers)
+  // (a ter) A stroked shape in a container stretched along ONE axis. A stroke is drawn in its shape's space:
+  //     its width and its round caps stretch with the group (`scaleY 100`: a 2-unit cap becomes 200 px, the
+  //     line runs across the canvas). It renders as documented, so nothing is "fixed" for the author — the
+  //     way out (`stroke … fixed`) is named. Only a clear one-axis stretch: a binding on scaleX or scaleY
+  //     alone, or a written scale at least twice as large on one axis. A `feedback lift tilt` moves both.
+  const strokedIn = (layers: Layer[], seen: Set<string>): boolean => layers.some((l) =>
+    [...l.items, ...(l.cels ?? []).flatMap((c) => c.matter ?? [])].some((it) => {
+      if (isRegion(it)) return !!it.stroke && !it.stroke.fixed
+      if (isGroup(it)) return strokedIn(it.layers, seen)
+      if (isInstance(it) && !seen.has(it.symbolId)) { seen.add(it.symbolId); const sym = doc.symbols.find((s) => s.id === it.symbolId); return !!sym && strokedIn(sym.layers, seen) }
+      return false
+    }))
+  // What the scale IS at the start (a written scale, or an expression with the variables at their start
+  // value). An axis ENLARGED: at least twice the other, and at least 2 — a reveal wipe running 0 → 1 never
+  // enlarges the stroke, and fired the first version of this on 97 real decks. Unknowable: not warned.
+  const stretchFns = [...importedFunctions(doc.imports), ...(doc.functions ?? [])]
+  const stretched = (it: Group | Instance): boolean => {
+    const t = it.transform, ex = it.expressions
+    const axis = (expr: string | undefined, written: number): number => Math.abs(expr ? evalStatically(expr, 0, doc.timeline?.fps ?? 24, doc.variables ?? {}, stretchFns) : written)
+    const sx = axis(ex?.scaleX, Math.hypot(t.a, t.b)), sy = axis(ex?.scaleY, Math.hypot(t.c, t.d))
+    if (!Number.isFinite(sx) || !Number.isFinite(sy)) return false
+    const big = Math.max(sx, sy), small = Math.min(sx, sy)
+    return big >= 2 && big >= 2 * small
+  }
+  const visitStretch = (layers: Layer[]): void => {
+    for (const l of layers) for (const it of l.items) {
+      if (!isGroup(it) && !isInstance(it)) continue
+      const inside = isGroup(it) ? it.layers : (doc.symbols.find((s) => s.id === it.symbolId)?.layers ?? [])
+      if (it.name && stretched(it) && strokedIn(inside, new Set())) out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `"${it.name}" is stretched along one axis and holds a stroked shape — a stroke stretches with its group, its width and its round caps too, so it runs far past the shape. Add \`fixed\` to the stroke (\`stroke #e33 4 fixed\`), or draw it as a filled \`rect\`` } })
+      if (isGroup(it)) visitStretch(it.layers)
+    }
+  }
+  visitStretch(doc.layers)
   // (b) global variable never referenced (declared but not found in any scope) -> probably dead.
   const names0 = Object.keys(doc.variables ?? {})
   if (names0.length) {

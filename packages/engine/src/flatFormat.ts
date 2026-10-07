@@ -23,7 +23,7 @@ import type { Interaction } from './actions'
 import type { BlendMode, ChannelModifier, Focusable, Interactor } from '@flatkit/types'
 import { EXPR_CHANNELS, BIND_CHANNELS, type Easing, type ExprChannel, type BindChannel, type SoundClip, type Timeline } from './timeline'
 import { parsePathData, circlePath, ellipsePath, rectPath } from './svgPath'
-import { compileExpr, evalExpr, exprScope } from './expr'
+import { analyzeExpr, compileExpr, evalExpr, exprScope } from './expr'
 import { isGroup, isInstance, isText, isImage, isPoseable, isRegion, folderPath, isNamedByContent } from './layers'
 import { itemBoundsByName } from './groups'
 import type { BBox } from './bbox'
@@ -440,18 +440,25 @@ export function parseProgram(src: string): Program {
 const REPEAT_BUDGET = 5000 // anti-explosion guard (sum of the unfolded iterations of a program)
 
 /** Evaluates a COMPILE-TIME arithmetic expression with the loop variables `env`. */
-function evalConst(src: string, env: Record<string, number>): number {
+function evalConst(src: string, env: Defs): number {
   const c = compileExpr(src)
-  return c.ok ? evalExpr(c.node, exprScope(env, 0, 0), Number.NaN) : Number.NaN
+  return c.ok ? evalExpr(c.node, exprScope(env as Record<string, number>, 0, 0), Number.NaN) : Number.NaN // a text def is not a number: NaN, as any unknown name
 }
+/** Compile-time names: `def`s (a number, or a TEXT inserted as written) and loop variables. */
+type Defs = Record<string, number | string>
 /** Replaces the `$(expr)` interpolations of a fragment with their value (loop variables `env`). */
-function interpolate(text: string, env: Record<string, number>): string {
+function interpolate(text: string, env: Defs): string {
   let out = '', i = 0
   while (i < text.length) {
     if (text[i] === '$' && text[i + 1] === '(') {
       let j = i + 2, depth = 1
       for (; j < text.length && depth > 0; j++) { if (text[j] === '(') depth++; else if (text[j] === ')') { depth--; if (depth === 0) break } }
       const expr = text.slice(i + 2, j)
+      // A TEXT def (`def P = "M20 20 L280 180"`) is inserted as written: the same path data, a colour, a
+      // font name used several times. It used to be read as a number, fail, and leave `$(P)` in place —
+      // which then parsed as an EMPTY path, in silence.
+      const word = env[expr.trim()]
+      if (typeof word === 'string' && Object.hasOwn(env, expr.trim())) { out += word; i = j + 1; continue }
       const v = evalConst(expr, env)
       out += Number.isFinite(v) ? String(Math.round(v * 1e6) / 1e6) : `$(${expr})` // invalid → left as is (parse error downstream)
       i = j + 1
@@ -493,7 +500,7 @@ function findRepeat(text: string): { at: number; name: string; lo: string; hi: s
   return null
 }
 /** Recursively unfolds the `repeat … { … }` of a scene fragment (interpolates `$()` along the way). */
-function expandRepeats(text: string, env: Record<string, number>, budget: RepeatBudget): string {
+function expandRepeats(text: string, env: Defs, budget: RepeatBudget): string {
   const m = findRepeat(text)
   if (!m) return interpolate(text, env)
   const close = matchBrace(text, m.open)
@@ -522,16 +529,21 @@ function expandRepeats(text: string, env: Record<string, number>, budget: Repeat
 }
 /** Extracts the `def <name> = <expr>` constants (compile-time) and REMOVES their lines from the source.
  *  A `def` may reference the previous `def`s. Trailing `//` comments in the value are ignored. */
-function extractDefs(src: string): { src: string; defs: Record<string, number> } {
+function extractDefs(src: string): { src: string; defs: Defs } {
   if (!/\bdef\b/.test(src)) return { src, defs: {} }
-  const defs: Record<string, number> = {}
+  const defs: Defs = {}
   const re = /^\s*def\s+([A-Za-z_]\w*)\s*=\s*(.+?)\s*$/
   const kept: string[] = []
   for (const line of src.split('\n')) {
     const m = re.exec(line)
     // Evaluated with the previous defs. The line is BLANKED, not removed: every line below keeps its number,
     // so a syntax error further down is reported where the author wrote it.
-    if (m) { defs[m[1]] = evalConst(m[2].replace(/\/\/.*$/, '').trim(), defs); kept.push(''); continue }
+    if (m) {
+      const text = /^"((?:[^"\\]|\\.)*)"\s*(?:\/\/.*)?$/.exec(m[2]) // a quoted value: a text def
+      defs[m[1]] = text ? text[1]! : evalConst(m[2].replace(/\/\/.*$/, '').trim(), defs)
+      kept.push('')
+      continue
+    }
     kept.push(line)
   }
   return { src: kept.join('\n'), defs }
@@ -683,7 +695,7 @@ function expandSymbolInstances(scene: string, templates: Map<string, SymbolTempl
 /** Extends `each "Tmpl" as i { … }` TO THE HANDLERS: if `Tmpl` is a parameterized template, unfolds into one
  *  `object "<group>" { … }` block per generated instance (index `i` substituted). The `each` on a REAL symbol
  *  (real instances) is left intact → runtime channel binding (Timeline.binds). */
-function expandEachHandlers(src: string, registry: Map<string, string[]>, defs: Record<string, number> = {}): string {
+function expandEachHandlers(src: string, registry: Map<string, string[]>, defs: Defs = {}): string {
   if (!registry.size || !/\beach\b/.test(src)) return src
   const re = /\beach\s+"((?:[^"\\]|\\.)*)"\s+as\s+([A-Za-z_]\w*)\s*\{/g
   let out = '', cursor = 0
@@ -711,7 +723,7 @@ function expandEachHandlers(src: string, registry: Map<string, string[]>, defs: 
  *  object/each behavior), unfolds `repeat` (+ `$(index)`) in the scene, then unfolds the
  *  `instance "Tmpl"(…)` into groups. The `$()` not resolvable by `def`s alone (loop indices,
  *  symbol params) stay intact for their dedicated passes. */
-export function expandSceneSugar(src: string): { src: string; symbolGroups: Map<string, string[]>; defs: Record<string, number> } {
+export function expandSceneSugar(src: string): { src: string; symbolGroups: Map<string, string[]>; defs: Defs } {
   const symbolGroups = new Map<string, string[]>()
   const { src: s1, defs } = extractDefs(src)
   // $(def) resolved on the WHOLE source (object/each expressions benefit from it); $(loopvar)/$(param)
@@ -1231,14 +1243,42 @@ function calledFunctions(src: string): Set<string> {
   return out
 }
 
+/**
+ * The functions CALLED by the expressions scene items carry: channel `expr`s, spring / smooth targets, a
+ * text's `bind`s and path offsets, a stroke's `draw` / `from`, a polyline's `count`. They are quoted in the
+ * source, so the text scan above (which drops strings, rightly: a `send "pulse(x)"` is not a call) never
+ * saw them — `draw "easeInOut(…)"` drew the whole stroke, its function unresolved. Parsed, not grepped.
+ */
+export function itemExpressionCalls(layers: Layer[], into: Set<string> = new Set()): Set<string> {
+  const add = (expr: string | undefined): void => {
+    if (!expr) return
+    const a = analyzeExpr(expr)
+    if (a.ok) for (const c of a.refs.calls) into.add(c.slice(c.lastIndexOf('.') + 1))
+  }
+  const leaf = (it: Item): void => {
+    if (isText(it)) { add(it.bind); for (const b of it.bindMore ?? []) add(b); add(it.textPath?.startExpr); add(it.textPath?.spacingExpr) }
+    else if (isRegion(it)) { add(it.drawExpr); add(it.drawFromExpr); add(it.poly?.count) }
+  }
+  for (const l of layers) {
+    for (const it of l.items) {
+      leaf(it)
+      if ('expressions' in it && it.expressions) for (const e of Object.values(it.expressions)) add(e)
+      if ('modifiers' in it && it.modifiers) for (const m of Object.values(it.modifiers)) add(m?.target)
+      if (isGroup(it)) itemExpressionCalls(it.layers, into)
+    }
+    for (const c of l.cels ?? []) for (const r of c.matter ?? []) leaf(r)
+  }
+  return into
+}
+
 /** Packages to import because the program CALLS one of their functions. A package is a VOCABULARY, not a
  *  module to wire up: `pulse(…)` must work because it was written, not because an unrelated `feedback …`
  *  line elsewhere happened to pull the package in — which made a program break at the exact moment its last
  *  element was removed. Never overrides an author's own `fn` of that name, and skips ambiguous names. */
-function autoImports(src: string, ownFunctions: FuncDef[], declared: string[]): string[] {
+function autoImports(src: string, ownFunctions: FuncDef[], declared: string[], inItems: Iterable<string> = []): string[] {
   const own = new Set(ownFunctions.map((f) => f.name))
   const out = new Set(declared)
-  for (const call of calledFunctions(src)) {
+  for (const call of [...calledFunctions(src), ...inItems]) {
     if (own.has(call)) continue // the author's own definition wins
     const pkg = providingPackage(call)
     if (pkg) out.add(pkg)
@@ -1269,7 +1309,9 @@ export function parseProgramFull(src: string): Program {
   if (Object.keys(tlScripts).length || composition.timeline) result.timeline = { ...baseTl, ...tlScripts }
   const functions = unitsToFunctions(sceneUnits)
   if (functions.length) result.functions = functions
-  const imports = autoImports(src, functions, composition.imports ?? [])
+  const inItems = itemExpressionCalls(composition.layers)
+  for (const sym of composition.symbols ?? []) itemExpressionCalls(sym.layers, inItems)
+  const imports = autoImports(src, functions, composition.imports ?? [], inItems)
   if (imports.length) result.imports = imports
 
   const byName = itemsByName(composition.layers)
@@ -1574,7 +1616,18 @@ class FlatParser {
     return parent
   }
 
-  parse(): SymbolDef[] {
+  /** Runs a parse and gives ANY error its position: the rules written with a plain `throw new Error(…)`
+   *  reached the author as `compile error: …` with no file and no line (reported by flatink). The token
+   *  the parser stopped on is where to look. */
+  private located<T>(run: () => T): T {
+    try { return run() } catch (e) {
+      if (e instanceof FlatSyntaxError || !(e instanceof Error)) throw e
+      this.fail(e.message)
+    }
+  }
+  parse(): SymbolDef[] { return this.located(() => this.symbols()) }
+  program(): Program { return this.located(() => this.programBody()) }
+  private symbols(): SymbolDef[] {
     const out: SymbolDef[] = []
     while (this.peek() && this.is('symbol')) out.push(this.symbol())
     // A `.flat` holds symbols only. Stopping at the first other line dropped every symbol after it, and the
@@ -1583,7 +1636,7 @@ class FlatParser {
     return out
   }
   // Program: size + background + variables + media (asset/sound) + scene composition.
-  program(): Program {
+  private programBody(): Program {
     let width = 800, height = 600
     let background: string | undefined
     const variables: Record<string, number | number[]> = {}
@@ -1834,10 +1887,20 @@ class FlatParser {
       return rectPath(x, y, w, h, rx, ry)
     }
     this.eat('path')
+    const at = this.p
     const d = this.str()
     // `path "…" smooth`: free-hand material — its lines are rounded where the outline turns gently.
     const smooth = this.is('smooth') ? (this.next(), true) : false
-    return parsePathData(d, { smooth })
+    const path = parsePathData(d, { smooth })
+    // Data that yields NOTHING used to compile to an empty path, drawn as nothing, with `--check` passing:
+    // an unresolved `$(name)`, an empty string. (Data that is only partly readable — a curve short of a
+    // number — still draws what it can, as it always did: `--check` warns about it, real libraries hold some.)
+    if (!path.subpaths.length) {
+      this.p = at
+      const hint = /\$\(/.test(d) ? ' — `$(…)` was not replaced: is the `def` (or the parameter) it names declared?' : ''
+      this.fail(`path "${d.length > 40 ? d.slice(0, 40) + '…' : d}" holds no drawable data: SVG path data is expected, starting with a move (\`M x y …\`)${hint}`)
+    }
+    return path
   }
   /** `polyline <xs> <ys> [count <n|"expr">] [closed]`: a shape whose points are two array variables. */
   private polyline(): NonNullable<Region['poly']> {

@@ -355,6 +355,10 @@ and composes with `self.x`/`self.y` etc. (same `self`).
   e.g. `x = 20 + t * $(vmax)`). ⚠️ Compile-time only: `def`s are NOT runtime variables (no
   `var`), they vanish from the model (like `repeat`); for a value that changes at runtime,
   use `var`. (Avoid naming a `def` like a symbol parameter — collision.)
+  A `def` whose value is a **quoted text** is inserted as written — the way to use the same path data
+  (or a colour, a font name) several times: `def P = "M20 20 L280 180"`, then `path "$(P)" …` for the
+  trace guide, the ink, the halo. A `path` whose data yields nothing (an unresolved `$(…)`, a typo) is a
+  compile error, not an empty shape.
 - **`at center` anchor**: positions an item at the canvas center. `at center` (both axes),
   `at center,540` (x centered, y = 540), `at 120,center` (x = 120, y centered). Sugar
   resolved at parse from `size` (re-serialized as coords, like `def`). Composes with `$()`.
