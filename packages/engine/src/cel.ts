@@ -38,7 +38,8 @@ const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
  *  - Material: HOLD (last key ≤ frame that defines `matter`), never interpolated.
  *  - Containers: present = those with a pose in the current key `A`; tween toward `B` if `A.tween` and
  *    the same id is present in `B`; otherwise pose held.
- *  - z-order v1: material behind, containers in front (split into layers for another order).
+ *  - z-order: material behind, then the containers in the order the layer declares them (split into
+ *    layers for another order).
  */
 export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = {}): Item[] {
   const cels = layer.cels
@@ -84,15 +85,20 @@ export function resolveLayerAt(layer: Layer, frame: number, opts: ResolveOpts = 
   // extent (`draw "<expr>"`) — which has to be evaluated here, exactly like a static layer's (below).
   const out: Item[] = matter?.length ? (matter.some(isDynamicLeaf) ? matter.map((r) => resolveDynamicLeaf(r, frame, opts) as Region) : [...matter]) : []
 
-  // Containers present at A (poses), tweened toward B if applicable (or guided by a guide layer).
-  const byId = A.poses.length > 1 ? new Map(layer.items.map((it) => [it.id, it])) : null // O(1) lookup per pose (vs O(items) find)
-  for (const p of A.poses) {
-    const body = byId ? byId.get(p.id) : layer.items.find((b) => b.id === p.id)
-    if (!body || !isPoseable(body)) continue
+  // Containers present at A (poses), tweened toward B if applicable (or guided by a guide layer). They
+  // stack in the order the layer DECLARES them, whatever the order of the poses in the cel: a cel lists
+  // what moves, in any order, and a `hold` cel appends the ones it carries — neither is a z-order.
+  const draw = (p: Pose, body: Item | undefined): void => {
+    if (!body || !isPoseable(body)) return
     let pose = opts.guide ? guidedPose(p, A, B, frame, body, opts.guide, opts.orient) : poseAt(p, A, B, frame, body)
     if (body.expressions || body.modifiers) pose = applyExprChannels(body.expressions ?? {}, pose, frame, opts, body.id, body.pivot, body.modifiers)
     const item = { ...body, transform: pose.transform, opacity: pose.opacity, ...(pose.tint ? { tint: pose.tint } : { tint: undefined }), ...(pose.filters ? { filters: pose.filters } : { filters: undefined }) } as Item
     out.push(resolveDynamicLeaf(item, frame, opts))
+  }
+  if (A.poses.length === 1) { const p = A.poses[0]; draw(p, layer.items.find((b) => b.id === p.id)) }
+  else if (A.poses.length > 1) {
+    const byId = new Map(A.poses.map((p) => [p.id, p])) // O(1) lookup per roster item
+    for (const body of layer.items) { const p = byId.get(body.id); if (p) draw(p, body) }
   }
   return out
 }

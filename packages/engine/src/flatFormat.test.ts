@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { printFlat, parseFlat, parseFlatLib, pathToData, printProgram, parseProgram, printProgramFull, parseProgramFull, behaviorDiagnostics, objectTargetDiagnostics, expandFeedback, sceneOnlyUnitDiagnostics, itemOnlyUnitDiagnostics, type Program } from './flatFormat'
 import { parsePathData, circlePath, ellipsePath, rectPath } from './svgPath'
 import { folderPath } from './layers'
+import { resolveLayerAt } from './cel'
 import type { Folder, Group, Image, Instance, Region, SymbolDef, Text } from '@flatkit/types'
 import type { Path } from './path'
 
@@ -2183,5 +2184,24 @@ describe('auto-import — a package function called from a scene expression', ()
   })
   it('a quoted text that only LOOKS like a call imports nothing', () => {
     expect(imports('text "easeInOut(x) is a curve" at 0,0')).toEqual([])
+  })
+})
+
+describe('cel hold — a carried container keeps its place in the stack (flatink/flatink demos, 0.45)', () => {
+  it('a `hold` cel moving the front piece leaves the carried one behind it', () => {
+    const src = `size 200 100
+timeline 30 20
+scene {
+  layer "L" {
+    group "Back" at 60,50 { layer "c" { rect -40 -40 80 80 fill #ff0000 } }
+    group "Front" at 100,50 { layer "c" { rect -40 -40 80 80 fill #0000ff } }
+    cel 0 { pose "Back" scale 1  pose "Front" scale 1 }
+    cel 10 hold { pose "Front" scale 2 }
+  }
+}`
+    const l = parseProgram(src).layers[0]
+    const names = (f: number) => resolveLayerAt(l, f).map((i) => (i as { name?: string }).name)
+    expect(names(2)).toEqual(['Back', 'Front'])
+    expect(names(12)).toEqual(['Back', 'Front'])
   })
 })

@@ -401,6 +401,11 @@ Within **one animated layer**, the **matter (static drawing) always renders behi
 containers** — declaration order between a bare `path` and an animated `group` is **not** preserved,
 because the cel model stores matter and the container roster separately.
 
+**Between the containers, the order is the one the layer declares them in** — first declared, furthest
+back — at every frame. The order of the `pose`s inside a cel says nothing about it: a cel lists what
+moves, in any order, and a `hold` cel carries the rest. To change which piece is in front over time,
+put the pieces on separate layers.
+
 **If a static shape must sit IN FRONT of an animated group**, give it its own group (so it becomes a
 posed container too) or, simpler, **put it on its own layer** above. Layers always honor their stacking
 order. This is the reliable way to control z-order around animation.

@@ -169,6 +169,8 @@
 - **Render order**: in an animated layer the **matter draws BEHIND the posed containers**, and
   declaration order between the matter and an animated `group` is NOT preserved. To put a static
   shape in front of an animation, give it its own **layer above** (or wrap it in a group).
+  Between the posed containers, the order is their **declaration** order in the layer (first = furthest
+  back), whatever the order of the `pose`s in a cel.
 - **Gating a subtree by opacity is FREE**: a group whose resolved `opacity` is `<= 0.01` (e.g. the
   off-phase branch of `opacity = phase == X ? 1 : 0`, even when smoothed toward ~0) is **pruned** — its
   whole subtree is skipped for both draw AND expression eval, exactly like the hit-test already treats it

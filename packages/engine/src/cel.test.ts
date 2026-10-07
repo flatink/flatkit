@@ -719,3 +719,28 @@ describe('formatBoundText — several values', () => {
     expect(formatBoundText({ content: '{} {} {}' }, [1, 2])).toBe('1 2 2') // fewer values: the last one repeats
   })
 })
+
+describe('cel — containers stack in the order the layer declares them (flatink/flatink demos, 0.45)', () => {
+  const pose = (id: string) => ({ id, transform: IDENTITY, opacity: 1 })
+  const roster = [group('Back'), group('Planet'), group('Front')]
+
+  it('the order of the poses in a cel does not restack the containers', () => {
+    const l = layer(roster, [{ frame: 0, poses: [pose('Front'), pose('Back'), pose('Planet')] }])
+    expect(ids(resolveLayerAt(l, 0))).toEqual(['Back', 'Planet', 'Front'])
+  })
+
+  it('a cel posing some of them keeps the others out, and the rest in order', () => {
+    const l = layer(roster, [{ frame: 0, poses: [pose('Front'), pose('Back')] }])
+    expect(ids(resolveLayerAt(l, 0))).toEqual(['Back', 'Front'])
+  })
+
+  it('the material still draws behind the containers', () => {
+    const l = layer(roster, [{ frame: 0, matter: [region('m')], poses: [pose('Planet'), pose('Back')] }])
+    expect(ids(resolveLayerAt(l, 0))).toEqual(['m', 'Back', 'Planet'])
+  })
+
+  it('a single pose still finds its container', () => {
+    const l = layer(roster, [{ frame: 0, poses: [pose('Planet')] }])
+    expect(ids(resolveLayerAt(l, 0))).toEqual(['Planet'])
+  })
+})
