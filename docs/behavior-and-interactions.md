@@ -276,7 +276,9 @@ the scratching continue there.
 **`brush` is the finger, `grain` is the resolution.** They are separate numbers: `brush <px>` says how wide
 a touch clears, `grain <px>` how finely the runtime tracks and rubs it out (absent = the brush). A wide
 finger with a fine grain — the usual want — is `brush 48` + `grain 12`: the same gesture, an edge four
-times finer. The erased edge is soft over about half a grain, so nothing reads as a stamp; keep the grain
+times finer. Where the finger went the veil is gone entirely, and the erased edge is soft over about half
+a grain. Its outline follows the grid (one disc per cell), so a coarse grain gives a bumpy edge and a fine
+one a clean one: `grain 4` to `6` reads as a coin scratching. Keep the grain
 **at or under** the brush, or a touch can fall between two cell centres and clear nothing (`--check` says
 so). A finer grain also makes the fraction more accurate, at four cells per step down.
 

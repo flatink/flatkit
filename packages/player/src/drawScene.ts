@@ -512,12 +512,16 @@ function compositeScratched(
     // The holes are kept between frames and stamped incrementally (see `scratchHoles`); without a cache to
     // keep them in, they are punched straight into the buffer, as before.
     const holes = scratchHoles(cache, mask, world, ox, oy, ow, oh)
+    const soft = scratchSoftness(mask, Math.hypot(world.a, world.b) || 1)
     if (holes) {
+      // The blur goes on the UNION, once: inside the rubbed area the mask is opaque and stays so; only its
+      // outline is softened. Blurring each frame's stamps instead left a trace of the veil between them.
       octx.setTransform(1, 0, 0, 1, 0, 0)
+      octx.filter = `blur(${soft}px)`
       octx.drawImage(holes, 0, 0, ow, oh, 0, 0, ow, oh)
     } else {
       octx.setTransform(world.a, world.b, world.c, world.d, world.e, world.f) // …the grid is measured in WORLD space
-      punchCells(octx, mask, Math.hypot(world.a, world.b) || 1)
+      punchCells(octx, mask, soft)
     }
     octx.globalCompositeOperation = 'source-over'
     octx.filter = 'none'
@@ -559,10 +563,16 @@ function compositeScratched(
  * smoothness is felt. (Sets iterate in insertion order, and the player bumps `version` whenever it rebuilds
  * the set instead of growing it, which is what makes "skip the first N" sound.)
  */
-function punchCells(octx: CanvasRenderingContext2D, mask: ScratchMask, scale: number, from = 0): void {
+/** Blur (device px, the standard deviation) that softens the erased EDGE over about half a cell — the ramp
+ *  of a blurred edge is some 3.3 deviations wide. Never a fog, whatever the grain and the zoom. */
+const scratchSoftness = (mask: ScratchMask, scale: number): number => round2(Math.min(8, Math.max(0.5, mask.cell * 0.15 * scale)))
+
+/** One disc per cleared cell, as ONE path. `soft` blurs that fill — only for a mask stamped in a single
+ *  pass: a disc blurred on its own is no longer opaque at its centre, and the stamps of successive frames
+ *  then never add up to a hole (see `scratchHoles`, which stamps hard and lets the caller blur the union). */
+function punchCells(octx: CanvasRenderingContext2D, mask: ScratchMask, soft: number, from = 0): void {
   const r = mask.cell * 0.75
-  const soft = Math.min(16, Math.max(0.5, mask.cell * 0.55 * scale)) // device px, and never a fog
-  octx.filter = `blur(${round2(soft)}px)`
+  if (soft) octx.filter = `blur(${soft}px)`
   octx.fillStyle = '#000' // any opaque colour: only its ALPHA is used by `destination-out`
   octx.beginPath()
   let i = 0
@@ -574,14 +584,14 @@ function punchCells(octx: CanvasRenderingContext2D, mask: ScratchMask, scale: nu
     octx.arc(cx, cy, r, 0, TAU)
   }
   octx.fill()
-  octx.filter = 'none'
+  if (soft) octx.filter = 'none'
 }
 
 /**
  * The scratched-away area as a persistent ALPHA MASK in the buffer's own pixels, stamped INCREMENTALLY.
  * Kept under its own cache key; rebuilt from scratch only when the screen placement changes (zoom, pan, the
  * veil moving) or when the player rebuilds the cell set (`version`) — otherwise each frame adds the handful
- * of cells that just fell. `null` when there is no cache or no DOM: the caller then punches directly, which
+ * of cells that just fell, as HARD discs: the caller blurs the whole mask when it rubs it out. `null` when there is no cache or no DOM: the caller then punches directly, which
  * is the old behavior.
  */
 function scratchHoles(cache: CacheSlot | undefined, mask: ScratchMask, world: Transform, ox: number, oy: number, ow: number, oh: number): HTMLCanvasElement | null {
@@ -615,7 +625,7 @@ function scratchHoles(cache: CacheSlot | undefined, mask: ScratchMask, world: Tr
   if ((e.punched ?? 0) < mask.cells.size) {
     cctx.setTransform(world.a, world.b, world.c, world.d, world.e, world.f)
     cctx.globalCompositeOperation = 'source-over'
-    punchCells(cctx, mask, Math.hypot(world.a, world.b) || 1, e.punched ?? 0)
+    punchCells(cctx, mask, 0, e.punched ?? 0) // HARD discs: opaque wherever a cell fell, in whatever order they came
     e.punched = mask.cells.size
   }
   e.ox = ox; e.oy = oy; e.ow = ow; e.oh = oh
