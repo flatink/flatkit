@@ -1,5 +1,11 @@
 # @flatkit/types
 
+## 0.46.0
+
+### Minor Changes
+
+- [`5cb7e7f`](https://github.com/flatink/flatkit/commit/5cb7e7fabad42a37f48bd48e600fc75a1ca2bd66) Thanks [@kaelhem](https://github.com/kaelhem)! - `valign top|middle|bottom` on a text places its lines in the height of its box. `top` is the default and changes nothing. `middle` centres what the eye reads, from the top of the first line's capitals to the baseline of the last line, so a label sits in the middle of its frame whatever the font: no more nudging `at` by eye. `bottom` brings the last line down until its descenders touch the bottom of the box. Both count the lines actually drawn (`wrap`, line breaks); with no box height, `middle` centres the text on its `at` line.
+
 ## 0.45.0
 
 ## 0.44.0

@@ -1,5 +1,18 @@
 # @flatkit/engine
 
+## 0.46.0
+
+### Minor Changes
+
+- [`eca701d`](https://github.com/flatink/flatkit/commit/eca701dcd29f4a27c5e0d1bf36f9c315b54e2355) Thanks [@kaelhem](https://github.com/kaelhem)! - Containers of an animated layer stack in the order the layer declares them, at every frame. The order of the `pose`s inside a cel used to decide it, so a `cel N hold` that moved one piece sent every carried piece in front of it, and posing a shadow last drew it over its character. A cel lists what moves, in any order; to change which piece is in front over time, use separate layers. Visible change for a scene whose poses were not listed in declaration order.
+
+- [`5cb7e7f`](https://github.com/flatink/flatkit/commit/5cb7e7fabad42a37f48bd48e600fc75a1ca2bd66) Thanks [@kaelhem](https://github.com/kaelhem)! - `valign top|middle|bottom` on a text places its lines in the height of its box. `top` is the default and changes nothing. `middle` centres what the eye reads, from the top of the first line's capitals to the baseline of the last line, so a label sits in the middle of its frame whatever the font: no more nudging `at` by eye. `bottom` brings the last line down until its descenders touch the bottom of the box. Both count the lines actually drawn (`wrap`, line breaks); with no box height, `middle` centres the text on its `at` line.
+
+### Patch Changes
+
+- Updated dependencies [[`5cb7e7f`](https://github.com/flatink/flatkit/commit/5cb7e7fabad42a37f48bd48e600fc75a1ca2bd66)]:
+  - @flatkit/types@0.46.0
+
 ## 0.45.0
 
 ### Minor Changes

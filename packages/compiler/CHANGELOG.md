@@ -1,5 +1,14 @@
 # @flatkit/compiler
 
+## 0.46.0
+
+### Patch Changes
+
+- Updated dependencies [[`dc5313b`](https://github.com/flatink/flatkit/commit/dc5313b05e860e04d3a8bef10bf9642522010ca6), [`eca701d`](https://github.com/flatink/flatkit/commit/eca701dcd29f4a27c5e0d1bf36f9c315b54e2355), [`65b7ae0`](https://github.com/flatink/flatkit/commit/65b7ae0b0ffd5926d376cd1939b5083f92f9da38), [`5cb7e7f`](https://github.com/flatink/flatkit/commit/5cb7e7fabad42a37f48bd48e600fc75a1ca2bd66)]:
+  - @flatkit/player@0.46.0
+  - @flatkit/engine@0.46.0
+  - @flatkit/types@0.46.0
+
 ## 0.45.0
 
 ### Patch Changes
