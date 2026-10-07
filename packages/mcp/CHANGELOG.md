@@ -1,5 +1,12 @@
 # @flatkit/mcp
 
+## 0.3.14
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @flatkit/compiler@0.45.0
+
 ## 0.3.13
 
 ### Patch Changes
