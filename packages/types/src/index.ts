@@ -485,6 +485,7 @@ export type Text = {
   italic?: boolean
   box: { w: number; h: number } // measured local extent (max line width × total height)
   wrap?: boolean // automatic line wrapping within `box.w` (absent = no wrap; honors explicit \n)
+  valign?: 'middle' | 'bottom' // where the lines sit in `box.h` (absent = top): `middle` centres first capitals to last baseline, `bottom` ends the last line box on the bottom
   bind?: string // numeric expression evaluated each frame → injected into `content` at the `{}` slot (read-only dynamic text; without `{}`, shows the value alone)
   bindMore?: string[] // `bind "a", "b"`: the expressions of the 2nd, 3rd… `{}` slots (absent = `bind` fills every slot)
   decimals?: number // fixed decimals for the `bind` value (absent = integer if round, otherwise rounded to 3)

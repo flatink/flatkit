@@ -174,6 +174,18 @@ text "OUTLINE" font "sans-serif" size 64 color #ffd23f stroke #e23b3b 6 join rou
 ```
 
 - `box <w> <h>` sets the text box; `align left|center|right`; `line` = line-height; `bold` / `italic`.
+- `valign top|middle|bottom` places the lines in the **height** of the box (default `top`: the first line
+  starts at the top and all the spare height falls below). `middle` centres what the eye reads, from the top
+  of the first line's capitals to the baseline of the last line — a label in a frame, a button, a key:
+
+  ```
+  rect 40 40 160 48 fill #2b6cb0
+  text "VALIDER" at 40,40 font "sans-serif" size 22 bold align center color #ffffff box 160 48 valign middle
+  ```
+
+  `bottom` brings the last line down until its descenders touch the bottom of the box. Both count the lines
+  actually drawn, so they work with `wrap` and with `\n`. With no box height (`box 160 0`, or no `box`),
+  `middle` centres the text on its `at` line. Ignored for a text laid `along` a path.
 - **Its name is what it shows**, unless it has an id: `text "Titre" as "legende"` is addressed as
   `"legende"` (`object "legende" { … }`, `text("legende")`). A group, instance or image that bears the same
   name as a text's content always takes the name — see [gotchas](dsl-gotchas.md).

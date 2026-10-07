@@ -557,3 +557,73 @@ describe('drawScene -- `draw` (stroke extent by arc length)', () => {
     expect(isRenderStatic(still as never, still.layers[0].items[0])).toBe(true)
   })
 })
+
+// flatink/flatink demos on 0.45 — a label in a frame always sat too high: the text starts at the top of
+// its box and all the spare height falls below. `valign middle` centres what the eye reads — from the top
+// of the capitals of the first line to the baseline of the last — and `valign bottom` sits the last line
+// on the bottom of the box.
+describe('drawScene -- text `valign` (the lines in the height of the box)', () => {
+  // A font whose capitals start 6 px under the top of the line and whose baseline is 22 px under it — the
+  // figures flatink measured on Geist bold at size 22 — and whose descenders go 5 px under the baseline.
+  // Its FONT box is nonsense on purpose: skia-canvas reports one that is, under this baseline, so the
+  // placement must rest on the ink of the glyphs alone.
+  const mkCtx = (metrics: object | null = { actualBoundingBoxAscent: -6, actualBoundingBoxDescent: 22, fontBoundingBoxAscent: -22, fontBoundingBoxDescent: 52 }) => {
+    const ys: number[] = []
+    const ctx = {
+      ys, lineWidth: 0, lineCap: '', lineJoin: '', miterLimit: 0, strokeStyle: '', fillStyle: '', font: '', textAlign: '', textBaseline: '', globalAlpha: 1,
+      save() {}, restore() {}, transform() {}, setLineDash() {},
+      getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+      measureText: (s: string) => ({ width: s.length * 10, ...metrics, ...(metrics && /[gjpqy]/.test(s) ? { actualBoundingBoxDescent: 27 } : {}) }),
+      fillText: (_t: string, _x: number, y: number) => ys.push(y),
+      strokeText() {},
+    }
+    return ctx as unknown as CanvasRenderingContext2D & { ys: number[] }
+  }
+  const ysOf = (text: string, opts: string, ctx = mkCtx()) => {
+    const doc = parseProgramFull(`size 200 200\nscene {\n  layer "c" {\n    text "${text}" at 0,0 font "sans-serif" size 22 line 1 color #000000 ${opts}\n  }\n}`)
+    renderItems(ctx, doc, resolveLayerAt(doc.layers[0], 0, {}), 0, null, new Set(), { fps: 60 })
+    return ctx.ys
+  }
+
+  it('without `valign` (or with `top`) the first line starts at the top of the box, as before', () => {
+    expect(ysOf('HE', 'box 100 60')).toEqual([0])
+    expect(ysOf('HE', 'box 100 60 valign top')).toEqual([0])
+    expect(ysOf('A\\nB', 'box 100 60')).toEqual([0, 22])
+  })
+
+  it('`middle`: one line is centred on its CAPITALS — as much room above them as under the baseline', () => {
+    const [y] = ysOf('HE', 'box 100 60 valign middle')
+    expect(y + 6).toBeCloseTo(60 - (y + 22), 6) // above the capitals = below the baseline
+    expect(y).toBe(16)
+  })
+
+  it('`middle`: several lines are centred as a block, first capitals to last baseline', () => {
+    const ys = ysOf('A\\nB\\nC', 'box 100 100 valign middle')
+    expect(ys[1] - ys[0]).toBe(22)
+    expect(ys[0] + 6).toBeCloseTo(100 - (ys[2] + 22), 6)
+  })
+
+  it('`middle` counts the lines `wrap` makes, not the ones written', () => {
+    const ys = ysOf('AAAA BBBB CCCC', 'box 50 100 wrap valign middle') // 10 px a letter: one word a line
+    expect(ys).toHaveLength(3)
+    expect(ys[0] + 6).toBeCloseTo(100 - (ys[2] + 22), 6)
+  })
+
+  it('`bottom`: the descenders of the last line touch the bottom of the box (they stay inside)', () => {
+    expect(ysOf('HE', 'box 100 60 valign bottom')).toEqual([60 - 27])
+    expect(ysOf('A\\nB', 'box 100 60 valign bottom')).toEqual([60 - 27 - 22, 60 - 27])
+  })
+
+  it('with no box height, `middle` centres the text on its `at` line', () => {
+    const [y] = ysOf('HE', 'valign middle')
+    expect(y + 6).toBeCloseTo(-(y + 22), 6)
+  })
+
+  it('a context that measures no glyph box (an old browser) still centres, on usual proportions', () => {
+    const [y] = ysOf('HE', 'box 100 60 valign middle', mkCtx(null))
+    expect(Number.isFinite(y)).toBe(true)
+    expect(y).toBeGreaterThan(10); expect(y).toBeLessThan(22)
+    const [b] = ysOf('HE', 'box 100 60 valign bottom', mkCtx(null))
+    expect(b).toBeGreaterThan(25); expect(b).toBeLessThanOrEqual(38)
+  })
+})

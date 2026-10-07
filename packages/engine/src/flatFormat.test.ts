@@ -2205,3 +2205,25 @@ scene {
     expect(names(12)).toEqual(['Back', 'Front'])
   })
 })
+
+describe('text — `valign` places the lines in the height of the box (flatink/flatink demos, 0.45)', () => {
+  const textOf = (opts: string) => parseProgram(`size 200 100\nscene {\n  layer "L" {\n    text "OK" at 10,10 font "sans-serif" size 22 align center box 120 60 ${opts}\n  }\n}`).layers[0].items[0] as Text
+  it('`valign middle` and `valign bottom` are kept on the text', () => {
+    expect(textOf('valign middle').valign).toBe('middle')
+    expect(textOf('valign bottom').valign).toBe('bottom')
+  })
+  it('`valign top` is the default: nothing is stored, an existing document is unchanged', () => {
+    expect('valign' in textOf('valign top')).toBe(false)
+    expect('valign' in textOf('')).toBe(false)
+  })
+  it('any other word is an error that names the three', () => {
+    expect(() => textOf('valign center')).toThrow(/valign.*top.*middle.*bottom/s)
+  })
+  it('is written back by the printer, after the box it applies to', () => {
+    const src = 'size 200 100\nscene {\n  layer "L" {\n    text "OK" at 10,10 font "sans-serif" size 22 align center line 1.2 color #000000 box 120 60 valign middle\n  }\n}'
+    const printed = printProgram(parseProgram(src))
+    expect(printed).toContain('box 120 60 valign middle')
+    expect((parseProgram(printed).layers[0].items[0] as Text).valign).toBe('middle')
+    expect(printProgram(parseProgram(src.replace(' valign middle', '')))).not.toContain('valign')
+  })
+})

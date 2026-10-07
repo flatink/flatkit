@@ -1259,8 +1259,21 @@ function paintText(ctx: CanvasRenderingContext2D, t: Text) {
     ctx.setLineDash(s.dash ?? [])
     ctx.strokeStyle = paintStyle(ctx, s.paint, () => ({ minX: 0, minY: 0, maxX: t.box.w, maxY: t.box.h }), t.color)
   }
+  // `valign`: where the lines sit in the height of the box. Measured on a capital, from the line's own top
+  // (the baseline in force): its ink starts `-actualBoundingBoxAscent` under it and ends on the alphabetic
+  // baseline. `middle` centres what the eye reads — the first line's capitals to the last line's baseline —
+  // and not the line boxes, which carry more room above the capitals than under them; `bottom` brings the
+  // descenders of the last line down to the bottom, so they stay inside. Both rest on the INK of glyphs:
+  // the font box (`fontBoundingBox…`) is not the same thing from one canvas to the next under this
+  // baseline. The fallbacks are a usual sans, for a browser that measures no glyph box.
+  let y0 = 0
+  if (t.valign === 'middle' || t.valign === 'bottom') {
+    const spare = t.box.h - (lines.length - 1) * lh
+    const m = ctx.measureText(t.valign === 'bottom' ? 'gjpqy' : 'H') as Partial<TextMetrics>
+    y0 = t.valign === 'bottom' ? spare - (m.actualBoundingBoxDescent ?? t.size * 1.12) : (spare + (m.actualBoundingBoxAscent ?? t.size * -0.19) - (m.actualBoundingBoxDescent ?? t.size * 0.9)) / 2
+  }
   for (let i = 0; i < lines.length; i++) {
-    const y = i * lh
+    const y = y0 + i * lh
     if (s) ctx.strokeText(lines[i], x, y)
     ctx.fillText(lines[i], x, y)
   }
