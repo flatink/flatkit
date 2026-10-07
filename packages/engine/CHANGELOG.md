@@ -1,5 +1,20 @@
 # @flatkit/engine
 
+## 0.45.0
+
+### Minor Changes
+
+- [`47ebe66`](https://github.com/flatink/flatkit/commit/47ebe663da33bb3cb89a71d981f17a1275da62cf) Thanks [@kaelhem](https://github.com/kaelhem)! - **Breaking (visible):** the `easing` package's `easeIn(t)`, `easeOut(t)` and `easeInOut(t)` are now the
+  keyframe curves of the same name (cubic, as `cel ... tween ease easeInOut`); they were quadratic. One name
+  gave two curves: a trail drawn with `draw "easeInOut(t)"` under an object tweened with `ease easeInOut`
+  drifted by some fifty pixels. A scene that calls these three functions moves a little differently at the
+  start and the end of the ramp; `smooth(t)` is unchanged.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @flatkit/types@0.45.0
+
 ## 0.44.0
 
 ### Minor Changes
