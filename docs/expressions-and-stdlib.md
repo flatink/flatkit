@@ -125,7 +125,7 @@ Import bundled helpers with `use "<name>"`. They're embedded (no network, no fil
 
 ```
 use "collision"   # boxHit(ax,ay,bx,by,hw,hh) · dist(ax,ay,bx,by) · near(ax,ay,bx,by,r)
-use "easing"      # easeIn(t) · easeOut(t) · easeInOut(t) · smooth(t)        (t in 0..1)
+use "easing"      # easeIn(t) · easeOut(t) · easeInOut(t) · smooth(t)        (t in 0..1; the first three = a cel's `ease` curves)
 use "gesture"     # snap(v,step) · snapTo(v,target,r) · railT/railX/railY(px,py,ax,ay,bx,by) · angle(cx,cy,px,py) · inZone(px,py,x,y,w,h)
 use "feedback"    # lift(h) · dim(h) · tilt(g) · sink(g) · shake(bad,t) · pulse(since,dur)  (channel reactions)
                   #   shake/pulse ride the MONOTONE `clock` → capture instants with `clock`, never `time`

@@ -51,7 +51,7 @@ export const PACKAGE_FUNCS: Record<string, FuncDef[]> = {
         "t"
       ],
       "kind": "value",
-      "expr": "t * t"
+      "expr": "t * t * t"
     },
     {
       "name": "easeOut",
@@ -59,7 +59,7 @@ export const PACKAGE_FUNCS: Record<string, FuncDef[]> = {
         "t"
       ],
       "kind": "value",
-      "expr": "1 - (1 - t) * (1 - t)"
+      "expr": "1 - (1 - t) * (1 - t) * (1 - t)"
     },
     {
       "name": "easeInOut",
@@ -67,7 +67,7 @@ export const PACKAGE_FUNCS: Record<string, FuncDef[]> = {
         "t"
       ],
       "kind": "value",
-      "expr": "t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t)"
+      "expr": "t < 0.5 ? 4 * t * t * t : 1 - 4 * (1 - t) * (1 - t) * (1 - t)"
     },
     {
       "name": "smooth",

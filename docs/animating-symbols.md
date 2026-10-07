@@ -82,6 +82,9 @@ cel 60       { pose "Hand" rotate 360 }  ← sweeps around the pivot, not its ow
 - **`cel N tween { … }`** interpolates this cel → the next for every container present in both. Without
   `tween`, the cel **holds** until the next key.
 - **`ease <curve>`** on the cel: `linear` · `easeIn` · `easeOut` · `easeInOut` · `cubic(a,b,c,d)`.
+  The three named curves are cubic, and the `easing` package's `easeIn(t)` / `easeOut(t)` / `easeInOut(t)`
+  are the SAME curves: `draw "easeInOut(clamp(frame / 48, 0, 1))"` follows an object tweened with
+  `ease easeInOut` over those 48 frames.
 - **`spin cw|ccw`** + **`turns <n>`** force the rotation **direction** and add full turns across the
   tween, so a 350° → 10° move can go the short way (`ccw`) or wind several times (`turns 2`). The spin
   is **around the pivot**, like every other rotation.

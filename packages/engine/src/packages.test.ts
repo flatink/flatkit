@@ -105,3 +105,21 @@ describe('feedback — shake is a few degrees of rotation', () => {
     expect(evalWith(['feedback'], 'shake(0, 0.3)')).toBe(0)
   })
 })
+
+// Reported by flatink: one name, two curves. `ease easeInOut` on a cel is CUBIC, the `easing` package's
+// `easeInOut(t)` was QUADRATIC — a trail drawn with `draw "easeInOut(t)"` under a rocket tweened with
+// `ease easeInOut` drifted by some fifty pixels. The package now gives the keyframe's curve, exactly.
+describe('easing — a function of the package IS the keyframe easing of the same name', async () => {
+  const { applyEasing } = await import('./timeline')
+  for (const name of ['easeIn', 'easeOut', 'easeInOut'] as const) {
+    it(`${name}(t) follows \`ease ${name}\``, () => {
+      for (let k = 0; k <= 20; k++) {
+        const t = k / 20
+        expect(evalWith(['easing'], `${name}(${t})`)).toBeCloseTo(applyEasing(t, name), 12)
+      }
+    })
+  }
+  it('`smooth(t)` is unchanged (smoothstep)', () => {
+    expect(evalWith(['easing'], 'smooth(0.25)')).toBeCloseTo(0.15625, 12)
+  })
+})

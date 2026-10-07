@@ -18,10 +18,13 @@ fn dist(ax, ay, bx, by) = hypot(ax - bx, ay - by)
 fn near(ax, ay, bx, by, r) = hypot(ax - bx, ay - by) < r
 `,
   // Easing curves (t ∈ 0..1 → eased t).
+  // The SAME curves as the keyframe easings of the same name (`cel 0 tween ease easeInOut`, cubic — see
+  // `applyEasing` in timeline.ts): a trail drawn with `draw "easeInOut(t)"` must follow an object tweened
+  // with `ease easeInOut`. They were quadratic until 0.45: one name, two curves.
   easing: `
-fn easeIn(t) = t * t
-fn easeOut(t) = 1 - (1 - t) * (1 - t)
-fn easeInOut(t) = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t)
+fn easeIn(t) = t * t * t
+fn easeOut(t) = 1 - (1 - t) * (1 - t) * (1 - t)
+fn easeInOut(t) = t < 0.5 ? 4 * t * t * t : 1 - 4 * (1 - t) * (1 - t) * (1 - t)
 fn smooth(t) = t * t * (3 - 2 * t)
 `,
   // Gestures: PURE helpers to constrain/snap a drag position (use them inside `when dragged`).
