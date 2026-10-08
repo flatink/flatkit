@@ -1,5 +1,16 @@
 # @flatkit/engine
 
+## 0.47.0
+
+### Minor Changes
+
+- [`70d9ef0`](https://github.com/flatink/flatkit/commit/70d9ef064278708e19dfd31afc75514efae6f15d) Thanks [@kaelhem](https://github.com/kaelhem)! - `nonzero` on a shape fills it by the SVG / Canvas default rule: `path "M... Z M... Z" nonzero fill #461fbf`. Two contours that run the same way add up where they overlap, where the even-odd rule (still the default, so a nested contour still cuts a hole) leaves a hole: the stem and the arms of a letter in a logo taken from an SVG. The touch area follows the picture, and so does a mask made of the shape. `flatc --check` warns about a filled path whose same-way contours overlap and names the word; a nested contour, the ring idiom, is left alone.
+
+### Patch Changes
+
+- Updated dependencies [[`70d9ef0`](https://github.com/flatink/flatkit/commit/70d9ef064278708e19dfd31afc75514efae6f15d)]:
+  - @flatkit/types@0.47.0
+
 ## 0.46.0
 
 ### Minor Changes
