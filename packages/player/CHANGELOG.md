@@ -1,5 +1,21 @@
 # @flatkit/player
 
+## 0.47.0
+
+### Minor Changes
+
+- [`70d9ef0`](https://github.com/flatink/flatkit/commit/70d9ef064278708e19dfd31afc75514efae6f15d) Thanks [@kaelhem](https://github.com/kaelhem)! - The shapes of a `mask layer` add up: the mask is their union, each one filled by its own rule. Two shapes that overlapped used to cancel where they overlapped (the picture had a hole there, while the touch test already counted it in), so patching a mask with a second shape removed what it was meant to add. A single shape, or shapes that stay apart, still clip as before, pixel for pixel; shapes that overlap are composed off-screen.
+
+- [`70d9ef0`](https://github.com/flatink/flatkit/commit/70d9ef064278708e19dfd31afc75514efae6f15d) Thanks [@kaelhem](https://github.com/kaelhem)! - `nonzero` on a shape fills it by the SVG / Canvas default rule: `path "M... Z M... Z" nonzero fill #461fbf`. Two contours that run the same way add up where they overlap, where the even-odd rule (still the default, so a nested contour still cuts a hole) leaves a hole: the stem and the arms of a letter in a logo taken from an SVG. The touch area follows the picture, and so does a mask made of the shape. `flatc --check` warns about a filled path whose same-way contours overlap and names the word; a nested contour, the ring idiom, is left alone.
+
+- [`70d9ef0`](https://github.com/flatink/flatkit/commit/70d9ef064278708e19dfd31afc75514efae6f15d) Thanks [@kaelhem](https://github.com/kaelhem)! - `skia-canvas` 4 (from `4.0.0-rc7`) is now required to render in Node; version 3 is no longer accepted. Version 3 drops what lies behind a shape larger than the frame once its group moves it (half the picture comes out transparent), and the player carried a workaround for it in every browser bundle, where it never ran. That workaround is gone, with other duplicated code: the browser player is about 1.2 KB lighter (minified) than 0.46 although it gained the `nonzero` rule and the union of mask shapes. Coming from version 3, expect the text differences described in `docs/tooling.md` (a line of text may sit one device pixel higher or lower).
+
+### Patch Changes
+
+- Updated dependencies [[`70d9ef0`](https://github.com/flatink/flatkit/commit/70d9ef064278708e19dfd31afc75514efae6f15d)]:
+  - @flatkit/types@0.47.0
+  - @flatkit/engine@0.47.0
+
 ## 0.46.0
 
 ### Minor Changes
