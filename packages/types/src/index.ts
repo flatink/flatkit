@@ -6,7 +6,8 @@
 // acyclic type graph (verified by `madge --circular`).
 //
 // A Region = ONE connected piece of material, stored as a Bezier path (`path`). Subpath convention:
-// subpaths[0] = outer contour, subpaths[1..n] = holes (even-odd rule at render). Material produced by
+// subpaths[0] = outer contour, subpaths[1..n] = holes (even-odd rule at render, unless the region asks for
+// `fillRule: 'nonzero'`). Material produced by
 // drawing has CLOSED subpaths with no handles (rendered smoothed, like the legacy polygons).
 
 import type { Point, BBox } from './geom'
@@ -324,6 +325,7 @@ export type Region = {
   stroke?: Stroke // stroke; absent = none
   strokeParam?: string // stroke color bound to a symbol COLOR param (`stroke <paramName> <width>`); resolved per instance
   noFill?: boolean // true = no fill (path/stroke only, e.g. a pen line)
+  fillRule?: 'nonzero' // `nonzero`: the fill rule of SVG / Canvas — contours of the same direction ADD UP where they overlap (absent = even-odd: a nested contour cuts a hole). Render, mask and hit-test follow it
   // STROKE EXTENT by ARC LENGTH (`draw`) — the window of the outline that is actually stroked, as
   // fractions 0..1 of the path's TOTAL arc length (subpaths in order: the first is drawn whole before the
   // next starts). Same measure as a `trace` interactor's progress → `draw = <progress>` follows the finger.

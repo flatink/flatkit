@@ -14,6 +14,7 @@ import { type Timeline } from '@flatkit/engine/timeline'
 import { instanceFrames } from '@flatkit/engine/params'
 import { resolveLayerAt } from '@flatkit/engine/cel'
 import { pathToPolygons } from '@flatkit/engine/path'
+import { pointInRegion, pointInRings } from '@flatkit/engine/regionHit'
 import { guidePathOf, instanceScope } from './drawScene'
 import type { ExprContext } from '@flatkit/engine/expr'
 
@@ -28,7 +29,7 @@ function pointInMask(mask: Layer, frame: number, fps: number, ctx: ExprContext |
     if (isContainer(it)) { hasContainer = true; continue }
     if (isText(it)) { if (pointInBox(it.transform, it.box.w, it.box.h, pt)) return true; continue }
     if (isImage(it)) { if (pointInBox(it.transform, it.w, it.h, pt)) return true; continue }
-    if (pointInPolygons(pathToPolygons((it as Region).path), pt)) return true // region fill = concrete polygons (no transform)
+    if (pointInRegion(it as Region, pt)) return true // region fill = concrete polygons (no transform), by its own fill rule
   }
   return hasContainer // complex mask shape (symbol/group) -> we do not block the selection
 }
@@ -40,20 +41,7 @@ function pointInBox(transform: import('@flatkit/engine/transform').Transform, w:
 }
 
 /** Point inside a set of rings (outline + holes), even-odd rule. */
-export function pointInPolygons(rings: Point[][], pt: Point): boolean {
-  let inside = false
-  for (const ring of rings) {
-    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      const a = ring[i]
-      const b = ring[j]
-      if (a.y > pt.y !== b.y > pt.y) {
-        const x = a.x + ((pt.y - a.y) / (b.y - a.y)) * (b.x - a.x)
-        if (pt.x < x) inside = !inside
-      }
-    }
-  }
-  return inside
-}
+export const pointInPolygons = (rings: Point[][], pt: Point): boolean => pointInRings(rings, pt)
 
 /** Distance from a point to the segment [a,b]. */
 function distToSeg(p: Point, a: Point, b: Point): number {
@@ -105,7 +93,7 @@ const hittable = (it: Item): boolean => !it.hidden && (it.opacity ?? 1) > 0.01 &
 /** Is a region an OUTLINE ENTITY (noFill + stroke)? Hit by proximity to the stroke. */
 function hitRegion(r: Region, pt: Point): boolean {
   if (r.noFill && r.stroke) return pointNearPath(r.path, pt, r.stroke.width / 2 + 4)
-  return pointInPolygons(pathToPolygons(r.path), pt)
+  return pointInRegion(r, pt)
 }
 
 /**

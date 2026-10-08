@@ -209,8 +209,8 @@ length. Add **`step <px>`** or the drill is free: without it the progress is whe
 one press near the finish completes it. With it, the run must start at an end and pass through everything
 (and it resumes across a lift, since a child stops mid-letter). Restart with `avance = 0` — and the same variable RESTORES a session: seed it (or the `cells` array of a
 `reveal`) and the gesture resumes where the reader left it. **A scratch card is `reveal cleared { brush 28 · erase }` on a grey rectangle** — nothing else: `erase`
-makes the runtime rub the veil out under the finger (a `mask` layer CANNOT do it, its matter is an even-odd
-clip path where two overlapping stamps cancel). **`reveal … cells grille`** is the other half, for a scene
+makes the runtime rub the veil out under the finger (a `mask` layer CANNOT do it, its matter is a hard
+clip path and nothing stamps it at the pointer). **`reveal … cells grille`** is the other half, for a scene
 that must REACT to the uncovered area: it writes `grille[i] = 1` for each cleared cell (`i = row * cols + col`,
 `cols = ceil(zone_width / brush)` over the object's world bbox), so `each "Grain" as i {
 opacity = 1 - grille[i] }` erases the veil WHERE it was rubbed. Declare `var grille = fill(cols*rows, 0)` —
@@ -328,7 +328,8 @@ ramp over `dur` s for a readable timed feedback — capture the instant with **`
    (`image "id" w h as "F1" at -50,-50`) — the reverse order is a parse error.
 10. **Text doesn't wrap** unless you add `wrap` (only explicit `\n` breaks otherwise).
 11. **Rings/holes = ONE path with multiple closed subpaths** (fill is even-odd); a nested subpath cuts
-    a hole. `stroke`, `opacity`, and `filter` all exist on `path` and `text` — don't fake them.
+    a hole. Path data pasted from an SVG whose contours overlap: add `nonzero` (`path "…" nonzero fill …`),
+    the SVG rule, or the overlap is a hole. `stroke`, `opacity`, and `filter` all exist on `path` and `text` — don't fake them.
 12. **`def`/`repeat`/`$()`/parameterized symbols are compile-time** (vanish from the model). For values
     that change at runtime use `var`. A symbol param body sees only its params (not an outer `repeat`'s `i`).
     A `def` is **not** a runtime variable: don't use it as a bare identifier in a behavior expression —

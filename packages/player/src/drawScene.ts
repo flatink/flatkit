@@ -202,38 +202,46 @@ function expandRect(acc: BBox, m: Transform, x0: number, y0: number, x1: number,
   }
 }
 
-// SCREEN bounding box of the rendered content of `items` under the screen matrix `matrix` (recursive:
-// containers/instances/symbols, like collectShape but numeric). Used to size the off-screen
-// area of a filtered/tinted object.
-function accumDevBBox(doc: Doc, items: Item[], frame: number, matrix: Transform, seen: Set<string>, acc: BBox, rctx: RenderCtx): void {
+/**
+ * Walks ALREADY RESOLVED items down to their leaves (regions, texts, images), entering every container in
+ * its own sub-scope — an instance at its pose and clock, a group with a timeline at its frame — and hands
+ * each leaf to `leaf` with the matrix accumulated from `matrix`. Hidden items and a symbol already being
+ * walked (self-nesting) are skipped. One walk for the two readers of a subtree's SHAPE: its screen box
+ * (`accumDevBBox`) and the outline of a mask's matter (`collectShape`).
+ */
+function walkLeaves(doc: Doc, items: Item[], frame: number, matrix: Transform, seen: Set<string>, rctx: RenderCtx, leaf: (it: Item, matrix: Transform) => void): void {
   for (const it of items) {
     if (it.hidden) continue
-    if (isContainer(it)) {
-      if (isInstance(it) && seen.has(it.symbolId)) continue
-      const t = compose(matrix, it.transform)
-      if (isInstance(it)) {
-        const { sym, expr } = instanceScope(doc, it, rctx)
-        const childFps = subFps(sym?.timeline?.fps, rctx)
-        const { pose, clock } = instanceFrames(sym, it, clockOf(frame, rctx), rctx.freezeNested, expr, monoFrameOf(childFps, rctx))
-        const sub: RenderCtx = { fps: childFps, expr, clockFrame: clock, monoTime: rctx.monoTime }
-        const next = new Set([...seen, it.symbolId])
-        for (const l of containerLayers(doc, it)) if (l.visible) accumDevBBox(doc, resolveLayerAt(l, pose, { fps: sub.fps, ctx: sub.expr, parent: t }), pose, t, next, acc, sub)
-      } else if (isGroup(it) && it.timeline) {
-        const groupFrame = rctx.freezeNested ? 0 : clockOf(frame, rctx)
-        const sub: RenderCtx = { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, clockFrame: groupFrame, monoTime: rctx.monoTime }
-        for (const l of it.layers) if (l.visible) accumDevBBox(doc, resolveLayerAt(l, groupFrame, { fps: sub.fps, ctx: sub.expr, parent: t }), groupFrame, t, seen, acc, sub)
-      } else {
-        for (const l of containerLayers(doc, it)) if (l.visible) accumDevBBox(doc, resolveLayerAt(l, frame, { fps: rctx.fps, ctx: rctx.expr, parent: t }), frame, t, seen, acc, rctx)
-      }
-    } else if (isText(it)) {
-      expandRect(acc, compose(matrix, it.transform), 0, 0, it.box.w, it.box.h)
-    } else if (isImage(it)) {
-      expandRect(acc, compose(matrix, it.transform), 0, 0, it.w, it.h)
-    } else {
-      const b = regionBBox(it as Region)
-      if (b) expandRect(acc, matrix, b.minX, b.minY, b.maxX, b.maxY)
+    if (!isContainer(it)) { leaf(it, matrix); continue }
+    if (isInstance(it) && seen.has(it.symbolId)) continue
+    const t = compose(matrix, it.transform)
+    let f = frame, sub = rctx, next = seen
+    if (isInstance(it)) {
+      const { sym, expr } = instanceScope(doc, it, rctx)
+      const childFps = subFps(sym?.timeline?.fps, rctx)
+      const { pose, clock } = instanceFrames(sym, it, clockOf(frame, rctx), rctx.freezeNested, expr, monoFrameOf(childFps, rctx))
+      f = pose
+      sub = { fps: childFps, expr, clockFrame: clock, monoTime: rctx.monoTime }
+      next = new Set([...seen, it.symbolId])
+    } else if (isGroup(it) && it.timeline) {
+      f = rctx.freezeNested ? 0 : clockOf(frame, rctx)
+      sub = { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, clockFrame: f, monoTime: rctx.monoTime }
     }
+    for (const l of containerLayers(doc, it)) if (l.visible) walkLeaves(doc, resolveLayerAt(l, f, { fps: sub.fps, ctx: sub.expr, parent: t }), f, t, next, sub, leaf)
   }
+}
+
+// SCREEN bounding box of the rendered content of `items` under the screen matrix `matrix` (recursive:
+// containers/instances/symbols). Used to size the off-screen area of a filtered/tinted object.
+function accumDevBBox(doc: Doc, items: Item[], frame: number, matrix: Transform, seen: Set<string>, acc: BBox, rctx: RenderCtx): void {
+  walkLeaves(doc, items, frame, matrix, seen, rctx, (it, m) => {
+    if (isText(it)) expandRect(acc, compose(m, it.transform), 0, 0, it.box.w, it.box.h)
+    else if (isImage(it)) expandRect(acc, compose(m, it.transform), 0, 0, it.w, it.h)
+    else {
+      const b = regionBBox(it as Region)
+      if (b) expandRect(acc, m, b.minX, b.minY, b.maxX, b.maxY)
+    }
+  })
 }
 
 const matOf = (m: DOMMatrix): Transform => ({ a: m.a, b: m.b, c: m.c, d: m.d, e: m.e, f: m.f })
@@ -328,6 +336,35 @@ function bufferBox(devBBox: BBox | null, cw: number, ch: number, margin: number)
   return ow >= cw && oh >= ch ? { ox: 0, oy: 0, ow: cw, oh: ch } : { ox, oy, ow, oh }
 }
 
+/**
+ * The end of every off-screen composite: the scratch buffer `src`, whose origin is the screen point
+ * (ox, oy), lands on `ctx`. A STABLE cached object (same signature as the previous frame) is first baked
+ * into its persistent canvas, filter applied, and that is what gets blitted: the frames that follow HIT.
+ * A first observation or a volatile object only RECORDS its signature and is blitted (filtered) directly.
+ */
+function landComposite(ctx: CanvasRenderingContext2D, src: HTMLCanvasElement, ox: number, oy: number, ow: number, oh: number, opacity: number, cache?: CacheSlot, stable = false, filterStr = '', op?: GlobalCompositeOperation): void {
+  const store = cache && stable && typeof document !== 'undefined' ? ensureCacheCanvas(cache, ox, oy, ow, oh) : null
+  const cctx = store ? store.canvas!.getContext('2d') : null
+  if (store && cctx) {
+    cctx.setTransform(1, 0, 0, 1, 0, 0)
+    cctx.globalAlpha = 1; cctx.globalCompositeOperation = 'source-over'
+    cctx.filter = filterStr || 'none'
+    cctx.clearRect(0, 0, store.canvas!.width, store.canvas!.height)
+    cctx.drawImage(src, 0, 0, ow, oh, 0, 0, ow, oh)
+    store.sig = cache!.sig; store.ox = ox; store.oy = oy; store.ow = ow; store.oh = oh
+    blitBaked(ctx, store as Baked, opacity)
+    return
+  }
+  if (cache) cache.map.set(cache.id, { sig: cache.sig, ox, oy, ow, oh })
+  ctx.save()
+  ctx.globalAlpha *= opacity
+  if (op) ctx.globalCompositeOperation = op
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  if (filterStr) ctx.filter = filterStr
+  ctx.drawImage(src, 0, 0, ow, oh, ox, oy, ow, oh)
+  ctx.restore()
+}
+
 /** Reblit a baked composite at its screen position, with the item's current opacity applied at blit time
  *  (never baked in — a pure fade then reuses the bitmap). */
 type Baked = FilterCacheEntry & { canvas: HTMLCanvasElement }
@@ -378,28 +415,7 @@ export function compositeFiltered(
       octx.fillStyle = tint.color
       octx.fillRect(0, 0, ow, oh)
     }
-    // MISS. STABLE object (same signature as the previous frame) -> we bake the filtered result into
-    // a persistent canvas and blit it flat; the following frames will HIT.
-    const store = cache && stable && typeof document !== 'undefined' ? ensureCacheCanvas(cache, ox, oy, ow, oh) : null
-    const cctx = store ? store.canvas!.getContext('2d') : null
-    if (store && cctx) {
-      cctx.setTransform(1, 0, 0, 1, 0, 0)
-      cctx.globalAlpha = 1; cctx.globalCompositeOperation = 'source-over'
-      cctx.filter = filterStr || 'none'
-      cctx.clearRect(0, 0, store.canvas!.width, store.canvas!.height)
-      cctx.drawImage(scratch.canvas, 0, 0, ow, oh, 0, 0, ow, oh)
-      store.sig = cache!.sig; store.ox = ox; store.oy = oy; store.ow = ow; store.oh = oh
-      blitBaked(ctx, store, opacity)
-    } else {
-      // 1st observation OR volatile object: we RECORD the signature (without baking) and blit filtered directly.
-      if (cache) cache.map.set(cache.id, { sig: cache.sig, ox, oy, ow, oh })
-      ctx.save()
-      ctx.globalAlpha *= opacity
-      ctx.setTransform(1, 0, 0, 1, 0, 0)
-      if (filterStr) ctx.filter = filterStr
-      ctx.drawImage(scratch.canvas, 0, 0, ow, oh, ox, oy, ow, oh)
-      ctx.restore()
-    }
+    landComposite(ctx, scratch.canvas, ox, oy, ow, oh, opacity, cache, stable, filterStr)
   } finally {
     releaseScratch()
   }
@@ -426,6 +442,28 @@ function ensureCacheCanvas(cache: CacheSlot, ox: number, oy: number, ow: number,
   const fresh = { canvas, sig: '', ox, oy, ow, oh }
   cache.map.set(cache.id, fresh)
   return fresh
+}
+
+/**
+ * The matter of a vector mask whose shapes overlap, laid on `octx` under its current composite operation
+ * (`destination-in`: the content is kept where the matter is). One fill per shape would keep only what ALL
+ * of them cover, so the shapes are first added up on a second scratch — opaque, one over the other, each
+ * by its own rule — and that union is stamped in one go.
+ */
+function stampUnion(octx: CanvasRenderingContext2D, pieces: MaskPiece[]): void {
+  const w = octx.canvas.width, h = octx.canvas.height
+  const scratch = acquireScratch(w, h, w, h)
+  if (!scratch) return
+  try {
+    const u = scratch.ctx
+    u.setTransform(octx.getTransform())
+    u.fillStyle = '#000'
+    for (const p of pieces) u.fill(p.path, p.rule)
+    octx.setTransform(1, 0, 0, 1, 0, 0)
+    octx.drawImage(scratch.canvas, 0, 0)
+  } finally {
+    releaseScratch()
+  }
 }
 
 /**
@@ -459,12 +497,7 @@ function compositeMasked(
     octx.globalCompositeOperation = matterOp // 'destination-in' = keep only under the matter's alpha; 'destination-out' = rub it out
     drawMatter(octx)
     octx.globalCompositeOperation = 'source-over'
-    ctx.save()
-    ctx.globalAlpha *= opacity
-    ctx.globalCompositeOperation = blit // additive content (glow) -> we ADD the clipped result
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.drawImage(scratch.canvas, 0, 0, ow, oh, ox, oy, ow, oh)
-    ctx.restore()
+    landComposite(ctx, scratch.canvas, ox, oy, ow, oh, opacity, undefined, false, '', blit) // additive content (glow) -> we ADD the clipped result
   } finally {
     releaseScratch()
   }
@@ -525,23 +558,7 @@ function compositeScratched(
     }
     octx.globalCompositeOperation = 'source-over'
     octx.filter = 'none'
-    const store = cache && stable && typeof document !== 'undefined' ? ensureCacheCanvas(cache, ox, oy, ow, oh) : null
-    const cctx = store ? store.canvas.getContext('2d') : null
-    if (store && cctx) { // bake the punched result, then blit it: the frames that follow are pure blits
-      cctx.setTransform(1, 0, 0, 1, 0, 0)
-      cctx.globalAlpha = 1; cctx.globalCompositeOperation = 'source-over'; cctx.filter = 'none'
-      cctx.clearRect(0, 0, store.canvas.width, store.canvas.height)
-      cctx.drawImage(scratch.canvas, 0, 0, ow, oh, 0, 0, ow, oh)
-      store.sig = cache!.sig; store.ox = ox; store.oy = oy; store.ow = ow; store.oh = oh
-      blitBaked(ctx, store, opacity)
-    } else {
-      if (cache) cache.map.set(cache.id, { sig: cache.sig, ox, oy, ow, oh }) // record the signature; bake next frame
-      ctx.save()
-      ctx.globalAlpha *= opacity
-      ctx.setTransform(1, 0, 0, 1, 0, 0)
-      ctx.drawImage(scratch.canvas, 0, 0, ow, oh, ox, oy, ow, oh)
-      ctx.restore()
-    }
+    landComposite(ctx, scratch.canvas, ox, oy, ow, oh, opacity, cache, stable) // baked once stable: the frames that follow are pure blits
   } finally {
     releaseScratch()
   }
@@ -852,39 +869,64 @@ function buildRegionPath(region: Region, dx: number, dy: number): Path2D {
   return path
 }
 
-/** Recursive collection of the shapes (regions) of ALREADY RESOLVED items into `path`, with transforms. */
-function collectShape(
-  doc: Doc,
-  items: Item[],
-  frame: number,
-  matrix: Transform,
-  seen: Set<string>,
-  path: Path2D,
-  rctx: RenderCtx,
-) {
-  for (const it of items) {
-    if (it.hidden) continue
-    if (isContainer(it)) {
-      if (isInstance(it) && seen.has(it.symbolId)) continue
-      const t = compose(matrix, it.transform)
-      if (isInstance(it)) {
-        const { sym, expr } = instanceScope(doc, it, rctx)
-        const childFps = subFps(sym?.timeline?.fps, rctx)
-        const { pose, clock } = instanceFrames(sym, it, clockOf(frame, rctx), rctx.freezeNested, expr, monoFrameOf(childFps, rctx))
-        const sub: RenderCtx = { fps: childFps, expr, clockFrame: clock, monoTime: rctx.monoTime }
-        const next = new Set([...seen, it.symbolId])
-        for (const l of containerLayers(doc, it)) if (l.visible) collectShape(doc, resolveLayerAt(l, pose, { fps: sub.fps, ctx: sub.expr, parent: t }), pose, t, next, path, sub)
-      } else if (isGroup(it) && it.timeline) {
-        const groupFrame = rctx.freezeNested ? 0 : clockOf(frame, rctx)
-        const sub: RenderCtx = { fps: subFps(it.timeline.fps, rctx), expr: rctx.expr, clockFrame: groupFrame, monoTime: rctx.monoTime }
-        for (const l of it.layers) if (l.visible) collectShape(doc, resolveLayerAt(l, groupFrame, { fps: sub.fps, ctx: sub.expr, parent: t }), groupFrame, t, seen, path, sub)
-      } else {
-        for (const l of containerLayers(doc, it)) if (l.visible) collectShape(doc, resolveLayerAt(l, frame, { fps: rctx.fps, ctx: rctx.expr, parent: t }), frame, t, seen, path, rctx)
-      }
-    } else {
-      path.addPath(regionPath(it as Region), new DOMMatrix([matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f]))
-    }
+/** The fill rule of a region: even-odd (a nested contour cuts a hole) unless it asks for `nonzero`. */
+const ruleOf = (r: Region): CanvasFillRule => (r.fillRule === 'nonzero' ? 'nonzero' : 'evenodd')
+
+/** One shape of a mask's matter: its outline in the mask's space, its fill rule, and what gives its box. */
+type MaskPiece = { path: Path2D; rule: CanvasFillRule; reg: Region; m: Transform }
+
+/** The shapes (regions) of ALREADY RESOLVED items, with their transforms: the matter of a mask. */
+function collectShape(doc: Doc, items: Item[], frame: number, rctx: RenderCtx): MaskPiece[] {
+  const out: MaskPiece[] = []
+  walkLeaves(doc, items, frame, IDENTITY, new Set(), rctx, (it, m) => {
+    const reg = it as Region
+    let path = regionPath(reg)
+    // A shape placed by a container is moved into the mask's space; one drawn directly in the mask (the
+    // common case) is already there, and its cached path serves as it is.
+    if (m !== IDENTITY) { const moved = new Path2D(); moved.addPath(path, new DOMMatrix([m.a, m.b, m.c, m.d, m.e, m.f])); path = moved }
+    out.push({ path, rule: ruleOf(reg), reg, m })
+  })
+  return out
+}
+
+/** All the shapes in ONE path. Exact when they do not overlap; where they do, they cancel (even-odd). */
+function joinPieces(pieces: MaskPiece[]): Path2D {
+  const path = new Path2D()
+  for (const p of pieces) path.addPath(p.path)
+  return path
+}
+
+/** Beyond this many shapes the pairwise test below costs more than the off-screen union it would avoid. */
+const MASK_PAIRS_MAX = 48
+
+/** The box of each shape of a mask's matter under `m` (the mask's space, or the screen), added to `acc`. */
+function pieceBox(p: MaskPiece, m: Transform, acc: BBox): BBox {
+  const b = regionBBox(p.reg)
+  if (b) expandRect(acc, m === IDENTITY ? p.m : compose(m, p.m), b.minX, b.minY, b.maxX, b.maxY)
+  return acc
+}
+const emptyBox = (): BBox => ({ minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity })
+
+/**
+ * A mask is the UNION of the shapes of its matter, each filled by its own rule (flatink/flatink#69). A
+ * canvas clip is ONE path under ONE rule, which gives that union only when nothing overlaps: a single
+ * shape, or shapes of the same rule whose boxes stay apart (touching is fine). That is the common case, and
+ * it keeps the fast vector clip. Otherwise `path` is null and the mask is composed off-screen
+ * (`compositeMasked`), where filling the shapes one over the other adds them up.
+ */
+type MaskClip = { pieces: MaskPiece[]; path: Path2D | null; rule: CanvasFillRule }
+function maskClipOf(pieces: MaskPiece[]): MaskClip {
+  const rule = pieces[0]?.rule ?? 'evenodd'
+  if (pieces.length === 1) return { pieces, path: pieces[0].path, rule }
+  let apart = pieces.length <= MASK_PAIRS_MAX
+  const boxes: BBox[] = []
+  for (let i = 0; apart && i < pieces.length; i++) {
+    const a = pieceBox(pieces[i], IDENTITY, emptyBox())
+    // An empty box (minX = Infinity) overlaps nothing: every comparison below is false.
+    apart = pieces[i].rule === rule && !boxes.some((b) => a.minX < b.maxX && b.minX < a.maxX && a.minY < b.maxY && b.minY < a.maxY)
+    boxes.push(a)
   }
+  return { pieces, path: apart ? joinPieces(pieces) : null, rule }
 }
 
 /** Path of a guide layer = subpaths of its resolved matter (baked xform), or null if empty. */
@@ -899,11 +941,10 @@ export function guidePathOf(guide: Layer, frame: number, rctx: RenderCtx): Path 
   return subpaths.length ? { subpaths } : null
 }
 
-/** Clip path of a mask layer = union of its resolved matter (regions, containers). */
+/** Outline of a mask layer: the shapes of its resolved matter (regions, containers) in one path — an
+ *  overlay for an editor. The mask itself is the UNION of those shapes (see `maskClipOf`). */
 export function maskClipPath(doc: Doc, mask: Layer, frame: number, rctx: RenderCtx): Path2D {
-  const path = new Path2D()
-  collectShape(doc, resolveLayerAt(mask, frame, { fps: rctx.fps, ctx: rctx.expr }), frame, IDENTITY, new Set(), path, rctx)
-  return path
+  return joinPieces(collectShape(doc, resolveLayerAt(mask, frame, { fps: rctx.fps, ctx: rctx.expr }), frame, rctx))
 }
 
 /** Canvas style of a paint (solid or gradient), anchored to `bbox`. Reused for fill AND stroke.
@@ -988,7 +1029,7 @@ export function renderItems(
     if (scratched?.cells.size) {
       // The bbox is a LAMBDA on purpose: an unchanged veil never accumulates it (see `compositeScratched`).
       const devBBox = () => {
-        const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
+        const acc = emptyBox()
         accumDevBBox(doc, [it], frame, matOf(ctx.getTransform()), seen, acc, rctx)
         return acc.minX <= acc.maxX ? acc : null
       }
@@ -1030,7 +1071,7 @@ function renderOneItem(
       const filterStr = isolated ? cssFilterString(it.filters, scale) : ''
       // Tint AND/OR filters -> isolate the content off-screen (area = object's box) then recompose.
       if (tint || filterStr) {
-        const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
+        const acc = emptyBox()
         accumDevBBox(doc, [it], frame, matOf(ctx.getTransform()), seen, acc, rctx)
         const devBBox = acc.minX <= acc.maxX ? acc : null
         // Cache (player): static subtree -> we record the filtered composite and reblit it.
@@ -1050,7 +1091,7 @@ function renderOneItem(
       // Text-on-path glyphs live at the baked path's coords (not within `box`); size the tint/filter
       // isolation buffer to the path extent, inflated by the font size for glyph ascent/descent.
       const devBBox = () => {
-        const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
+        const acc = emptyBox()
         const pb = it.textPath ? pathBBox(it.textPath.path) : null
         if (pb) expandRect(acc, matOf(ctx.getTransform()), pb.minX - it.size, pb.minY - it.size, pb.maxX + it.size, pb.maxY + it.size)
         else expandRect(acc, compose(matOf(ctx.getTransform()), it.transform), 0, 0, it.box.w, it.box.h)
@@ -1067,7 +1108,7 @@ function renderOneItem(
     } else if (isImage(it)) {
       const src = rctx.image?.(it.assetId) ?? null
       const devBBox = () => {
-        const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
+        const acc = emptyBox()
         expandRect(acc, compose(matOf(ctx.getTransform()), it.transform), 0, 0, it.w, it.h)
         return acc
       }
@@ -1079,7 +1120,7 @@ function renderOneItem(
         // RARE case: filters on a path -> we isolate off-screen then recompose (closure tolerated here).
         const devBBox = () => {
           const lb = regionBBox(reg)
-          const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
+          const acc = emptyBox()
           if (lb) expandRect(acc, matOf(ctx.getTransform()), lb.minX, lb.minY, lb.maxX, lb.maxY)
           return acc
         }
@@ -1140,53 +1181,6 @@ function paintLeafCached(
   paintLeaf(ctx, tint ?? undefined, filters, opacity, devBBox, scale, draw, filterStr, slot)
 }
 
-/**
- * `c.fill(path, 'evenodd')`, with a guard for ONE renderer. skia-canvas 3.x (Node: `flatc --render`, a
- * host rendering video frames) discards everything drawn so far when a fill "covers the canvas" — and
- * decides it from the path's LOCAL bounds, before the context transform. A shape much larger than the
- * canvas and moved by its group, so that it covers only part of the frame, wiped the background behind it:
- * half the picture came out transparent. When the local bounds contain the canvas under a transform, the
- * path is filled in DEVICE space under an identity transform instead, where its bounds are the real ones.
- * A gradient lives in the transform it was created under, so it cannot move to device space: the path
- * becomes the CLIP instead, and the paint is laid with `fillRect` (which has no such shortcut) over the
- * visible frame. A browser's Path2D has no `bounds`, so nothing of this runs there; skia-canvas 4 no longer
- * needs it.
- */
-type SkiaPath = Path2D & { bounds?: { left: number; top: number; right: number; bottom: number }; transform?: (m: DOMMatrix) => Path2D }
-function fillPath(c: CanvasRenderingContext2D, path: Path2D): void {
-  const b = (path as SkiaPath).bounds
-  if (b !== undefined && typeof (path as SkiaPath).transform === 'function') {
-    const cv = c.canvas
-    if (cv && b.left <= 0 && b.top <= 0 && b.right >= cv.width && b.bottom >= cv.height) {
-      const m = c.getTransform()
-      if (m.a !== 1 || m.b !== 0 || m.c !== 0 || m.d !== 1 || m.e !== 0 || m.f !== 0) {
-        c.save()
-        if (typeof c.fillStyle === 'string') {
-          c.setTransform(1, 0, 0, 1, 0, 0)
-          c.fill((path as SkiaPath).transform!(m), 'evenodd')
-        } else {
-          c.clip(path, 'evenodd')
-          // The frame's four corners, back in the shape's space: the rectangle that holds them covers
-          // everything the clip can show.
-          const inv = m.inverse()
-          let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
-          for (const [px, py] of [[0, 0], [cv.width, 0], [0, cv.height], [cv.width, cv.height]]) {
-            const x = inv.a * px + inv.c * py + inv.e, y = inv.b * px + inv.d * py + inv.f
-            if (x < x0) x0 = x
-            if (x > x1) x1 = x
-            if (y < y0) y0 = y
-            if (y > y1) y1 = y
-          }
-          c.fillRect(x0, y0, x1 - x0, y1 - y0)
-        }
-        c.restore()
-        return
-      }
-    }
-  }
-  c.fill(path, 'evenodd')
-}
-
 /** Paints a region (fill + outline) into `c`. Module function (zero allocation per call). */
 function paintRegion(c: CanvasRenderingContext2D, reg: Region, colorParams?: Record<string, string>, world?: Transform) {
   const trim = strokeWindow(reg)
@@ -1195,7 +1189,7 @@ function paintRegion(c: CanvasRenderingContext2D, reg: Region, colorParams?: Rec
   const path = !reg.noFill || !trim ? regionPath(reg) : null
   if (!reg.noFill && path) {
     c.fillStyle = fillStyleFor(c, reg, colorParams)
-    fillPath(c, path)
+    c.fill(path, ruleOf(reg))
   }
   if (reg.stroke) {
     const line = trim ? trimmedPath(reg, trim) : path
@@ -1400,7 +1394,7 @@ export function renderLayers(
   // Allocated ON DEMAND: this function runs once per container per frame (hundreds of times in a busy
   // scene) and the overwhelming majority of those stacks carry neither a mask nor a guide, so three empty
   // Maps per call was three pieces of garbage per container per frame.
-  let clipCache: Map<string, Path2D> | null = null // one mask clips several children -> reuse
+  let clipCache: Map<string, MaskClip> | null = null // one mask clips several children -> reuse
   let maskCache: Map<string, { items: Item[]; glyph: boolean }> | null = null // resolved matter + clip type
   let guideCache: Map<string, Path | null> | null = null // one guide drives several children -> reuse
   for (const layer of layers) {
@@ -1426,26 +1420,35 @@ export function renderLayers(
         mi = { items: mItems, glyph: itemsHaveGlyph(doc, mItems, new Set()) }
         maskCache.set(mask.id, mi)
       }
-      if (mi.glyph) {
-        // TEXT/IMAGE matter -> alpha clipping (the content only appears within the silhouette).
-        const acc: BBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
-        accumDevBBox(doc, mi.items, frame, matOf(ctx.getTransform()), seen, acc, rctx)
+      // Vector matter (common case) -> a clip, when ONE path says it (see `maskClipOf`).
+      let clip: MaskClip | undefined
+      if (!mi.glyph) {
+        clipCache ??= new Map()
+        clip = clipCache.get(mask.id)
+        if (!clip) { clip = maskClipOf(collectShape(doc, mi.items, frame, rctx)); clipCache.set(mask.id, clip) }
+      }
+      if (clip && (clip.path || typeof document === 'undefined')) {
+        // No off-screen canvas here (see `warnScratchless`): the shapes in one path, which is the mask
+        // wherever they do not overlap.
+        ctx.save()
+        ctx.clip(clip.path ?? joinPieces(clip.pieces), clip.rule)
+        renderItems(ctx, doc, items, frame, hidden, seen, rctx, parent, depth)
+        ctx.restore()
+      } else {
+        // Composed off-screen, the content kept where the matter is: TEXT/IMAGE matter by its alpha (the
+        // content only appears within the silhouette), vector shapes that overlap by their UNION.
+        const pieces = clip?.pieces
         const matter = mi.items
+        const acc = emptyBox()
+        const dev = matOf(ctx.getTransform())
+        if (pieces) for (const p of pieces) pieceBox(p, dev, acc)
+        else accumDevBBox(doc, matter, frame, dev, seen, acc, rctx)
         // Additive content (blend add) -> we add the clipped result (a glow that passes through the silhouette).
         const blit: GlobalCompositeOperation = items.some((it) => 'blend' in it && it.blend === 'add') ? 'lighter' : 'source-over'
         compositeMasked(ctx, 1, acc.minX <= acc.maxX ? acc : null, blit,
           (octx) => renderItems(octx, doc, items, frame, hidden, seen, rctx, parent, depth),
-          (octx) => renderItems(octx, doc, matter, frame, hidden, seen, rctx, parent, depth),
+          (octx) => { if (pieces) stampUnion(octx, pieces); else renderItems(octx, doc, matter, frame, hidden, seen, rctx, parent, depth) },
         )
-      } else {
-        // Vector matter (common case) -> fast clip, unchanged.
-        clipCache ??= new Map()
-        let clip = clipCache.get(mask.id)
-        if (!clip) { const p = new Path2D(); collectShape(doc, mi.items, frame, IDENTITY, new Set(), p, rctx); clip = p; clipCache.set(mask.id, clip) }
-        ctx.save()
-        ctx.clip(clip, 'evenodd')
-        renderItems(ctx, doc, items, frame, hidden, seen, rctx, parent, depth)
-        ctx.restore()
       }
     } else {
       renderItems(ctx, doc, items, frame, hidden, seen, rctx, parent, depth)

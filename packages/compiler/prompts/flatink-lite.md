@@ -127,7 +127,7 @@ Stateful easing: `spring <ch> "<target>" stiffness <0..1> damping <0..1>` · `sm
 7. **Render order in an animated layer:** static `path`s draw **behind** posed containers (declaration
    order not preserved). To put a static shape in front, give it its **own layer above**.
 8. **`image` origin = top-left** (center with `at -w/2,-h/2`). **Text doesn't wrap** without `wrap`.
-9. **Rings/holes = ONE path, multiple closed subpaths** (even-odd fill). `stroke`/`opacity`/`filter`
+9. **Rings/holes = ONE path, multiple closed subpaths** (even-odd fill; `nonzero` after the path = the SVG rule). `stroke`/`opacity`/`filter`
    exist on `path` AND `text` — don't fake them.
 10. **Drop test = object CENTER** by default (`at pointer` for the pointer; `hitbox W H` for an explicit
     rect). `when released` fires BEFORE the drop test. `reveal`/`trace` progress is monotone.

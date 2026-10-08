@@ -623,3 +623,45 @@ describe('checkProgram — path data that is only partly readable', () => {
     expect(about(prog('M0 0 C10 0 10 10 0 10 Z'))).toEqual([])
   })
 })
+
+// flatink/flatink#69 — a logo imported from SVG: the stem and the arms of a "k" are two contours of the
+// same direction that overlap. SVG fills the overlap (nonzero); FlatKit's even-odd leaves a hole there, and
+// nothing said so. A NESTED contour is the documented ring idiom: it stays silent.
+describe('checkProgram — contours of the same direction that overlap (even-odd hole)', () => {
+  const prog = (shape: string) => `size 300 300\nscene {\n  layer "c" {\n    ${shape}\n  }\n}\n`
+  const about = (src: string) => checkProgram(src).diagnostics.filter((d) => /even-odd/.test(d.message)).map((d) => `${d.severity} ${d.line}: ${d.message}`)
+  const SAME = 'M40 40 L200 40 L200 200 L40 200 Z M120 120 L280 120 L280 280 L120 280 Z'
+  it('is warned, on its line, and names the word that fills it', () => {
+    expect(about(prog(`path "${SAME}" fill #461FBF`))).toEqual([expect.stringMatching(/^warning 4: .*M40 40 L200 40.*`nonzero`/)])
+  })
+  it('says nothing once the shape is `nonzero`, or has no fill', () => {
+    expect(about(prog(`path "${SAME}" fill #461FBF nonzero`))).toEqual([])
+    expect(about(prog(`path "${SAME}" nofill stroke #461FBF 2`))).toEqual([])
+  })
+  it('a nested contour (the ring idiom) is not warned, whatever its direction', () => {
+    expect(about(prog('path "M-30 -30L30 -30L30 30L-30 30Z M-15 -15L15 -15L15 15L-15 15Z" fill #cc3333'))).toEqual([])
+    expect(about(prog('path "M-30 -30L30 -30L30 30L-30 30Z M-15 -15L-15 15L15 15L15 -15Z" fill #cc3333'))).toEqual([])
+  })
+  it('contours of opposite directions that overlap are a hole in SVG too: not warned', () => {
+    expect(about(prog('path "M40 40 L200 40 L200 200 L40 200 Z M120 120 L120 280 L280 280 L280 120 Z" fill #461FBF'))).toEqual([])
+  })
+  it('contours that only touch, or lie apart, are not warned', () => {
+    expect(about(prog('path "M0 0 L100 0 L100 100 L0 100 Z M100 0 L200 0 L200 100 L100 100 Z" fill #461FBF'))).toEqual([])
+    expect(about(prog('path "M0 0 L50 0 L50 50 L0 50 Z M100 100 L150 100 L150 150 L100 150 Z" fill #461FBF'))).toEqual([])
+  })
+  it('curved contours are read as drawn (two discs that overlap)', () => {
+    expect(about(prog('path "M50 100 A50 50 0 1 1 150 100 A50 50 0 1 1 50 100 Z M110 100 A50 50 0 1 1 210 100 A50 50 0 1 1 110 100 Z" fill #461FBF'))).toHaveLength(1)
+  })
+  // `--check` runs on sources nobody vetted (the MCP server): two contours of 20 000 points each would be
+  // 400 million edge pairs. Past its budget the path is left unjudged — no warning, and no stall.
+  it('a path too dense to compare is left unjudged, quickly', () => {
+    const zig = (x0: number, n: number) => { const pts: string[] = []; for (let i = 0; i < n; i++) pts.push(`${x0 + (i % 2) * 300} ${i / 100}`); return `M${pts.join(' L')} L${x0 + 150} 400 Z` }
+    const t = performance.now()
+    expect(about(prog(`path "${zig(0, 20000)} ${zig(100, 20000)}" fill #461FBF`))).toEqual([])
+    expect(performance.now() - t).toBeLessThan(4000)
+  })
+  it('in a symbol of a library too', () => {
+    const lib = `symbol "K" {\n  layer "c" {\n    path "${SAME}" fill #461FBF\n  }\n}\n`
+    expect(checkProgram(lib).diagnostics.filter((d) => /even-odd/.test(d.message))).toHaveLength(1)
+  })
+})

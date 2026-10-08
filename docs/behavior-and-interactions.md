@@ -282,9 +282,8 @@ one a clean one: `grain 4` to `6` reads as a coin scratching. Keep the grain
 **at or under** the brush, or a touch can fall between two cell centres and clear nothing (`--check` says
 so). A finer grain also makes the fraction more accurate, at four cells per step down.
 
-> **Why not a `mask` layer?** Because a mask is an even-odd **clipping path**: two overlapping brush stamps
-> *cancel* instead of accumulating, and nothing in the language creates a stamp at the pointer anyway
-> (the scene's geometry is fixed; only channels move). `erase` does the accumulation in the runtime, where
+> **Why not a `mask` layer?** Because a mask is a hard **clipping path** (no soft edge), and nothing in the
+> language creates a stamp at the pointer anyway (the scene's geometry is fixed; only channels move). `erase` does the accumulation in the runtime, where
 > the gesture already keeps the state.
 
 ### Seeing WHERE it was scratched (`reveal … cells`)

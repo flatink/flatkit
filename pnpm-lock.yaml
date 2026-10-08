@@ -73,7 +73,7 @@ importers:
         specifier: workspace:*
         version: link:../types
       skia-canvas:
-        specifier: ^3.0.8 || ^4.0.0-rc7
+        specifier: ^4.0.0-rc7
         version: 4.0.0-rc7
 
   packages/engine:

@@ -162,8 +162,10 @@ item, and a roster item no cel ever poses. Each renders an empty frame with no o
 Render a PNG (skia backend, faithful to the browser). Needs the optional `skia-canvas` dep
 (`npm i -D skia-canvas`).
 
-`skia-canvas` 3 (3.0.8 or later) and 4 (from `4.0.0-rc7`) are both accepted. They do not render to the
-same pixels: **version 4 can set a line of text one device pixel higher or lower** than version 3 (half a
+`skia-canvas` **4** (from `4.0.0-rc7`) is required. Version 3 is no longer accepted: it drops what lies
+behind a shape larger than the frame once that shape is moved by its group (half the picture comes out
+transparent), and the player no longer works around it. Coming from version 3, the pixels change:
+**version 4 can set a line of text one device pixel higher or lower** than version 3 (half a
 unit at the default scale of 2); shapes are identical. It is a rounding that falls one way or the other
 from one text to the next, not a uniform shift: on a same picture one block may move down, another up, a
 third not at all (measured by a consumer on 545 scenes: 16 identical to the pixel, a median of 0.31% of

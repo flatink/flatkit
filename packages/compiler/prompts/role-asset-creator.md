@@ -81,6 +81,8 @@ symbol "Boat" {
 2. **Rings / holes / cutouts = ONE `path` with multiple closed subpaths.** Fill is **even-odd**, so a
    nested subpath punches a hole. Don't fake a ring with `nofill stroke`:
    `path "M-30 -30 L30 -30 L30 30 L-30 30 Z  M-15 -15 L15 -15 L15 15 L-15 15 Z" fill #c33`.
+   Path data pasted from an SVG fills `nonzero` there: when its contours overlap, add the word
+   (`path "…" nonzero fill #c33`) or the overlap becomes a hole (`--check` warns).
 3. **`stroke`, `opacity`, `filter` all exist on `path` AND `text`.** Outline text with
    `text "…" color #fff stroke #000 4 join round` (stroke drawn behind fill) — never stack two texts.
 4. **`image` origin is top-left** → center with `at -w/2,-h/2`.

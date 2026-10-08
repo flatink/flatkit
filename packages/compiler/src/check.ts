@@ -177,6 +177,7 @@ function locateDocWarning(message: string, src: string): number | undefined {
   const rules: [RegExp, (m: RegExpExecArray) => RegExp][] = [
     [/^"([^"]+)" is stretched along one axis/, (m) => new RegExp(`\\b(?:group|as)[ \\t]+"${e(m[1]!)}"`)],
     [/^path data starting "([^"]+)" is only partly readable/, (m) => new RegExp(`\\bpath[ \\t]+"\\s*[Mm]\\s*${(m[1]!.match(/-?[\d.]+/g) ?? []).map(e).join('[\\s,A-Za-z]+')}(?![\\d.])`)],
+    [/^path starting "([^"]+)": two of its contours/, (m) => new RegExp(`\\bpath[ \\t]+"\\s*[Mm]\\s*${(m[1]!.match(/-?[\d.]+/g) ?? []).map(e).join('[\\s,A-Za-z]+')}(?![\\d.])`)],
     [/^each "([^"]+)":/, (m) => new RegExp(`\\beach[ \\t]+"${e(m[1]!)}"`)],
     [/^unknown drop zone "([^"]+)"/, (m) => new RegExp(`when[ \\t]+dropped[ \\t]+on[ \\t]+"?${e(m[1]!)}\\b`)],
     [/^instance "([^"]+)":/, (m) => new RegExp(`\\binstance[ \\t]+"[^"]*"[ \\t]+as[ \\t]+"${e(m[1]!)}"|\\binstance[ \\t]+"${e(m[1]!)}"(?![ \\t]+as\\b)`)],

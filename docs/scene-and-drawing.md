@@ -25,6 +25,7 @@ rect    <x> <y> <w> <h>            # · <r> for uniform rounded corners · <rx> 
 path    "M0 0 L10 0 L10 10 Z"      # raw SVG path data
 circle  100 100 40 as "Ring"       # name a shape (right after the geometry) → addressable, e.g. text `along "Ring"`
 path    "M0 0 L8 3 L15 9 …" smooth # free-hand material: rounded wherever the outline turns gently
+path    "M… Z M… Z" nonzero fill #461fbf # the SVG fill rule: contours of the same direction add up
 ```
 
 A `path` means what its data says: `L`, `H` and `V` are **straight lines**, next to a curve or on their own
@@ -32,6 +33,12 @@ A `path` means what its data says: `L`, `H` and `V` are **straight lines**, next
 material** instead: its points are joined by a curve that rounds every gentle turn (under 60°) and keeps
 the sharp ones. It is what the editor's brush exports, and what a curve sampled as many small `L` steps
 wants. `flatc --check` points at a long run of points with gentle turns that does not say `smooth`.
+
+A path of several contours is filled **even-odd**: a contour nested in another cuts a hole (a ring is one
+path, two contours). SVG and Canvas default to the other rule, **`nonzero`**, where two contours that run
+the same way add up: path data taken from an SVG can therefore show a hole where its contours overlap (two
+strokes of a letter that cross). The word **`nonzero`** on the shape fills it as the SVG did; the touch
+area follows. `flatc --check` warns about a filled path whose same-way contours overlap.
 
 ### Fill, stroke, opacity
 
@@ -160,9 +167,10 @@ mask layer "Window" { circle 60 60 50 fill #fff  layer "c" { … } }  // arbitra
   framing) — it's a visual cut, not a hit/layout change.
 - For an **arbitrary** clip shape, use a **`mask` layer**: its material (the shapes drawn directly in it)
   clips its **child layers**. See the [gotchas](dsl-gotchas.md) for the clip/mask details.
-- ⚠️ A mask is a **clipping path, evaluated even-odd — not an alpha mask.** Only the *outline* of its
-  material counts: a `fill radial(…)` in it gives a hard edge (no soft falloff), a `filter blur` on it
-  changes nothing, and two overlapping shapes **cancel** where they overlap (a third brings it back).
+- ⚠️ A mask is a **clipping path — not an alpha mask.** Only the *outline* of its
+  material counts: a `fill radial(…)` in it gives a hard edge (no soft falloff) and a `filter blur` on it
+  changes nothing. Its shapes **add up**: the mask is their union, each one filled by its own rule (a ring
+  keeps its hole, two shapes that overlap do not cancel).
   A soft or accumulating reveal is not a mask — animate the matter itself (a piloted group as the mask's
   material, or `draw` on a stroke).
 

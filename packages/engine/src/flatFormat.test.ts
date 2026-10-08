@@ -2227,3 +2227,24 @@ describe('text — `valign` places the lines in the height of the box (flatink/f
     expect(printProgram(parseProgram(src.replace(' valign middle', '')))).not.toContain('valign')
   })
 })
+
+// flatink/flatink#69 — `nonzero` on a shape: the fill rule of SVG / Canvas instead of even-odd.
+describe('`nonzero` (fill rule of a shape)', () => {
+  const D = 'M0 0L100 0L100 100L0 100Z M50 50L150 50L150 150L50 150Z'
+  const first = (src: string) => parseProgramFull(`scene {\n  layer "L" { ${src} }\n}`).layers[0].items[0] as Region
+  it('is absent by default (even-odd) and set by the word', () => {
+    expect(first(`path "${D}" fill #ff0000`).fillRule).toBeUndefined()
+    expect(first(`path "${D}" fill #ff0000 nonzero`).fillRule).toBe('nonzero')
+    expect(first(`path "${D}" nonzero fill #ff0000 stroke #000000 2`).fillRule).toBe('nonzero')
+  })
+  it('round-trips through the printer', () => {
+    const doc = parseProgramFull(`scene {\n  layer "L" { path "${D}" fill #ff0000 nonzero }\n}`)
+    const text = printProgramFull(doc)
+    expect(text).toMatch(/path "[^"]+" nonzero fill #ff0000/)
+    expect((parseProgramFull(text).layers[0].items[0] as Region).fillRule).toBe('nonzero')
+    expect(printProgramFull(parseProgramFull(text))).toBe(text)
+  })
+  it('is not printed for an even-odd shape', () => {
+    expect(printProgramFull(parseProgramFull(`scene {\n  layer "L" { path "${D}" fill #ff0000 }\n}`))).not.toMatch(/nonzero/)
+  })
+})

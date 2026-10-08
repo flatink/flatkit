@@ -20,7 +20,7 @@ import { objectNames } from '@flatkit/engine/sceneRefs'
 import { behaviorRegions } from '@flatkit/engine/flatFormat'
 import { itemBBox, itemBoundsById, dropZoneBounds, transformBBox, revealGrid } from '@flatkit/engine/groups'
 import { IDENTITY, apply, compose } from '@flatkit/engine/transform'
-import { makePathSampler, softVertexCount, smoothingDeviation } from '@flatkit/engine/path'
+import { makePathSampler, pathToPolygons, softVertexCount, smoothingDeviation } from '@flatkit/engine/path'
 import { bboxIntersects, ringsBBox } from '@flatkit/engine/bbox'
 import { lint, localVariables, type LintContext } from './lint'
 import { didYouMean } from './suggest'
@@ -28,7 +28,7 @@ import { lineIndex } from './sourceLines'
 import { forEachAction, forEachExpression } from './docWalk'
 import { parseUnits } from '@flatkit/engine/dsl'
 import { MATH_CTX, STD_CONSTANTS, STD_FUNCTIONS, STD_IDS, compileCached, evalExpr, exprScope, type ExprContext } from '@flatkit/engine/expr'
-import type { FuncDef, Image, Item, Layer, ParamDef, Region, SymbolDef, Text, Transform } from '@flatkit/types'
+import type { BBox, FuncDef, Image, Item, Layer, ParamDef, Path, Point, Region, SymbolDef, Text, Transform } from '@flatkit/types'
 
 /** Rebuilds the "program" text of a scope (imports + variables + functions + scene cycle
  *  + one `object "Name" { … }` block per scripted container with a unique name). Pure, round-trip via printUnits. */
@@ -303,6 +303,56 @@ function loopsSeamlessly(doc: Doc, expr: string, channel: string, loopSecs: numb
   }
 }
 
+/** Edge pairs one path may cost the test below: a path too dense to answer within it is left unjudged. */
+const CROSS_BUDGET = 2_000_000
+
+/**
+ * Do two CLOSED contours of the path run the same way AND cross each other? (Crossing, not nesting: one
+ * inside the other is how a hole is written.) Curves are flattened. Only the edges of each contour that
+ * reach the OTHER's box are compared — of a frame around a hole, almost none — and the whole path gets a
+ * budget of edge pairs (`--check` also runs on sources nobody vetted).
+ */
+function sameWayContoursCross(path: Path): boolean {
+  type Edge = [Point, Point]
+  const rings: { pts: Point[]; way: number; box: BBox }[] = []
+  const flat = pathToPolygons(path) // one ring per non-empty subpath, in order (cached, shared with the hit test)
+  let k = 0
+  for (const sp of path.subpaths) {
+    if (!sp.segments.length) continue
+    const pts = flat[k++]
+    if (!sp.closed || !pts || pts.length < 3) continue
+    let area = 0
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) area += pts[j]!.x * pts[i]!.y - pts[i]!.x * pts[j]!.y
+    if (!Number.isFinite(area) || area === 0) continue
+    rings.push({ pts, way: Math.sign(area), box: ringsBBox([pts])! })
+  }
+  const side = (a: Point, b: Point, c: Point): number => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+  const reaching = (pts: Point[], box: BBox): Edge[] => {
+    const out: Edge[] = []
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const p = pts[j]!, q = pts[i]!
+      if (Math.max(p.x, q.x) >= box.minX && Math.min(p.x, q.x) <= box.maxX && Math.max(p.y, q.y) >= box.minY && Math.min(p.y, q.y) <= box.maxY) out.push([p, q])
+    }
+    return out
+  }
+  let budget = CROSS_BUDGET
+  for (let i = 1; i < rings.length; i++) for (let j = 0; j < i; j++) {
+    const A = rings[i]!, B = rings[j]!
+    if (A.way !== B.way || !bboxIntersects(A.box, B.box)) continue
+    const ea = reaching(A.pts, B.box), eb = reaching(B.pts, A.box)
+    if ((budget -= ea.length * eb.length) < 0) return false
+    for (const [p, q] of ea) for (const [r, t] of eb) {
+      // A PROPER crossing: each edge has the ends of the other strictly on either side. Contours that
+      // only touch (a shared corner, a shared edge) do not count.
+      const d1 = side(p, q, r), d2 = side(p, q, t)
+      if (!(d1 > 0 && d2 < 0) && !(d1 < 0 && d2 > 0)) continue
+      const d3 = side(r, t, p), d4 = side(r, t, q)
+      if ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0)) return true
+    }
+  }
+  return false
+}
+
 /** STRUCTURAL warnings (non-blocking) of a Doc: phantom drop zones, dead variables. */
 export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnostic }[] {
   const out: { scope: string; diag: Diagnostic }[] = []
@@ -336,6 +386,21 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
   }
   partly(doc.layers)
   for (const sym of doc.symbols) partly(sym.layers)
+  // (a quinquies) Two contours of the SAME direction that overlap, in a filled path (flatink/flatink#69): SVG
+  //     and Canvas fill the overlap (nonzero), the even-odd rule used here leaves a hole in it — the stem and
+  //     the arms of a letter imported from SVG. A nested contour is the ring idiom and stays silent, and so
+  //     do contours of opposite directions (a hole under both rules).
+  const holed = (layers: Layer[]): void => {
+    for (const l of layers) for (const it of [...l.items, ...(l.cels ?? []).flatMap((c) => c.matter ?? [])]) {
+      if (isGroup(it)) { holed(it.layers); continue }
+      if (!isRegion(it) || it.poly || it.noFill || it.fillRule === 'nonzero' || it.path.subpaths.length < 2) continue
+      if (!sameWayContoursCross(it.path)) continue
+      const start = it.path.subpaths[0]!.segments.slice(0, 2).map((sg, i) => `${i ? 'L' : 'M'}${sg.anchor.x} ${sg.anchor.y}`).join(' ')
+      out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `path starting "${start}": two of its contours run the same way and overlap — the fill is even-odd, so their overlap is a HOLE (SVG and Canvas would fill it). Add \`nonzero\` to the shape (\`path "…" nonzero fill …\`) to fill it as SVG does` } })
+    }
+  }
+  holed(doc.layers)
+  for (const sym of doc.symbols) holed(sym.layers)
   // (a ter) A stroked shape in a container stretched along ONE axis. A stroke is drawn in its shape's space:
   //     its width and its round caps stretch with the group (`scaleY 100`: a 2-unit cap becomes 200 px, the
   //     line runs across the canvas). It renders as documented, so nothing is "fixed" for the author — the

@@ -88,6 +88,12 @@
 - **Rings / holes = ONE path with multiple closed subpaths** — fill is **even-odd**, so a nested subpath
   cuts a hole: `path "M-30 -30L30 -30L30 30L-30 30Z M-15 -15L15 -15L15 15L-15 15Z" fill #c33` is a solid
   filled ring (frame + hole). No need to fake it with `nofill stroke`.
+- **Even-odd is NOT the SVG default — `nonzero` asks for it.** SVG and Canvas fill `nonzero`: two contours
+  that run the same way ADD UP where they overlap. Even-odd leaves a **hole** there — the stem and the arms
+  of a letter in a logo pasted from an SVG. Write `path "…" nonzero fill #461fbf` and the shape fills as
+  the SVG did (a contour of the opposite direction still cuts a hole); the touch area and a mask made of
+  it follow. `--check` warns on a filled path whose same-way contours overlap; a nested contour (the ring
+  above) is left alone.
 - **Stroke width SCALES with the group**: a child of a `group`/instance at `scale 0.4` (or a `pose scale`)
   draws its stroke at 0.4× too (the stroke is drawn in the scaled space). So a thin ring stays
   proportional when you shrink the group — don't compensate the width by hand.
@@ -95,12 +101,13 @@
   coords) — e.g. hide the "feet" of an emerging shape: `group "Arc" clip -100 -60 200 60 { … }`. For an
   arbitrary clip shape, use a `mask` layer instead. **Render-only**: hit-testing and the preview/auto-size
   bbox ignore it (clipped-away area stays clickable / counts toward the framing) — it's a visual cut.
-- **A `mask` layer is a CLIPPING PATH in even-odd, not an alpha mask.** Its material contributes its
-  *outline*, nothing else: an alpha in the paint is ignored (`fill radial(…)` → hard edge, no falloff), a
-  `filter blur` on the matter changes nothing, and **two overlapping shapes cancel** where they overlap (a
-  third brings it back). So "stamp a soft brush repeatedly into a mask" does not accumulate — it flickers
-  holes in and out. For a scratch/wipe, do not build a mask at all: `reveal … { erase }` accumulates in the
-  runtime. For a progressive line, trim a stroke with
+- **A `mask` layer is a CLIPPING PATH, not an alpha mask.** Its material contributes its
+  *outline*, nothing else: an alpha in the paint is ignored (`fill radial(…)` → hard edge, no falloff) and a
+  `filter blur` on the matter changes nothing. The mask is the **union** of its shapes: two that overlap
+  add up (until 0.46 they cancelled where they overlapped), and each keeps its own fill rule — a ring stays
+  a ring. Shapes that overlap are composed off-screen, so a `blend screen` / `multiply` item under such a
+  mask blends with the masked content, not with what is behind. For a scratch/wipe, do not build a mask
+  at all: `reveal … { erase }` accumulates in the runtime, with a soft edge. For a progressive line, trim a stroke with
   [`draw`](scene-and-drawing.md#drawing-a-stroke-progressively-draw); for a sliding window, pilot a GROUP
   used as the mask's matter (a rectangle whose `scaleX` follows the progress).
 - **A partially drawn stroke (`draw`) still hits over the WHOLE path**: the trim is visual (like `clip`).
@@ -248,8 +255,8 @@ Inside an `object "Name" { … }`, besides `drag x, y` / `dragX` / `dragY`:
   (`brush` defaults to 24 px; coverage model, no pixel mask.)
   - **`erase`** makes the RUNTIME rub the target out where it was scratched (one disc per cleared cell,
     accumulating, with a soft edge) — a scratch card is then a grey rectangle and nothing else. A `mask`
-    layer cannot do this: its matter is an even-odd clip path, so two overlapping stamps cancel, and no
-    construct creates a stamp at the pointer. The composite is cached: once the cells stop changing, a
+    layer cannot do this: its matter is a hard clip path, and no construct creates a stamp at the
+    pointer. The composite is cached: once the cells stop changing, a
     frame costs one blit.
   - **`brush` is the finger, `grain <px>` is the resolution** — a wide touch with a fine edge is
     `brush 48` + `grain 12` (absent = the brush, i.e. as coarse as the finger). Keep the grain at or under

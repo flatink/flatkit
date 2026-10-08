@@ -145,6 +145,7 @@ function printRegion(r: Region, d: string): string {
     // `smooth`: free-hand material (no handle anywhere, soft vertices) — what the editor's brush produces.
     // Without the word a path of lines is read back as straight segments, and the shape would change.
     : `path "${d}"${r.path.subpaths.some(isSmoothedMaterial) ? ' smooth' : ''}`
+  if (r.fillRule === 'nonzero') s += ' nonzero' // absent = even-odd, the default
   if (r.name) s += ` as ${q(r.name)}` // stable name (addressable, e.g. `text … along "<id>"`)
   if (r.noFill) s += ' nofill'
   else if (r.fillParam) s += ` fill ${r.fillParam}` // fill bound to a symbol color param
@@ -1429,7 +1430,7 @@ function expandHoldCels(cels: Cel[]): void {
 }
 
 /** Words that end the two names of a `polyline` (they start its options or its paint). */
-const POLY_WORDS = new Set(['count', 'closed', 'smooth', 'as', 'fill', 'nofill', 'stroke', 'draw', 'opacity', 'nohit', 'filter'])
+const POLY_WORDS = new Set(['count', 'closed', 'smooth', 'nonzero', 'as', 'fill', 'nofill', 'stroke', 'draw', 'opacity', 'nohit', 'filter'])
 
 /** Options that belong to a `stroke`, not to the item carrying it — see the ordering error in `eat`. */
 const STROKE_OPTIONS = new Set(['cap', 'join', 'miter', 'dash', 'fixed'])
@@ -1931,6 +1932,7 @@ class FlatParser {
     let stroke: Region['stroke']
     let opacity: number | undefined
     let noHit = false
+    let nonzero = false
     let filters: Filter[] | undefined
     let color = '#000000'
     let fillParam: string | undefined, strokeParam: string | undefined
@@ -1972,6 +1974,8 @@ class FlatParser {
       }
       else if (this.is('opacity')) { this.next(); opacity = this.num() }
       else if (this.is('nohit')) { this.next(); noHit = true }
+      // `nonzero`: the fill rule of SVG / Canvas (contours of the same direction add up where they overlap).
+      else if (this.is('nonzero')) { this.next(); nonzero = true }
       else break
     }
     const r: Region = { id: uid('r'), color, path }
@@ -1981,6 +1985,7 @@ class FlatParser {
     if (fillParam) r.fillParam = fillParam
     if (strokeParam) r.strokeParam = strokeParam
     if (noFill) r.noFill = true
+    if (nonzero) r.fillRule = 'nonzero'
     if (stroke) r.stroke = stroke
     if (draw != null && draw < 1) r.draw = draw
     if (drawFrom) r.drawFrom = drawFrom
