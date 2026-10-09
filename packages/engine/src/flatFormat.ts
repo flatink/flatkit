@@ -596,11 +596,14 @@ function argToBinding(text: string): { raw: string; num?: number } {
   const num = Number(t)
   return Number.isFinite(num) && t !== '' ? { raw: t, num } : { raw: t }
 }
+const duplicateSymbolMessage = (name: string, firstLine: number): string =>
+  `symbol "${name}" is already declared at line ${firstLine} — a name holds one symbol: rename one of the two, or remove the one that is not meant to be drawn`
 /** Removes the PARAMETERIZED symbol definitions (`symbol "X"(…) { … }`) and returns them as templates.
  *  NON-parameterized symbols (`.flat` libraries) are not touched (no parenthesis). */
 function extractSymbolTemplates(src: string): { src: string; templates: Map<string, SymbolTemplate> } {
   const templates = new Map<string, SymbolTemplate>()
   if (!/\bsymbol\b/.test(src)) return { src, templates }
+  const declaredAt = new Map<string, number>() // name → line of its first declaration
   const re = /\bsymbol\s+"((?:[^"\\]|\\.)*)"\s*\(/g
   let out = '', cursor = 0
   for (;;) {
@@ -612,6 +615,9 @@ function extractSymbolTemplates(src: string): { src: string; templates: Map<stri
     const braceOpen = parenClose >= 0 ? src.indexOf('{', parenClose) : -1
     const braceClose = braceOpen >= 0 ? matchBrace(src, braceOpen) : -1
     if (braceClose < 0) { out += src.slice(cursor); break }
+    const first = declaredAt.get(m[1]), line = src.slice(0, m.index).split('\n').length
+    if (first !== undefined) throw new FlatSyntaxError(duplicateSymbolMessage(m[1], first), line, m.index - src.lastIndexOf('\n', m.index - 1))
+    declaredAt.set(m[1], line)
     templates.set(m[1], { params: parseSignature(src.slice(parenOpen + 1, parenClose)), body: src.slice(braceOpen + 1, braceClose) })
     out += src.slice(cursor, m.index) + blankSpan(src.slice(m.index, braceClose + 1)) // blanked, newlines kept: the lines below keep their numbers
     cursor = braceClose + 1
@@ -1630,7 +1636,15 @@ class FlatParser {
   program(): Program { return this.located(() => this.programBody()) }
   private symbols(): SymbolDef[] {
     const out: SymbolDef[] = []
-    while (this.peek() && this.is('symbol')) out.push(this.symbol())
+    const declaredAt = new Map<string, number>() // name → line of its first declaration
+    while (this.peek() && this.is('symbol')) {
+      // A name holds ONE symbol. Two of them used to compile: the instances went to the last declared, the
+      // first was drawn nowhere, and nothing said so.
+      const name = this.t[this.p + 1], first = name?.k === 'str' ? declaredAt.get(name.v) : undefined
+      if (first !== undefined) this.fail(duplicateSymbolMessage(name.v, first))
+      if (name?.k === 'str') declaredAt.set(name.v, this.posAt(this.peek()!.at).line)
+      out.push(this.symbol())
+    }
     // A `.flat` holds symbols only. Stopping at the first other line dropped every symbol after it, and the
     // check passed on what was left (flatink/flatink#66).
     if (this.peek()) this.fail(`a .flat library holds symbols only — \`symbol "Name" { … }\` expected, "${this.peek()!.v}" found`)

@@ -411,6 +411,10 @@ and composes with `self.x`/`self.y` etc. (same `self`).
   - **A plain `symbol "X" { … }` may be written in the program too** (before or after the `scene`): it is
     the very block a `.flat` holds — its own `timeline`, cels, `states`, `params` — instanced without
     parens, and it wins over a library symbol of the same name. No dummy parameter needed any more.
+  - ⚠️ **A name holds one symbol.** Two `symbol "X" { … }` in the same program, or in the same `.flat`, are
+    a compile error that gives the line of the first (they used to compile, and the instances silently went
+    to the last one). The same goes for two `symbol "X"(…)` templates. Only the program-over-library case
+    above is an override.
   - **`repeat` / `def` / `$()` work in a `.flat` library**, as in a program's scene: `repeat i from 0 to 8
     { circle $(i*20) 0 6 fill #333 }` inside a symbol's layer is unfolded when the library is read.
   - ⚠️ **`.flatink`-only**: a parameterized `symbol "X"(…)` lives in the **program** (`.flatink`), NOT in a
