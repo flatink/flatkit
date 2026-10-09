@@ -152,7 +152,7 @@ function unreachableBehaviorDiagnostics(doc: Doc, src: string): CheckDiagnostic[
     if (a.do === 'send' && a.payload?.kind === 'text' && !texts.has(a.payload.itemId) && !seen.has(`t${a.payload.itemId}`)) {
       const id = a.payload.itemId
       seen.add(`t${id}`)
-      out.push({ scope: 'scene', line: lineOf(src, new RegExp(`\\btext\\(\\s*"${escapeRe(id)}"`)), col: 1, severity: 'error', message: `text("${id}"): no text "${id}" (id or name) in the scene or its symbols — it would send "". Name the text: \`text "…" at x,y as "${id}"\`` })
+      out.push({ scope: 'scene', line: lineOf(src, new RegExp(`\\btext\\(\\s*"${escapeRe(id)}"`)), col: 1, severity: 'error', message: `text("${id}"): no text "${id}" (id or name) in the scene or its symbols — it would send "". Name the text: \`text "…" as "${id}" at x,y\`` })
     }
   })
   return out
@@ -182,6 +182,9 @@ function locateDocWarning(message: string, src: string): number | undefined {
     [/^"([^"]+)" is stretched along one axis/, (m) => new RegExp(`\\b(?:group|as)[ \\t]+"${e(m[1]!)}"`)],
     [/^path data starting "([^"]+)" is only partly readable/, (m) => new RegExp(`\\bpath[ \\t]+"\\s*[Mm]\\s*${(m[1]!.match(/-?[\d.]+/g) ?? []).map(e).join('[\\s,A-Za-z]+')}(?![\\d.])`)],
     [/^path starting "([^"]+)": two of its contours/, (m) => new RegExp(`\\bpath[ \\t]+"\\s*[Mm]\\s*${(m[1]!.match(/-?[\d.]+/g) ?? []).map(e).join('[\\s,A-Za-z]+')}(?![\\d.])`)],
+    [/^([A-Za-z_]\w*)\[…\] = …: /, (m) => new RegExp(`(?<![\\w.])${e(m[1]!)}[ \\t]*\\[[^\\n]*\\][ \\t]*=(?!=)`)],
+    [/^`draw` on a shape with no `stroke`/, () => /^(?![^\n]*\bstroke\b)[^\n]*\bdraw\b/m],
+    [/^filter under a transform that never stops moving \("([^"]+)"/, (m) => new RegExp(`\\b(?:group|as)[ \\t]+"${e(m[1]!)}"`)],
     [/^each "([^"]+)":/, (m) => new RegExp(`\\beach[ \\t]+"${e(m[1]!)}"`)],
     [/^unknown drop zone "([^"]+)"/, (m) => new RegExp(`when[ \\t]+dropped[ \\t]+on[ \\t]+"?${e(m[1]!)}\\b`)],
     [/^instance "([^"]+)":/, (m) => new RegExp(`\\binstance[ \\t]+"[^"]*"[ \\t]+as[ \\t]+"${e(m[1]!)}"|\\binstance[ \\t]+"${e(m[1]!)}"(?![ \\t]+as\\b)`)],

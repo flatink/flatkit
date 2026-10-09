@@ -132,7 +132,8 @@ function namedBounds(doc: Doc, name: string, hitbox: boolean): BBox | null {
   const walk = (layers: Layer[], matrix: Transform) => {
     for (const l of layers) for (const it of l.items) {
       if (done) return
-      if ('name' in it && it.name === name) {
+      // A text written `as "<id>"` is addressed by that id (`object "<id>"`, a gesture script, `match`).
+      if (('name' in it && it.name === name) || (isText(it) && it.idExplicit && it.id === name)) {
         if (isNamedByContent(it)) { if (fallback === undefined) { const b = itemBBox(doc, it); fallback = b ? transformBBox(b, matrix) : null } continue }
         if (hitbox && (isGroup(it) || isInstance(it)) && it.hitbox) {
           const { w, h } = it.hitbox

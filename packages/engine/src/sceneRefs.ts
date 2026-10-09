@@ -15,11 +15,12 @@
 //  timeline); a chain `Foo.x = Bullet.x` sees Bullet's base pose, not Bullet-following-Enemy. Sufficient
 //  and deterministic in v1.
 // ─────────────────────────────────────────────────────────────────────────────
-import type { Doc, ExprContext, Group, Image, Instance, Item, Layer, Text } from '@flatkit/types'
+import type { Doc, ExprContext, Group, Image, Instance, Item, Layer, Path, Text } from '@flatkit/types'
 import { IDENTITY, compose, decompose, type Transform } from './transform'
 import { resolveLayerAt } from './cel'
 import { resolveInstanceFrame } from './timeline'
-import { containerLayers, getSymbol, isGroup, isInstance, isPoseable, isNamedByContent } from './layers'
+import { containerLayers, getSymbol, isGroup, isInstance, isPoseable, isRegion, isNamedByContent, layerStructure } from './layers'
+import { transformPath } from './path'
 
 /** Live channels of an object (same keys as `ExprChannel`). Read-only. */
 export type ObjectChannels = Record<string, number>
@@ -51,16 +52,35 @@ function walk(doc: Doc, items: Item[], frame: number, matrix: Transform, fps: nu
       const sym = getSymbol(doc, it.symbolId)
       const local = sym?.timeline ? resolveInstanceFrame(it.playback, frame, sym.timeline.durationFrames) : frame
       const next = new Set([...seen, it.symbolId])
-      for (const l of containerLayers(doc, it)) if (l.visible && walk(doc, resolveLayerAt(l, local, { fps, ctx, parent: t }), local, t, fps, ctx, next, visit, depth + 1)) return true
+      if (stack(containerLayers(doc, it), local, t, fps, ctx, (items) => walk(doc, items, local, t, fps, ctx, next, visit, depth + 1))) return true
     } else if (isGroup(it)) {
-      for (const l of it.layers) if (l.visible && walk(doc, resolveLayerAt(l, frame, { fps, ctx, parent: t }), frame, t, fps, ctx, seen, visit, depth + 1)) return true
+      if (stack(it.layers, frame, t, fps, ctx, (items) => walk(doc, items, frame, t, fps, ctx, seen, visit, depth + 1))) return true
     }
   }
   return false
 }
 
+/** The path a guide layer lays down at `frame` (the outlines of its resolved matter), or undefined. */
+function guidePath(guide: Layer, frame: number, fps: number, ctx: ExprContext | undefined): Path | undefined {
+  const subpaths = resolveLayerAt(guide, frame, { fps, ctx }).flatMap((it) => (isRegion(it) ? (it.xform ? transformPath(it.path, it.xform) : it.path).subpaths : []))
+  return subpaths.length ? { subpaths } : undefined
+}
+/** Each visible layer of a stack, RESOLVED as it is drawn — a layer nested in a guide layer travels along
+ *  the guide's path. (`Boat.x` used to read the straight line between its two poses while the boat was
+ *  drawn on the curve.) `each` returns `true` to stop. */
+function stack(layers: Layer[], frame: number, parent: Transform, fps: number, ctx: ExprContext | undefined, each: (items: Item[]) => boolean): boolean {
+  const { guides } = layerStructure(layers)
+  for (const l of layers) {
+    if (!l.visible) continue
+    const gl = guides.size ? guides.get(l.id) : undefined
+    const guide = gl ? guidePath(gl, frame, fps, ctx) : undefined
+    if (each(resolveLayerAt(l, frame, { fps, ctx, parent, ...(guide ? { guide, orient: l.orientToGuide } : {}) }))) return true
+  }
+  return false
+}
+
 const roots = (doc: Doc, frame: number, ctx: ExprContext | undefined, fps: number, visit: Visit) => {
-  for (const l of doc.layers) if (l.visible && walk(doc, resolveLayerAt(l, frame, { fps, ctx, parent: IDENTITY }), frame, IDENTITY, fps, ctx, new Set(), visit)) return
+  stack(doc.layers, frame, IDENTITY, fps, ctx, (items) => walk(doc, items, frame, IDENTITY, fps, ctx, new Set(), visit))
 }
 
 /**

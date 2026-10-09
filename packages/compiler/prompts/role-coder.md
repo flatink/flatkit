@@ -164,7 +164,7 @@ each "Key" as i { when clicked { input = input*10 + (i+1) } }        // one hand
 match Word1, Word2 onto Good, Bad {
   correct Word1 -> Good, Word2 -> Bad
   lock on wrong                              // optional; absent = retryable
-  on correct as it { send "found", text(it) }   // text(it) needs a text whose id is the item's name (`text "chat" as "Word1"` in group "Word1"); else send a number
+  on correct as it { send "found", text(it) }   // text(it) needs a text whose id is the item's name — the item itself may be that text (`text "chat" as "Word1" at …`); else send a number
   on done { send "win" }
 }
 ```

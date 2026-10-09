@@ -581,8 +581,9 @@ match Word1, Word2 onto Good, Bad {
 }
 ```
 
-`it` is the item's NAME. `text(it)` sends something only when a text of that same name exists (`text "chat"
-as "Word1"` inside the group `Word1`); `--check` reports it otherwise — send a number, or nothing, instead.
+`it` is the item's NAME. `text(it)` sends what a text of that name shows: the items may be the texts
+themselves (`text "chat" as "Word1" at 20,20 …`), or groups holding one. With no such text, `--check`
+reports it — send a number, or nothing, instead.
 
 It generates, per item, `<Item>_placed` / `<Item>_ok` / `<Item>_zone` state and the drag+drop handlers;
 you keep the visual (`var <Item>_x`/`_y` + your channel expressions).

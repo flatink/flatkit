@@ -29,8 +29,8 @@ guide layer "Track" {
 }
 ```
 
-⚠️ The guide moves what is DRAWN. `Boat.x` / `Boat.y` read from a handler still give the straight-line
-position between the two poses. A **`folder layer`** only groups layers (`collapsed` is an editor hint).
+`Boat.x` / `Boat.y` (and `self` in its handlers) read where the boat is drawn, on the curve. A
+**`folder layer`** only groups layers (`collapsed` is an editor hint).
 
 ## Shapes
 

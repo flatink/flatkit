@@ -880,11 +880,14 @@ function generateMatch(items: string[], zones: string[], body: string): string {
  *  reported line:col is the one they can actually go and look at. */
 export function expandFeedback(src: string): string {
   if (!/\bfeedback\b/.test(src)) return src
-  return src.replace(/^([ \t]*)feedback\b([^\n]*)$/gm, (full: string, indent: string, rest: string) => {
+  // At the start of a line, or right after the brace that opens its block (`object "X" { feedback lift }`).
+  return src.replace(/(^[ \t]*|\{[ \t]*)feedback\b([^\n]*)$/gm, (full: string, indent: string, rest: string) => {
     const tokens: { t: string; arg?: string }[] = []
     const re = /shake\(\s*([^)]*?)\s*\)|([A-Za-z][\w-]*)/g
     let m: RegExpExecArray | null
-    const words = rest.replace(/\/\/.*$/, '') // the comment is not part of the list: `feedback lift // dim later` is lift alone
+    const code = rest.replace(/\/\/.*$/, '') // the comment is not part of the list: `feedback lift // dim later` is lift alone
+    const close = code.indexOf('}') // …nor is the brace that closes the block on the same line: it stays
+    const words = close < 0 ? code : code.slice(0, close)
     while ((m = re.exec(words))) tokens.push(m[1] !== undefined ? { t: 'shake', arg: m[1] } : { t: m[2] })
     const has = (t: string) => tokens.some((x) => x.t === t)
     const lines: string[] = []
@@ -900,7 +903,7 @@ export function expandFeedback(src: string): string {
     // `clock`, not `time`: `time` wraps every `durationFrames`, which made the wobble SKIP on each loop.
     if (shake) lines.push(`rotation = shake(${shake.arg && shake.arg.length ? shake.arg : '0'}, clock)`)
     if (!lines.length) return full // nothing recognized → leave as-is
-    return indent + lines.join('  ') // one line in, one line out (two spaces = statement boundary)
+    return indent + lines.join('  ') + (close < 0 ? '' : ' ' + code.slice(close)) // one line in, one line out (two spaces = statement boundary)
   })
 }
 
@@ -1049,14 +1052,21 @@ export function behaviorDiagnostics(src: string): { scope: string; diag: Diagnos
   const out: { scope: string; diag: Diagnostic }[] = []
   for (const r of behaviorRegions(src))
     for (const d of parseUnits(r.body).diagnostics) {
-      const shift = r.line - 1 // the region's own line 1 sits on this line of the author's file
-      // The fix carries its OWN positions, and they are relative to the region text just like `d.line`.
-      // Forgetting to shift them lands the repair at the top of the file -- silently, since the edit still
-      // applies cleanly to whatever happens to be there.
-      const fix = d.fix && { ...d.fix, line: d.fix.line + shift, endLine: d.fix.endLine + shift }
-      out.push({ scope: r.scope, diag: { ...d, line: d.line + shift, ...(fix ? { fix } : {}) } })
+      out.push({ scope: r.scope, diag: inRegion(d, r) })
     }
   return out
+}
+
+/** A diagnostic of a region's text, placed in the author's FILE. The region's line 1 sits on `r.line`, and
+ *  starts `r.col` characters into it (an `object "X" { when clicked { … } }` written on one line: the body
+ *  begins after the brace, so a column counted in the body was short by that much — and the repair of a
+ *  run-on statement landed in the middle of the wrong word). The `fix` carries its OWN positions, relative
+ *  to the region text like `d.line`: shifted too, or it lands somewhere else and applies cleanly there. */
+export function inRegion(d: Diagnostic, r: { line: number; col?: number }): Diagnostic {
+  const dl = r.line - 1, dc = r.col ?? 0
+  const col = (line: number, c: number) => (line === 1 ? c + dc : c)
+  const fix = d.fix && { ...d.fix, line: d.fix.line + dl, col: col(d.fix.line, d.fix.col), endLine: d.fix.endLine + dl, endCol: col(d.fix.endLine, d.fix.endCol) }
+  return { ...d, line: d.line + dl, col: col(d.line, d.col), ...(fix ? { fix } : {}) }
 }
 
 /** The LINTABLE regions of a program SOURCE: one per `object "name" { … }` body, plus the scene scripts —
@@ -1064,11 +1074,12 @@ export function behaviorDiagnostics(src: string): { scope: string; diag: Diagnos
  *  file: the `scene { … }` block and the header directives are MASKED rather than removed, and the sugar
  *  expansions are line-preserving. Use this (not a text rebuilt from the Doc) whenever a diagnostic will be
  *  shown against a source file — a rebuilt program numbers a file the author never wrote. */
-export function behaviorRegions(src: string): { scope: string; body: string; line: number }[] {
+export function behaviorRegions(src: string): { scope: string; body: string; line: number; col?: number }[] {
   const expanded = expandProgramSugar(src)
   const lineAt = (off: number) => expanded.slice(0, off).split('\n').length // 1-based line at an absolute offset
   const { sceneText, tailAt, objects } = extractBehavior(expanded)
-  const out = objects.map((ob) => ({ scope: `object "${ob.name}"`, body: ob.body, line: lineAt(ob.bodyAt) }))
+  const colAt = (off: number) => off - (expanded.lastIndexOf('\n', off - 1) + 1) // characters before it on its line
+  const out: { scope: string; body: string; line: number; col?: number }[] = objects.map((ob) => ({ scope: `object "${ob.name}"`, body: ob.body, line: lineAt(ob.bodyAt), col: colAt(ob.bodyAt) }))
   out.push({ scope: 'scene', body: sceneText, line: lineAt(tailAt) }) // masked → absolute, base line 1
   return out
 }
@@ -2202,6 +2213,11 @@ class FlatParser {
   private refuseRotateChannel(raw: string): void {
     if (raw === 'rotate') this.fail('a channel is not spelled `rotate` on a declaration line, where `rotate <n>` is a fixed rotation in degrees: write `rotation` (radians) or `rotationDeg` (degrees)')
   }
+  /** A modifier integrates ONE of the pose channels. `spring dx …` compiled, was stored, and moved nothing:
+   *  the offsets are not integrated (an `object` block already refused them). */
+  private refuseModifierChannel(raw: string, kind: 'spring' | 'smooth'): void {
+    if (!(EXPR_CHANNELS as string[]).includes(modChannel(raw).ch)) this.fail(`unknown channel "${raw}" in a \`${kind}\` (expected ${EXPR_CHANNELS.join(', ')}, or rotationDeg)${raw === 'dx' || raw === 'dy' ? ` — an offset is not integrated: ${kind} \`${raw === 'dx' ? 'x' : 'y'}\` toward the position you want` : ''}`)
+  }
   private poseAttrs(): ParsedAttrs {
     const a: ParsedAttrs = {}
     for (;;) {
@@ -2226,8 +2242,8 @@ class FlatParser {
         const ex = this.str()
         ;(a.expressions ??= {})[ch as BindChannel] = deg ? `rad(${ex})` : ex
       }
-      else if (this.is('spring')) { this.next(); this.refuseRotateChannel(this.peek()?.v ?? ''); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let stiffness = 0, damping = 0, driven = false; for (;;) { if (this.is('stiffness')) { this.next(); stiffness = this.num(); driven = true } else if (this.is('damping')) { this.next(); damping = this.num() } else break } if (!driven) this.fail(`a spring needs its "stiffness" (0..1) — without it the channel never moves: \`spring ${ch} "…" stiffness 0.1 damping 0.8\``); (a.modifiers ??= {})[ch] = { kind: 'spring', target, stiffness, damping } }
-      else if (this.is('smooth')) { this.next(); this.refuseRotateChannel(this.peek()?.v ?? ''); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; if (!this.is('k')) this.fail(`a smooth needs its "k" (0..1) — without it the channel never moves: \`smooth ${ch} "…" k 0.2\``); this.next(); const k = this.num(); (a.modifiers ??= {})[ch] = { kind: 'smooth', target, k } }
+      else if (this.is('spring')) { this.next(); this.refuseRotateChannel(this.peek()?.v ?? ''); this.refuseModifierChannel(this.peek()?.v ?? '', 'spring'); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; let stiffness = 0, damping = 0, driven = false; for (;;) { if (this.is('stiffness')) { this.next(); stiffness = this.num(); driven = true } else if (this.is('damping')) { this.next(); damping = this.num() } else break } if (!driven) this.fail(`a spring needs its "stiffness" (0..1) — without it the channel never moves: \`spring ${ch} "…" stiffness 0.1 damping 0.8\``); (a.modifiers ??= {})[ch] = { kind: 'spring', target, stiffness, damping } }
+      else if (this.is('smooth')) { this.next(); this.refuseRotateChannel(this.peek()?.v ?? ''); this.refuseModifierChannel(this.peek()?.v ?? '', 'smooth'); const { ch, deg } = modChannel(this.next().v); const t = this.str(); const target = deg ? `rad(${t})` : t; if (!this.is('k')) this.fail(`a smooth needs its "k" (0..1) — without it the channel never moves: \`smooth ${ch} "…" k 0.2\``); this.next(); const k = this.num(); (a.modifiers ??= {})[ch] = { kind: 'smooth', target, k } }
       else if (this.is('nohit')) { this.next(); a.noHit = true }
       else if (this.is('blend')) { this.next(); a.blend = this.oneOf<BlendMode>('blend', ['add', 'screen', 'multiply']) }
       else if (this.is('hitbox')) { this.next(); const w = this.num(); const h = this.num(); a.hitbox = { w, h } }

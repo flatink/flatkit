@@ -17,7 +17,7 @@ import { contextLayers, getScopeTimeline, isContainer, isGroup, isInstance, isTe
 import { importedFunctions } from '@flatkit/engine/stdlib'
 import { EXPR_CHANNELS, OFFSET_CHANNELS } from '@flatkit/engine/timeline'
 import { objectNames } from '@flatkit/engine/sceneRefs'
-import { behaviorRegions } from '@flatkit/engine/flatFormat'
+import { behaviorRegions, inRegion } from '@flatkit/engine/flatFormat'
 import { itemBBox, itemBoundsById, dropZoneBounds, transformBBox, revealGrid } from '@flatkit/engine/groups'
 import { IDENTITY, apply, compose } from '@flatkit/engine/transform'
 import { makePathSampler, pathToPolygons, softVertexCount, smoothingDeviation } from '@flatkit/engine/path'
@@ -108,6 +108,11 @@ export function allScopeVariables(doc: Doc): string[] {
   for (const { editPath } of scopes(doc))
     for (const r of scopeRegions(scopeProgram(doc, editPath)))
       for (const v of localVariables(parseUnits(r.body).units)) set.add(v)
+  // …and what the Doc itself says is written, wherever the object that writes it sits: the scopes above are
+  // rebuilt from named groups and instances only, so a variable set by the handlers of a TEXT (`text "…" as
+  // "Word1"`, an item of a `match`) or by its interactor was "unknown" to every other block.
+  forEachAction(doc, (a) => { if (a.do === 'setVar' || a.do === 'fillVar') set.add(a.name) })
+  for (const i of doc.interactors ?? []) for (const v of [i.varX, i.varY, i.varT]) if (v) set.add(/^[A-Za-z_]\w*/.exec(v)?.[0] ?? v)
   return [...set]
 }
 
@@ -243,6 +248,12 @@ function instanceParamWarnings(doc: Doc): string[] {
       if (states) {
         // A bare word that is neither a state nor anything the program declares can only be a misspelt state.
         if (/^[A-Za-z_]\w*$/.test(value) && !states.includes(value) && !known.has(value)) say(`${who}: "${value}" is not a state of "${a.param}" (${states.join(', ')})`)
+        // A state name INSIDE an expression (`score > 5 ? open : closed`) is an unknown name there: it reads 0,
+        // and the instance silently went to the frame the number gave.
+        else if (!replay && !/^[A-Za-z_]\w*$/.test(value)) {
+          const inside = states.find((st) => !known.has(st) && new RegExp(`(?<![\\w.])${st}(?![\\w(])`).test(value.replace(/"[^"]*"/g, '')))
+          if (inside) say(`${who}: a state name is only read when it is the WHOLE value — inside an expression "${inside}" is an unknown name, read as 0. Write \`if <cond> { ${a.target}.${a.param} = ${inside} } else { … }\``)
+        }
       } else if (def!.type === 'color') { if (!COLOR_LITERAL.test(value)) say(`${who}: "${a.param}" is a color param — it takes a color literal (#rrggbb), not an expression`) }
       else if (def!.type === 'text') { if (!/^".*"$/.test(value)) say(`${who}: "${a.param}" is a text param — it takes a quoted text`) }
       else if (/^-?[\d.]+$/.test(value)) {
@@ -390,12 +401,30 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
   //     and Canvas fill the overlap (nonzero), the even-odd rule used here leaves a hole in it — the stem and
   //     the arms of a letter imported from SVG. A nested contour is the ring idiom and stays silent, and so
   //     do contours of opposite directions (a hole under both rules).
+  // The warning names its path by how it STARTS — as far as it takes to tell it from the other paths of the
+  // document: two paths that begin alike (a shape and its variant) sent the reader to the wrong one.
+  const allPaths: Path[] = []
+  const collect = (layers: Layer[]): void => {
+    for (const l of layers) for (const it of [...l.items, ...(l.cels ?? []).flatMap((c) => c.matter ?? [])]) {
+      if (isGroup(it)) collect(it.layers)
+      else if (isRegion(it) && !it.poly) allPaths.push(it.path)
+    }
+  }
+  collect(doc.layers)
+  for (const sym of doc.symbols) collect(sym.layers)
+  const anchorsOf = (p: Path): string[] => p.subpaths.flatMap((sp) => sp.segments.map((sg, i) => `${i ? 'L' : 'M'}${sg.anchor.x} ${sg.anchor.y}`))
+  const pathStart = (p: Path): string => {
+    const mine = anchorsOf(p), others = allPaths.filter((o) => o !== p).map(anchorsOf)
+    let n = 2
+    while (n < Math.min(mine.length, 12) && others.some((o) => o.length >= n && o.slice(0, n).join(' ') === mine.slice(0, n).join(' '))) n++
+    return mine.slice(0, n).join(' ')
+  }
   const holed = (layers: Layer[]): void => {
     for (const l of layers) for (const it of [...l.items, ...(l.cels ?? []).flatMap((c) => c.matter ?? [])]) {
       if (isGroup(it)) { holed(it.layers); continue }
       if (!isRegion(it) || it.poly || it.noFill || it.fillRule === 'nonzero' || it.path.subpaths.length < 2) continue
       if (!sameWayContoursCross(it.path)) continue
-      const start = it.path.subpaths[0]!.segments.slice(0, 2).map((sg, i) => `${i ? 'L' : 'M'}${sg.anchor.x} ${sg.anchor.y}`).join(' ')
+      const start = pathStart(it.path)
       out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `path starting "${start}": two of its contours run the same way and overlap — the fill is even-odd, so their overlap is a HOLE (SVG and Canvas would fill it). Add \`nonzero\` to the shape (\`path "…" nonzero fill …\`) to fill it as SVG does` } })
     }
   }
@@ -626,6 +655,7 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
   out.push(...docLayoutWarnings(doc))
   out.push(...docRevealCellWarnings(doc))
   out.push(...docDrawWarnings(doc))
+  out.push(...docArrayWriteWarnings(doc))
   out.push(...docGestureOptionWarnings(doc))
   out.push(...docFilterCacheWarnings(doc))
   return out
@@ -833,6 +863,21 @@ export function docGestureOptionWarnings(doc: Doc): { scope: string; diag: Diagn
       }
     }
   }
+  return out
+}
+
+/** `arr[i] = v` on a name that is not an array: the write is dropped at run time, without a word. An array
+ *  is one the program declares (`var hx = fill(4, 0)`, `var hx = [0, 0]`) or makes with `hx = fill(…)`. */
+export function docArrayWriteWarnings(doc: Doc): { scope: string; diag: Diagnostic }[] {
+  const arrays = new Set(Object.entries(doc.variables ?? {}).filter(([, v]) => Array.isArray(v)).map(([k]) => k))
+  forEachAction(doc, (a) => { if (a.do === 'fillVar') arrays.add(a.name) })
+  const seen = new Set<string>()
+  const out: { scope: string; diag: Diagnostic }[] = []
+  forEachAction(doc, (a) => {
+    if (a.do !== 'setIndex' || arrays.has(a.name) || seen.has(a.name)) return
+    seen.add(a.name)
+    out.push({ scope: 'scene', diag: { line: 1, col: 1, severity: 'warning', message: `${a.name}[…] = …: "${a.name}" is not an array — the write does nothing. Declare it at the top of the program: \`var ${a.name} = fill(<n>, 0)\`` } })
+  })
   return out
 }
 
@@ -1140,11 +1185,7 @@ export function lintDoc(doc: Doc, src?: string): { scope: string; diag: Diagnost
       : scopeRegions(scopeProgram(doc, editPath)).map((r) => ({ scope: label, body: r.body, line: r.line }))
     for (const r of regions)
       for (const d of lint(r.body, ctx)) {
-        const shift = r.line - 1
-        // The `fix` carries its own positions, relative to the region text exactly like `d.line`. Shift
-        // both or the repair lands somewhere else in the file -- and applies cleanly there, silently.
-        const fix = d.fix && { ...d.fix, line: d.fix.line + shift, endLine: d.fix.endLine + shift }
-        out.push({ scope: r.scope, diag: { ...d, line: d.line + shift, ...(fix ? { fix } : {}) } })
+        out.push({ scope: r.scope, diag: inRegion(d, r) })
       }
     out.push(...itemExpressionDiagnostics(doc, editPath, label, ctx, src && editPath.length === 0 ? src : undefined, out))
   }
