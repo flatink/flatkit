@@ -37,7 +37,7 @@ export const MAX_REPEAT = 100_000
  */
 export const MAX_ACTIONS_PER_TICK = 200_000
 
-type Budget = { n: number }
+export type Budget = { n: number }
 
 /** The surface the player exposes to the action interpreter. */
 export interface ActionHost {
@@ -165,6 +165,9 @@ function runAction(a: Action, host: ActionHost, budget: Budget): void {
     case 'sound':
       host.playSound(a.assetId)
       break
+    // `wait` / `waitUntil`: nothing here. This is the run-at-once interpreter — a handler that waits goes
+    // through `startTask`; a `wait` reached any other way (a procedure body, `every frame` in a pack no
+    // compiler wrote) has nothing to suspend.
   }
 }
 
@@ -178,4 +181,91 @@ function runList(actions: Action[], host: ActionHost, budget: Budget): void {
 /** Run a list of actions in order. Each call is one event/tick with its own bounded execution budget. */
 export function runActions(actions: Action[], host: ActionHost): void {
   runList(actions, host, { n: 0 })
+}
+
+// ── Tasks: a handler that WAITS ─────────────────────────────────────────────────
+//  `wait <seconds>` / `wait until <cond>` suspend the handler they are written in. Such a handler runs as
+//  a TASK: the same actions, walked with an explicit stack instead of the JavaScript one, so it can stop at
+//  a `wait` and go on at a later step. A list that holds no `wait` never comes here (`canWait`), and a block
+//  that holds none is handed to `runAction` whole: nothing changes for a program that does not wait.
+
+/** Simulation steps per second — a `wait` is counted in steps, never in real time, so a replay is exact. */
+const STEPS_PER_SECOND = 60
+
+type Frame = { list: Action[]; i: number; turn?: number; turns?: number; from?: number; name?: string }
+/** A suspended handler: where it stopped (`stack`), and what it waits for (`steps` left, or `until`). */
+export type Task = { stack: Frame[]; steps: number; until?: string }
+
+const waits = new WeakMap<Action[], boolean>()
+/** Does this list hold a `wait`, at any depth? Read once per list. */
+export function canWait(actions: Action[]): boolean {
+  let w = waits.get(actions)
+  if (w === undefined) {
+    w = actions.some((a) => a.do === 'wait' || a.do === 'waitUntil' || (a.do === 'if' && (canWait(a.then) || (!!a.else && canWait(a.else)))) || ((a.do === 'repeat' || a.do === 'repeatRange') && canWait(a.body)))
+    waits.set(actions, w)
+  }
+  return w
+}
+
+/** Runs the task until it waits (true) or ends (false). A tick budget run dry ends it, like any handler. */
+function advance(task: Task, host: ActionHost, budget: Budget): boolean {
+  const { stack } = task
+  while (stack.length) {
+    if (budget.n >= MAX_ACTIONS_PER_TICK) return false
+    const f = stack[stack.length - 1]!
+    if (f.i >= f.list.length) { // end of a block: another turn of its loop, or back to what holds it
+      if (f.turns !== undefined && ++f.turn! < f.turns) { f.i = 0; if (f.name) host.setVar(f.name, f.from! + f.turn!) }
+      else stack.pop()
+      continue
+    }
+    const a = f.list[f.i++]!
+    if (a.do === 'wait') {
+      budget.n++
+      const s = Math.round(host.evalNumber(a.seconds) * STEPS_PER_SECOND)
+      task.steps = s >= 1 ? s : 1 // one step at least (NaN included): a wait always hands the step back
+      return true
+    }
+    if (a.do === 'waitUntil') {
+      budget.n++
+      if (host.evalNumber(a.cond) !== 0) continue
+      task.until = a.cond
+      return true
+    }
+    if (a.do === 'if' && canWait([a])) {
+      budget.n++
+      const branch = host.evalNumber(a.cond) !== 0 ? a.then : a.else
+      if (branch) stack.push({ list: branch, i: 0 })
+    } else if (a.do === 'repeat' && canWait(a.body)) {
+      budget.n++
+      const turns = Math.min(MAX_REPEAT, Math.max(0, Math.floor(host.evalNumber(a.count))))
+      if (turns) stack.push({ list: a.body, i: 0, turn: 0, turns })
+    } else if (a.do === 'repeatRange' && canWait(a.body)) {
+      budget.n++
+      const from = Math.floor(host.evalNumber(a.from))
+      const turns = Math.min(MAX_REPEAT, Math.max(0, Math.floor(host.evalNumber(a.to)) - from + 1))
+      // A loop that waits keeps its variable in the open: it is not given back afterwards, since other
+      // scripts run between two of its turns.
+      if (turns) { host.setVar(a.var, from); stack.push({ list: a.body, i: 0, turn: 0, turns, from, name: a.var }) }
+    } else runAction(a, host, budget)
+  }
+  return false
+}
+
+/** Starts a handler that may wait: runs it up to its first `wait`. Returns the task to resume at the next
+ *  steps, or `null` when it ran to its end. */
+export function startTask(actions: Action[], host: ActionHost): Task | null {
+  const task: Task = { stack: [{ list: actions, i: 0 }], steps: 0 }
+  return advance(task, host, { n: 0 }) ? task : null
+}
+
+/** One simulation step for a waiting task. Returns `true` while it still waits, `false` once it has ended.
+ *  `budget` is shared by every task resumed in the step. */
+export function resumeTask(task: Task, host: ActionHost, budget: Budget): boolean {
+  if (task.until !== undefined) {
+    if (host.evalNumber(task.until) === 0) return true
+    task.until = undefined
+  } else if (--task.steps > 0) return true
+  // Its range loops get their variable back: another script may have written the name meanwhile.
+  for (const f of task.stack) if (f.name) host.setVar(f.name, f.from! + f.turn!)
+  return advance(task, host, budget)
 }

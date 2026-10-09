@@ -281,3 +281,38 @@ describe('actions — fillVar (`arr = fill(n, v)`)', () => {
     expect(m.vars.get('b')).toEqual([])
   })
 })
+
+describe('actions — a handler that waits (tasks)', () => {
+  const set = (name: string, value: string): Action => ({ do: 'setVar', name, value })
+  it('canWait: only a list that holds a `wait`, at any depth', async () => {
+    const { canWait } = await import('./actions')
+    expect(canWait([set('a', '1'), { do: 'repeat', count: '3', body: [set('a', 'a + 1')] }])).toBe(false)
+    expect(canWait([{ do: 'if', cond: '1', then: [], else: [{ do: 'repeat', count: '3', body: [{ do: 'waitUntil', cond: 'a' }] }] }])).toBe(true)
+  })
+  it('a handler with no wait left to reach ends in the call that started it', async () => {
+    const { startTask } = await import('./actions')
+    const m = mock()
+    m.vars.set('a', 0)
+    expect(startTask([{ do: 'if', cond: 'a > 0', then: [{ do: 'wait', seconds: '1' }] }, set('a', '5')], m.host)).toBeNull()
+    expect(m.vars.get('a')).toBe(5)
+  })
+  it('the step budget is shared by the tasks resumed in a step, and a task that runs it dry ends there', async () => {
+    const { startTask, resumeTask } = await import('./actions')
+    const m = mock()
+    m.vars.set('n', 0)
+    const greedy: Action[] = [{ do: 'wait', seconds: '0' }, { do: 'repeat', count: String(MAX_REPEAT), body: [set('n', 'n + 1'), set('n', 'n + 1'), set('n', 'n + 1')] }, set('n', '-1')]
+    const one = startTask(greedy, m.host)!, two = startTask(greedy, m.host)!
+    const budget = { n: 0 }
+    expect(resumeTask(one, m.host, budget)).toBe(false) // out of budget inside its `repeat`: ended, not suspended
+    expect(m.vars.get('n') as number).toBeGreaterThan(0)
+    expect(m.vars.get('n') as number).toBeLessThan(MAX_ACTIONS_PER_TICK)
+    const before = m.vars.get('n')
+    expect(resumeTask(two, m.host, budget)).toBe(false) // nothing left for the second one in this step
+    expect(m.vars.get('n')).toBe(before)
+  })
+  it('a `wait` met by the run-at-once interpreter (a pack no compiler wrote) is skipped, not obeyed', () => {
+    const m = mock()
+    runActions([set('a', '1'), { do: 'wait', seconds: '5' }, set('a', '2')], m.host)
+    expect(m.vars.get('a')).toBe(2)
+  })
+})

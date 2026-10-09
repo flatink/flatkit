@@ -15,7 +15,8 @@
 //  `checkProgram(src)` runs the WHOLE pass — source in, diagnostics out, no filesystem, no subprocess.
 //  The CLI calls the same function, so the two cannot drift.
 // ─────────────────────────────────────────────────────────────────────────────
-import type { Doc, Layer } from '@flatkit/types'
+import type { Action, Doc, Layer } from '@flatkit/types'
+import { canWait } from '@flatkit/engine/actions'
 import { isGroup, isText } from '@flatkit/engine/layers'
 import { forEachAction } from './docWalk'
 import { declarationLines, lineIndex } from './sourceLines'
@@ -213,6 +214,8 @@ export function programDiagnostics(doc: Doc, src: string): CheckDiagnostic[] {
   if (noSize) push(noSize)
   for (const { scope, diag } of duplicateBindingDiagnostics(src)) push({ scope, line: diag.line, col: diag.col, severity: diag.severity === 'error' ? 'error' : 'warning', message: diag.message })
   for (const d of unreachableBehaviorDiagnostics(doc, src)) push(d)
+  const waiting = waitingHandlers(doc)
+  if (waiting > MAX_WAITING_HANDLERS) push({ scope: 'scene', line: 1, col: 1, severity: 'warning', message: `${waiting} handlers hold a \`wait\`: the player keeps at most ${MAX_WAITING_HANDLERS} of them waiting at once — past that the one that has waited longest is dropped, and its end never runs` })
   for (const { scope, diag } of lintDoc(doc, src)) push({ scope, ...(diag.line === 1 && diag.col === 1 ? { line: locateDocWarning(diag.message, src) ?? 1 } : { line: diag.line }), col: diag.col, severity: diag.severity === 'warning' ? 'warning' : 'error', message: diag.message, ...(diag.fix ? { fix: diag.fix } : {}) })
   // Collapse LAST: the same "unexpected statement" is reported by the source pass and by the Doc lint,
   // so folding one of them alone leaves the other's copy behind.
@@ -239,6 +242,18 @@ export function libraryNameDiagnostics(libs: { name: string; symbols: string[] }
       message: `symbol "${name}" is declared by ${by.slice(0, -1).join(', ')} and ${by.at(-1)} — ${by.at(-1)} is the one instanced (the last one read), the other is never drawn. Rename one of the two, or keep a single library for that name` })
   }
   return out
+}
+
+/** The player's cap on handlers waiting at once (`MAX_TASKS` in the player). */
+const MAX_WAITING_HANDLERS = 256
+/** How many handlers of the Doc may wait: object events, `when loaded` and `at frame` scripts. */
+function waitingHandlers(doc: Doc): number {
+  const lists: Action[][] = (doc.interactions ?? []).map((i) => i.actions)
+  for (const t of [doc.timeline, ...doc.symbols.map((s) => s.timeline)]) {
+    if (t?.onLoad) lists.push(t.onLoad)
+    for (const fa of t?.frameActions ?? []) lists.push(fa.actions)
+  }
+  return lists.filter(canWait).length
 }
 
 const tally = (diagnostics: CheckDiagnostic[], doc: Doc | null): CheckResult => {

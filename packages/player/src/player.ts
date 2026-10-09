@@ -11,7 +11,7 @@ import { resolveInstanceParams } from '@flatkit/engine/params'
 import { resolveInstanceFrame, scheduleSounds, applyEasing, type Timeline, type Easing } from '@flatkit/engine/timeline'
 import { stateValueOf, initialStateValue, stateMachineByParam } from '@flatkit/engine/states'
 import { compileCached, evalExpr, exprScope, SIM_HZ, type ExprContext, type Compiled } from '@flatkit/engine/expr'
-import { runActions, MAX_SEND_FIELDS, MAX_SEND_TEXT, SEND_EVENT_NAME, isSendField, type Action, type ActionHost, type Interaction, type ItemEvent } from '@flatkit/engine/actions'
+import { runActions, canWait, startTask, resumeTask, MAX_SEND_FIELDS, MAX_SEND_TEXT, SEND_EVENT_NAME, isSendField, type Action, type ActionHost, type Task, type Interaction, type ItemEvent } from '@flatkit/engine/actions'
 import { containerLayers, getSymbol, isGroup, isInstance, isPoseable, isText } from '@flatkit/engine/layers'
 import { renderLayers, collectModifierTargets, docHasModifiers, type FilterCacheEntry, type RenderCtx } from './drawScene'
 import { restState, advanceModifier, type ModState } from '@flatkit/engine/channelModifiers'
@@ -160,6 +160,9 @@ export function lerpVars(prev: Map<string, number | number[]>, cur: Map<string, 
 }
 
 /** Document keys that hold LOGIC or raw data, never something the renderer evaluates. */
+/** Handlers that may wait at once. With "a handler triggered again starts over" there is at most one per
+ *  handler, so this bounds a hostile document, not a real one (the largest measured holds 163). */
+const MAX_TASKS = 256
 const NOT_PICTURE = new Set(['interactions', 'functions', 'variables', 'assets', 'imports', 'onLoad', 'onEnterFrame', 'frameActions', 'labels', 'sounds'])
 const TIME_NAMES = ['time', 'frame', 'clock', 'random']
 /**
@@ -491,6 +494,8 @@ export class FlatPlayer {
   #reads: Set<string> = new Set() // names the picture can read (see `pictureReads`)
   readonly #painted = new Map<string, number>() // the value of each number the picture reads, as last painted
   readonly #drawnMods = new Map<string, number>() // modifier-driven channels: the value last painted
+  readonly #tasks = new Map<Action[], { task: Task; selfId: string | null }>() // the handlers that wait, by handler, in the order they started
+  #idled = false // the tick stopped by itself (a held scene with nothing alive), as opposed to the host's `pause()`
   #actionDepth = 0 // > 0 while actions run: whoever ran them paints once they are done
   readonly #maxDpr: number
   readonly #seed: number | undefined
@@ -594,6 +599,36 @@ export class FlatPlayer {
   #run(actions: Action[]): void {
     this.#actionDepth++
     try { runActions(actions, this.#host) } finally { this.#actionDepth-- }
+  }
+  /** Runs a HANDLER (an event, `when loaded`, `at frame n`): the one place a `wait` suspends. A handler
+   *  that holds none runs as ever. One that does becomes a task, resumed at the next steps; triggered again
+   *  while it waits, it starts over and the waiting run is dropped. `selfId` = the object `self` names. */
+  #runHandler(actions: Action[], selfId: string | null = null): void {
+    if (!canWait(actions)) { this.#run(actions); return }
+    this.#tasks.delete(actions)
+    this.#actionDepth++
+    let task: Task | null
+    try { task = startTask(actions, this.#host) } finally { this.#actionDepth-- }
+    if (!task) return
+    // `self` is resolved again at each resumption — only for a handler that reads it (a scene walk).
+    this.#tasks.set(actions, { task, selfId: selfId && /\bself\b|\bto(?:Local|Global)[XY]\b/.test(JSON.stringify(actions)) ? selfId : null })
+    if (this.#tasks.size > MAX_TASKS) this.#tasks.delete(this.#tasks.keys().next().value!) // the oldest gives way
+    if (this.#idled) this.play() // the tick had stopped asking for frames: there is something to wait for again
+  }
+  /** One simulation step for the waiting handlers, in the order they started, before `every frame`. They
+   *  share ONE action budget for the step. */
+  #resumeTasks(): void {
+    if (!this.#tasks.size) return
+    const budget = { n: 0 }
+    this.#actionDepth++
+    try {
+      for (const [key, t] of [...this.#tasks]) {
+        if (this.#tasks.get(key) !== t) continue // dropped, or started over, by one resumed before it
+        if (t.task.until === undefined && t.task.steps > 1) { t.task.steps--; continue } // still counting: nothing to run
+        const waiting = t.selfId ? this.#withSelf(t.selfId, () => resumeTask(t.task, this.#host, budget)) : resumeTask(t.task, this.#host, budget)
+        if (!waiting && this.#tasks.get(key) === t) this.#tasks.delete(key)
+      }
+    } finally { this.#actionDepth-- }
   }
   readonly #onKeyDown = (e: KeyboardEvent) => {
     if (isEditableTarget(e.target)) return // the user is typing in a field of the host page — not for us
@@ -973,12 +1008,16 @@ export class FlatPlayer {
       if (!d.over) continue
       const t = d.atPointer ? pointer : center
       const b = dropZoneBounds(this.doc, d.over)
-      if (b && t.x >= b.minX && t.x <= b.maxX && t.y >= b.minY && t.y <= b.maxY) this.#run(d.actions)
+      if (b && t.x >= b.minX && t.x <= b.maxX && t.y >= b.minY && t.y <= b.maxY) this.#runHandler(d.actions)
     }
   }
   #fireEvent(id: string, event: ItemEvent): void {
     const matched = this.#handlersFor(id)?.get(event)
     if (!matched?.length) return // no handler -> we skip the self/conversion setup (a scene walk)
+    this.#withSelf(id, () => { for (const x of matched) this.#runHandler(x.actions, id) })
+  }
+  /** Runs `body` with `self` (and the world<->local conversions) naming the object `id`. */
+  #withSelf<T>(id: string, body: () => T): T {
     // `self` + conversions in the handler: resolved BEFORE (ctx without self to avoid recursion),
     // set for the duration of the actions, then restored.
     const prevSelf = this.#selfChannels
@@ -989,9 +1028,10 @@ export class FlatPlayer {
     const placed = objectPlacementById(this.doc, id, this.#frame, ctx, this.fps) // ONE scene walk for both
     this.#selfChannels = placed?.channels ?? null
     this.#selfParent = placed?.parent ?? IDENTITY
-    for (const x of matched) this.#run(x.actions)
-    this.#selfChannels = prevSelf
-    this.#selfParent = prevParent
+    try { return body() } finally {
+      this.#selfChannels = prevSelf
+      this.#selfParent = prevParent
+    }
   }
   readonly #onPointerMove = (e: PointerEvent) => {
     this.#usePointer(e.pointerId)
@@ -1258,12 +1298,12 @@ export class FlatPlayer {
   #fireLoad(): void {
     let changed = false
     if (this.doc.timeline?.onLoad?.length) {
-      this.#run(this.doc.timeline.onLoad)
+      this.#runHandler(this.doc.timeline.onLoad)
       changed = true
     }
     for (const s of this.#activeSymbolTimelines(0)) {
       if (s.tl.onLoad?.length) {
-        this.#run(s.tl.onLoad)
+        this.#runHandler(s.tl.onLoad)
         changed = true
       }
     }
@@ -1771,6 +1811,7 @@ export class FlatPlayer {
     this.#buildFocusList()
     this.#dropGestures() // …and whatever was being held belonged to the old one
     this.#reseedDerivedState() // …then the seeded variables put the derived state back (trace progress, scratched grid)
+    this.#tasks.clear() // …and the handlers that were waiting
     this.#paramRt.clear() // new document -> per-instance param transitions reset
     this.#stringRt.clear()
     this.#channelState.clear() // new document -> modifier integrator state resets
@@ -2077,6 +2118,7 @@ export class FlatPlayer {
     this.#frame = Math.max(0, Math.min(this.duration, frame))
     this.#lastFrameInt = Math.floor(this.#frame) // a seek does not trigger the frame-actions (anti-loop)
     this.#seekCount++
+    if (this.#actionDepth === 0) this.#tasks.clear() // the HOST moved the playhead: what was waiting belonged to where it was. A script's own `go to` keeps them
     this.#channelState.clear() // random access: modifiers re-init at rest on their target (snap, no transient)
     this.#drawnMods.clear()
     this.#velocityState.clear() // velocity() re-inits → 0 (no spurious jolt from a stale delta)
@@ -2105,6 +2147,7 @@ export class FlatPlayer {
       this.#frame = f
       this.#advanceParams(SIM_STEP * this.fps) // P3: advance per-instance state transitions in lockstep with the sim
       const symSims = this.#activeSymbolTimelines(f).filter((s) => s.tl.onEnterFrame?.length)
+      this.#resumeTasks() // the handlers that wait go first, then `every frame`
       if (rootSim?.length) this.#run(rootSim)
       for (const s of symSims) this.#run(s.tl.onEnterFrame!)
       this.#mouse.dx = 0 // movement consumed by this step (same contract as the real tick)
@@ -2216,7 +2259,7 @@ export class FlatPlayer {
       // there holds it there (not on the frame the step landed on).
       const k = due[i]!.frame
       if (k !== fi) this.#frame = k
-      this.#run(due[i]!.actions)
+      this.#runHandler(due[i]!.actions)
       // A `go to` or `pause` ends the walk — after the scripts of the same frame, as before.
       if (due[i + 1]?.frame === k) continue
       if (this.#seekCount !== seeks) return
@@ -2227,6 +2270,7 @@ export class FlatPlayer {
 
   play(): void {
     if (this.#playing) return
+    this.#idled = false
     if (this.#transRaf) { cancelAnimationFrame(this.#transRaf); this.#transRaf = 0 } // the main tick becomes the sole transition driver
     this.#playing = true
     this.#dirty = true
@@ -2259,13 +2303,14 @@ export class FlatPlayer {
       // What the picture reads may have moved during the LAST steps: it is then drawn interpolated between
       // them, so it keeps changing until a step has run that moves nothing — and once more to land.
       const wasMoving = this.#moving
-      if (rootSim?.length || symSims.length) {
+      if (rootSim?.length || symSims.length || this.#tasks.size) {
         this.#simActive = true
         const { steps, acc } = simSteps(this.#simAcc, dt, SIM_STEP, SIM_MAX_STEPS)
         this.#simAcc = acc
         if (steps > 0) this.#moving = false
         for (let i = 0; i < steps && this.#playing; i++) { // an action can pause -> we stop
           this.#prevSimVars = cloneVarMap(this.#vars) // state BEFORE the step -> interpolation target
+          this.#resumeTasks() // the handlers that wait go first, then `every frame`
           if (rootSim?.length) this.#run(rootSim) // root
           for (const s of symSims) this.#run(s.tl.onEnterFrame!) // active symbols
         }
@@ -2292,7 +2337,7 @@ export class FlatPlayer {
       this.#fireFrameActions() // can change frame/playing (gotoFrame, pause...)
       if (this.#timeDriven || this.#dirty || wasMoving || this.#moving) this.render()
       // A held scene with nothing left alive stops asking for frames: the old full pause, no idle loop.
-      if (this.#held && !this.#aliveWhileHeld()) { this.pause(); return }
+      if (this.#held && !this.#aliveWhileHeld()) { this.pause(); this.#idled = true; return }
       if (this.#playing) this.#raf = requestAnimationFrame(tick)
     }
     this.#raf = requestAnimationFrame(tick)
@@ -2322,11 +2367,12 @@ export class FlatPlayer {
   }
   /** Something still moves while the playhead is held: a simulation, a spring, a picture reading `clock`. */
   #aliveWhileHeld(): boolean {
-    return !!this.doc.timeline?.onEnterFrame?.length || this.#activeSymbolTimelines(this.#frame).some((s) => s.tl.onEnterFrame?.length) || this.#hasModifiers || this.#reads.has('clock') || this.#playsOnItsOwn()
+    return this.#tasks.size > 0 || !!this.doc.timeline?.onEnterFrame?.length || this.#activeSymbolTimelines(this.#frame).some((s) => s.tl.onEnterFrame?.length) || this.#hasModifiers || this.#reads.has('clock') || this.#playsOnItsOwn()
   }
 
   /** The HOST's pause: freezes the whole player — playhead, `every frame`, `clock`, springs. */
   pause(): void {
+    this.#idled = false
     this.#playing = false
     this.#simActive = false // no more playback -> the render goes back to the real values (not interpolated)
     cancelAnimationFrame(this.#raf)

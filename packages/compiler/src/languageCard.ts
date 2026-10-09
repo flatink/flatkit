@@ -33,6 +33,7 @@ name = expr            // set a variable
 arr[i] = expr          // write an array slot
 arr = fill(n, v)       // replace a WHOLE array (the only array-valued assignment; expressions are scalar)
 if cond { } else { } · repeat N times { } · repeat i from A to B { }
+wait 1.5 · wait until cond   // suspend THIS handler (seconds, counted in 60 Hz steps), then go on. In an event / when loaded / at frame handler — not in every frame, not in a fn. Triggered again while waiting, the handler STARTS OVER
 myProc() · send "event"[, expr | text("id") | { a = expr, b … }] · sound "assetId"
 
 ## Expressions (drive a channel, or compute in an action)

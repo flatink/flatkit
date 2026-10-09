@@ -113,6 +113,10 @@ function printAction(a: Action, depth: number): string {
       return ind + `repeat ${a.count} times ` + block(a.body, depth)
     case 'repeatRange':
       return ind + `repeat ${a.var} from ${a.from} to ${a.to} ` + block(a.body, depth)
+    case 'wait':
+      return ind + `wait ${a.seconds}`
+    case 'waitUntil':
+      return ind + `wait until ${a.cond}`
     case 'call':
       return ind + `${a.name}(${a.args.join(', ')})`
     case 'send': {
@@ -259,6 +263,7 @@ class Parser {
   }
 
   /** Records an expression to validate, at the position `m` where it starts. */
+  private waitMarks: Mark[] = [] // where each `wait` of the body being read was written (see `noWait`)
   private exprSite(text: string, m: Mark) {
     if (text) this.sites.push({ kind: 'expr', text, line: m.line, col: m.col })
   }
@@ -647,6 +652,21 @@ class Parser {
         this.endStatement()
         return { do: 'sound', assetId }
       }
+      case 'wait': {
+        // Reserved keyword. Back-compat: `wait` used as a variable/function stays an assignment.
+        this.skipSpace()
+        const c = this.peek()
+        if (c === '=' || c === '(' || c === '[' || c === '.') return this.assignStatement('wait', m)
+        this.waitMarks.push(m)
+        const pos = this.mark()
+        const text = this.lineExpr()
+        const until = /^until\b\s*(.*)$/.exec(text)
+        const expr = until ? until[1]! : text
+        if (!expr) { this.err('`wait <seconds>` or `wait until <condition>` expected — a duration (`wait 1.5`) or a condition (`wait until score > 3`)', m); this.endStatement(); return null }
+        this.exprSite(expr, pos)
+        this.endStatement()
+        return until ? { do: 'waitUntil', cond: expr } : { do: 'wait', seconds: expr }
+      }
       case 'when':
       case 'every':
       case 'at':
@@ -916,6 +936,14 @@ class Parser {
     return undefined
   }
 
+  /** A body where `wait` has nothing to suspend: every `wait` written in it is an error, at its position. */
+  private noWait(where: string, why: string): Action[] {
+    const before = this.waitMarks.length
+    const body = this.body()
+    for (const m of this.waitMarks.splice(before)) this.err(`\`wait\` cannot be used in ${where}: ${why}`, m)
+    return body
+  }
+
   private ifStatement(): Action | null {
     this.skipSpace()
     const m = this.mark()
@@ -1060,7 +1088,7 @@ class Parser {
           return null
         }
         if (!this.expectBrace()) return null
-        return { kind: 'event', event: 'enterFrame', body: this.body() }
+        return { kind: 'event', event: 'enterFrame', body: this.noWait('`every frame`', 'it runs whole at every step — write the sequence in the handler that starts it (`when clicked`, `when loaded`, `at frame n`)') }
       }
       case 'at': {
         if (this.word() !== 'frame') {
@@ -1304,7 +1332,7 @@ class Parser {
           return { kind: 'func', func: { name, params, kind: 'value', expr } }
         }
         if (!this.expectBrace()) return null // procedure: fn name(p) { … }
-        return { kind: 'func', func: { name, params, kind: 'proc', body: this.body() } }
+        return { kind: 'func', func: { name, params, kind: 'proc', body: this.noWait('a `fn`', 'its parameters are shared by every call — write the `wait` in the handler, between two calls') } }
       }
       case 'each': {
         const symbol = this.string()

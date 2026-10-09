@@ -46,6 +46,9 @@ Actions — **one per line**:
 <var> = <expr>          arr[<expr>] = <expr>          // `set` keyword optional; nested indices ok
 if <c> { … } [else if <c> { … }] [else { … }]
 repeat <n> times { … }          repeat i from a to b { … }      // RUNTIME loops (bounded)
+wait <seconds>          wait until <cond>      // suspend THIS handler, then go on — "do, wait, do" with no flag in `every frame`
+                                               // (event / when loaded / at frame handlers only; NOT in `every frame` or a `fn`;
+                                               //  triggered again while waiting, the handler starts over)
 play   pause   go to frame <n> [and play|and pause]   go to "<label>" [and play]
 send "<evt>" [, <expr> | , text("<id>") | , { a = <expr>, b }]   sound "<assetId>"   <fn>(<args>)
 ```

@@ -182,7 +182,9 @@ dropped on <Zone> [at pointer]`. Scene-wide: `when loaded`, `every frame`, `at f
 
 Actions (one per line): `<var> = <expr>` · `arr[i] = <expr>` · `if/else if/else` ·
 `<arr> = fill(<count>, <value>)` (blank/resize a whole array — the ONE array-valued assignment) ·
-`repeat <n> times { }` · `repeat i from a to b { }` · `play`/`pause` · `go to frame N [and play]` ·
+`repeat <n> times { }` · `repeat i from a to b { }` · `wait <seconds>` / `wait until <cond>` (suspends THIS
+handler, then goes on: "do, wait, do" with no flag in `every frame`; in an event / `when loaded` / `at frame`
+handler only, not in `every frame` nor in a `fn`; triggered again while waiting, the handler starts over) · `play`/`pause` · `go to frame N [and play]` ·
 `go to "label" [and play]` · `send "evt" [, <expr> | , text("id") | , { a = <expr>, b }]` · `sound "id"` · `<fn>(args)`.
 
 Drag & interactors (each writes into your vars; all accept `{ enabled <expr> }`):

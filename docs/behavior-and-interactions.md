@@ -67,12 +67,54 @@ repeat i from <a> to <b> { … }           # runtime range loop (`i` is the loop
 <fn>(<args>)                             # call a function
 send "<event>" [, <payload>]             # emit an event to the host (see below)
 sound "<assetId>"                        # one-shot audio
+wait <seconds>                           # suspend THIS handler, then go on (see below)
+wait until <cond>                        # …until the condition is true
 ```
 
 `pause` holds the **playhead** only, like Flash's `stop()`: `every frame`, `clock`, springs and handlers go
 on, so `at frame 149 { pause }` ends an intro on a scene that keeps breathing. `play` releases it. A
 timeline that does not loop holds itself the same way at its end. (The host's `pause()` is another thing:
 it freezes the whole player.)
+
+### `wait` — a handler that takes its time
+
+"Do this, wait, do that" is written as it reads, in the handler that starts it:
+
+```
+object "Door" {
+  when clicked {
+    opened = 1
+    wait 1.5
+    sound "creak"
+    wait until Player.x > 400
+    opened = 0
+  }
+}
+```
+
+No flag, no counter in `every frame`. The rules:
+
+- **`wait <seconds>`** suspends the handler it is written in — the rest of the program goes on. The duration
+  is an expression, read when the `wait` is reached. It is counted in **steps of the simulation** (60 per
+  second, see [How a frame runs](#how-a-frame-runs)), never in real time: `wait 1.5` is 90 steps, on any
+  display and in `flatc --play`. A `wait` always lasts one step at least, `wait 0` included.
+- **`wait until <cond>`** reads the condition once per step and goes on at the first step that finds it
+  true. Already true when reached: no pause at all.
+- **Where**: `when clicked` / `pressed` / `released` / `dropped on …` and the other object events,
+  `when loaded`, `at frame <n>`. Inside an `if` or a `repeat`, the handler stops there and goes on from
+  there — a `repeat 3 times { …  wait 0.5 }` takes its three turns one after the other.
+- **Not in `every frame`** (it runs whole at every step: the sequence belongs to the handler that starts
+  it) **nor in a `fn`** (its parameters are shared by every call). Both are compile errors.
+- ⚠️ **Triggered again while it waits, a handler starts over**: the waiting run is dropped, its end never
+  happens, and the new run starts from the top. A second click on the door above cancels the first
+  sequence. Two DIFFERENT handlers wait side by side without knowing of each other.
+- ⚠️ **Everything else keeps running during the wait**, and may change what the handler left: read a
+  variable again after a `wait` rather than trusting what it held before.
+- **`repeat i from a to b` with a `wait` in it**: `i` is right after each pause, but it is an ordinary
+  variable for as long as the loop lasts (other scripts see it) and it is not given back afterwards.
+- The host's `pause()` freezes waiting handlers with everything else; a script's `pause` (the playhead
+  only) does not. The host's `seek()` and `load()` drop them; a script's own `go to` keeps them.
+- `self` still names the handler's object after a pause, read as it is by then.
 
 ### `send` — talking to the host
 
@@ -532,7 +574,8 @@ the same display read the same `clock`; `clock - previous` is then the display's
 How many steps run before each display depends on the display: none or one at 120 Hz, one at 60 Hz, two at
 30. When the display stalls (a tab in the background, a slow device) the player does **not** catch up: it
 counts at most 0.25 s per display and runs at most 30 steps, dropping the rest. The simulation then runs
-slower than the wall clock; it never jumps. Within a step, the scene's `every frame` runs first, then
+slower than the wall clock; it never jumps. Within a step, the handlers that were waiting (`wait`) and are
+due go first, in the order they started; then the scene's `every frame`, then
 those of the active symbols; `at frame <n>` scripts come after, in the same step. Every whole frame the
 playhead ENTERED runs its script, in order — the one it landed on and the ones it stepped over (a 120 fps
 timeline, a slow display), across the loop too; a `go to` or `pause` run by one of them ends the walk. A

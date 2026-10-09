@@ -215,6 +215,8 @@ export type Action =
   | { do: 'if'; cond: string; then: Action[]; else?: Action[] } // cond = expression; runs `then` if ≠ 0
   | { do: 'repeat'; count: string; body: Action[] } // count = expression; BOUNDED repeats (anti-loop)
   | { do: 'repeatRange'; var: string; from: string; to: string; body: Action[] } // repeat i from <from> to <to> (inclusive, bounded)
+  | { do: 'wait'; seconds: string } // suspends THIS handler for a duration (expression, in seconds; counted in 60 Hz steps, one at least)
+  | { do: 'waitUntil'; cond: string } // suspends it until the condition is ≠ 0 (read once per step)
   | { do: 'call'; name: string; args: string[] } // procedure call: name(args) — args = expressions
   | { do: 'send'; event: string; payload?: SendPayload } // emit a named event to the embedding host
   | { do: 'sound'; assetId: string } // play an audio clip (asset) one-shot — triggered by a handler
