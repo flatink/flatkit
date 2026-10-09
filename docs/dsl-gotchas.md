@@ -415,6 +415,10 @@ and composes with `self.x`/`self.y` etc. (same `self`).
     a compile error that gives the line of the first (they used to compile, and the instances silently went
     to the last one). The same goes for two `symbol "X"(…)` templates. Only the program-over-library case
     above is an override.
+  - ⚠️ **Two `.flat` libraries declaring the same name**: the last one read is the one instanced, and
+    `flatc` reads every `.flat` of the program's folder, so "last" is a matter of file names. `--check`
+    warns and names both files (`checkProgram` too, with `assetNames` to name the libraries). No warning
+    when the program declares that name itself.
   - **`repeat` / `def` / `$()` work in a `.flat` library**, as in a program's scene: `repeat i from 0 to 8
     { circle $(i*20) 0 6 fill #333 }` inside a symbol's layer is unfolded when the library is read.
   - ⚠️ **`.flatink`-only**: a parameterized `symbol "X"(…)` lives in the **program** (`.flatink`), NOT in a

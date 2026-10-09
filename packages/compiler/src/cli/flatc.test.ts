@@ -686,3 +686,34 @@ every frame { frames = frames + 1 }
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })
+
+describe('two .flat libraries declaring the same symbol name', () => {
+  const lib = (color: string) => `symbol "Pastille" { layer "c" { circle 0 0 20 fill ${color} } }\n`
+  const capture = (args: string[]) => {
+    const errs: string[] = []
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((s: string | Uint8Array) => { errs.push(String(s)); return true })
+    const outSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try { return { code: run(['node', 'flatc', ...args]), err: errs.join('') } } finally { spy.mockRestore(); outSpy.mockRestore() }
+  }
+  it('a program beside them: a warning naming both files, and the check still passes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flatc-twolibs-'))
+    try {
+      writeFileSync(join(dir, 'a.flat'), lib('#ff0000'))
+      writeFileSync(join(dir, 'b.flat'), lib('#0000ff'))
+      writeFileSync(join(dir, 'p.flatink'), 'size 200 100\nscene { layer "l" { instance "Pastille" as "p" at 100,50 } }\n')
+      const r = capture([join(dir, 'p.flatink'), '--check'])
+      expect(r.code).toBe(0)
+      expect(r.err).toContain('warning: symbol "Pastille" is declared by a.flat and b.flat')
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+  it('--check a.flat b.flat: the same warning', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flatc-twolibs-'))
+    try {
+      writeFileSync(join(dir, 'a.flat'), lib('#ff0000'))
+      writeFileSync(join(dir, 'b.flat'), lib('#0000ff'))
+      const r = capture([join(dir, 'a.flat'), join(dir, 'b.flat'), '--check'])
+      expect(r.code).toBe(0)
+      expect(r.err).toContain('warning: symbol "Pastille" is declared by a.flat and b.flat')
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})

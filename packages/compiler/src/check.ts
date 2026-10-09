@@ -20,7 +20,7 @@ import { isGroup, isText } from '@flatkit/engine/layers'
 import { forEachAction } from './docWalk'
 import { declarationLines, lineIndex } from './sourceLines'
 import type { TextEdit } from '@flatkit/engine/dsl'
-import { FlatSyntaxError, behaviorDiagnostics, duplicateBindingDiagnostics, objectTargetDiagnostics, sceneOnlyUnitDiagnostics, itemOnlyUnitDiagnostics } from '@flatkit/engine/flatFormat'
+import { FlatSyntaxError, parseFlatLib, behaviorDiagnostics, duplicateBindingDiagnostics, objectTargetDiagnostics, sceneOnlyUnitDiagnostics, itemOnlyUnitDiagnostics } from '@flatkit/engine/flatFormat'
 import { compileFlatpack, type MediaMap } from './compile'
 import { lintDoc } from './programDoc'
 
@@ -31,6 +31,9 @@ export type CheckDiagnostic = { scope: string; line: number; col: number; severi
 export type CheckOptions = {
   /** Text of each `.flat` symbol library the program draws on — the CLI auto-discovers them beside the file. */
   assetSrcs?: string[]
+  /** A name for each of them, in the same order (a file name, say) — what a warning about two libraries
+   *  calls them. Without it they are numbered: `library 1`, `library 2`. */
+  assetNames?: string[]
   /** Declared media, by path (only affects the returned Doc; diagnostics do not depend on it). */
   media?: MediaMap
 }
@@ -216,6 +219,28 @@ export function programDiagnostics(doc: Doc, src: string): CheckDiagnostic[] {
   return collapseMissingScene(out, src)
 }
 
+/**
+ * Two LIBRARIES that declare one symbol name: the last one read is the one instanced, and the other is
+ * shadowed without a word. `flatc` reads every `.flat` of the program's folder, so which one is "last" is a
+ * matter of file names. A warning, not an error: the pack is well-formed, and a folder may hold a variant on
+ * purpose. Silent when the program declares the name itself — its own symbol is the one instanced, and that
+ * override is the documented one. `doc` is the compiled program (its own symbols come after the libraries').
+ */
+export function libraryNameDiagnostics(libs: { name: string; symbols: string[] }[], doc?: Doc, src = ''): CheckDiagnostic[] {
+  if (libs.length < 2) return []
+  const own = new Set(doc ? doc.symbols.slice(libs.reduce((n, l) => n + l.symbols.length, 0)).map((s) => s.name) : [])
+  const declaredBy = new Map<string, string[]>()
+  for (const lib of libs) for (const name of new Set(lib.symbols)) declaredBy.set(name, [...(declaredBy.get(name) ?? []), lib.name])
+  const out: CheckDiagnostic[] = []
+  for (const [name, by] of declaredBy) {
+    if (by.length < 2 || own.has(name)) continue
+    const at = src ? new RegExp(`\\binstance[ \\t]+"${escapeRe(name)}"`).exec(src) : null
+    out.push({ scope: doc ? 'scene' : 'libraries', line: at ? lineIndex(src)(at.index) : 1, col: 1, severity: 'warning',
+      message: `symbol "${name}" is declared by ${by.slice(0, -1).join(', ')} and ${by.at(-1)} — ${by.at(-1)} is the one instanced (the last one read), the other is never drawn. Rename one of the two, or keep a single library for that name` })
+  }
+  return out
+}
+
 const tally = (diagnostics: CheckDiagnostic[], doc: Doc | null): CheckResult => {
   const errors = diagnostics.filter((d) => d.severity === 'error').length
   return { ok: errors === 0, errors, warnings: diagnostics.length - errors, diagnostics, report: formatDiagnostics(diagnostics), doc }
@@ -240,7 +265,13 @@ export function checkProgram(src: string, opts: CheckOptions = {}): CheckResult 
     const f = e instanceof FlatSyntaxError ? e : null
     return tally([{ scope: 'scene', line: f?.line ?? 1, col: f?.col ?? 1, severity: 'error', message: `compile error: ${(e as Error).message}`, ...(f?.fix ? { fix: f.fix } : {}) }], null)
   }
-  return tally(programDiagnostics(doc, src), doc)
+  const libs = (opts.assetSrcs ?? []).map((lib, i) => ({ name: opts.assetNames?.[i] ?? `library ${i + 1}`, symbols: librarySymbolNames(lib) }))
+  return tally([...libraryNameDiagnostics(libs, doc, src), ...programDiagnostics(doc, src)], doc)
+}
+
+/** The symbol names a library declares (it has compiled already; a library that does not parse names none). */
+function librarySymbolNames(lib: string): string[] {
+  try { return parseFlatLib(lib).symbols.map((s) => s.name) } catch { return [] }
 }
 
 /** Applies every MECHANICAL repair a diagnostic carries, and returns the new source with how many landed.

@@ -24,7 +24,7 @@ import { parsePathData } from '@flatkit/engine/svgPath'
 import { softVertexCount, smoothingDeviation } from '@flatkit/engine/path'
 import { ringsBBox } from '@flatkit/engine/bbox'
 import { lintDocReport, docHasErrors } from '../programDoc'
-import { applyFixes, formatDiagnostics, programDiagnostics, repairLoop, type CheckDiagnostic } from '../check'
+import { applyFixes, formatDiagnostics, libraryNameDiagnostics, programDiagnostics, repairLoop, type CheckDiagnostic } from '../check'
 import { FlatSyntaxError } from '@flatkit/engine/flatFormat'
 import { playHeadless, type Gesture } from '@flatkit/player/debug'
 import type { FuncDef } from '@flatkit/engine/actions'
@@ -123,7 +123,7 @@ Media referenced by 'asset "id" "path" kind' are embedded (paths relative to the
 /** How media is baked: `inline` = base64 data-URI in the .flatpack; `external` = relative key + sidecar files. */
 type AssetMode = 'inline' | 'external'
 type MediaCopy = { src: string; key: string } // external mode: source file → relative key (forward slashes)
-type BuildResult = { doc: Doc; flatLibs: number; packages: number; media: number; mediaCopies: MediaCopy[]; src: string; missingPackages: string[] }
+type BuildResult = { doc: Doc; flatLibs: number; packages: number; media: number; mediaCopies: MediaCopy[]; src: string; missingPackages: string[]; libs: { name: string; symbols: string[] }[] }
 
 /**
  * Reads a `.flatink`, resolves libs/packages/media, compiles → standalone Doc. Throws on compile error.
@@ -161,9 +161,10 @@ function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], 
   // Parse each lib HERE so a failure names the FILE. Libs are auto-discovered from the folder, so the one
   // that fails is often a neighbour the author never mentioned — a bare "compile error: …" sent them hunting
   // through their own program for a fault that was never in it.
+  const libs: BuildResult['libs'] = []
   const assetSrcs = [...flatPaths].map((p) => {
     const src = readFileSync(p, 'utf8')
-    try { parseFlatLib(src) } catch (e) { throw new Error(`${basename(p)}: ${(e as Error).message} (pass --no-libs to ignore the .flat files sitting next to the program)`, { cause: e }) }
+    try { libs.push({ name: basename(p), symbols: parseFlatLib(src).symbols.map((s) => s.name) }) } catch (e) { throw new Error(`${basename(p)}: ${(e as Error).message} (pass --no-libs to ignore the .flat files sitting next to the program)`, { cause: e }) }
     if (programConstructsIn(src).length) process.stderr.write(`flatc: ${basename(p)}: looks like a PROGRAM saved as .flat — loaded as a symbol library, so its scene/object blocks are ignored. Rename it to .flatink, or pass --no-libs.\n`)
     return src
   })
@@ -192,7 +193,7 @@ function buildDocFromProgram(programPath: string, explicitFlats: string[] = [], 
   doc = { ...doc, imports: stdImports.length ? stdImports : undefined }
   // The source travels with the Doc: the source-level passes (`programDiagnostics`) need the author's text,
   // since a parse-level drop and an `object` block binding to nothing leave no trace in the compiled Doc.
-  return { doc, flatLibs: flatPaths.size, packages: localResolved.size, media: Object.keys(media).length, mediaCopies, src: programSrc, missingPackages }
+  return { doc, flatLibs: flatPaths.size, packages: localResolved.size, media: Object.keys(media).length, mediaCopies, src: programSrc, missingPackages, libs }
 }
 
 /** Compile once (write or --check). Returns the exit code. */
@@ -236,7 +237,7 @@ function compileOnce(programPath: string, explicitFlats: string[], out: string, 
     const at = new RegExp(`^[ \\t]*use[ \\t]+"${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`, 'm').exec(built.src)
     const line = at ? built.src.slice(0, at.index).split('\n').length : 1
     return { scope: 'scene', line, col: 1, severity: 'error', message: `package not found: "${name}" — neither a stdlib package (${PACKAGES.join(', ')}) nor ${name}.flatink / ${name}.flat next to the program` }
-  }), ...programDiagnostics(doc, built.src)]
+  }), ...libraryNameDiagnostics(built.libs, doc, built.src), ...programDiagnostics(doc, built.src)]
   const report = formatDiagnostics(diagnostics)
   const hasErrors = diagnostics.some((d) => d.severity === 'error')
   // `--fix` applies the MECHANICAL repairs the diagnostics carry (a missing separator, a run-on line),
@@ -310,6 +311,7 @@ function programConstructsIn(src: string): string[] {
  */
 function checkFlatLibs(flatPaths: string[]): number {
   const symbols: SymbolDef[] = []
+  const libs: BuildResult['libs'] = []
   for (const p of flatPaths) {
     let src: string
     try { src = readFileSync(p, 'utf8') } catch (e) { process.stderr.write(`flatc: cannot read: ${(e as Error).message}\n`); return 1 }
@@ -318,11 +320,11 @@ function checkFlatLibs(flatPaths: string[]): number {
       process.stderr.write(`flatc: ${basename(p)}: this is a PROGRAM, not a symbol library — it contains ${disguised.join(' and ')}, which a .flat never carries and which --check therefore does NOT verify. Rename it to .flatink.\n`)
       return 1
     }
-    try { symbols.push(...parseFlatLib(src).symbols) } // ids are uid-unique across calls -> safe to merge libs
+    try { const own = parseFlatLib(src).symbols; symbols.push(...own); libs.push({ name: basename(p), symbols: own.map((s) => s.name) }) } // ids are uid-unique across calls -> safe to merge libs
     catch (e) { process.stderr.write(`flatc: ${basename(p)}: ${(e as Error).message}\n`); return 1 } // a malformed lib -> a clean parse error (not "[scene] …")
   }
   const doc: Doc = { width: 1, height: 1, timeline: { fps: 24, durationFrames: 1, tracks: [] }, variables: {}, layers: [], symbols }
-  const report = lintDocReport(doc) // scene scope is empty -> only per-symbol diagnostics
+  const report = [formatDiagnostics(libraryNameDiagnostics(libs)), lintDocReport(doc)].filter(Boolean).join('\n') // scene scope is empty -> only per-symbol diagnostics
   if (report) process.stderr.write(report + '\n')
   if (docHasErrors(doc)) return 1
   // "check passed", NOT "no errors" — the word "error" must not appear on success (a `grep error` trap); the

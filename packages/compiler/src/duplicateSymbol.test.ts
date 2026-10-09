@@ -44,3 +44,25 @@ describe('what does not change', () => {
     expect(checkProgram(src).ok).toBe(true)
   })
 })
+
+// Two LIBRARIES that declare one name: the last one read is the one instanced. `flatc` reads every `.flat`
+// of the program's folder, so "last" is a matter of file names — and nothing said a symbol was shadowed.
+describe('a symbol name declared by two libraries', () => {
+  it('checkProgram: a warning that names both libraries and the one that is instanced', () => {
+    const r = checkProgram(`${scene}\n`, { assetSrcs: [red, blue], assetNames: ['rouge.flat', 'bleu.flat'] })
+    expect(r.ok).toBe(true)
+    expect(r.diagnostics).toHaveLength(1)
+    expect(r.diagnostics[0]).toMatchObject({ severity: 'warning', line: 2 })
+    expect(r.diagnostics[0].message).toContain('symbol "Pastille" is declared by rouge.flat and bleu.flat')
+    expect(r.diagnostics[0].message).toContain('bleu.flat is the one instanced')
+  })
+  it('without names, the libraries are numbered in the order given', () => {
+    expect(checkProgram(`${scene}\n`, { assetSrcs: [red, blue] }).report).toContain('declared by library 1 and library 2')
+  })
+  it('no warning when the program declares that name itself: its own symbol is the one instanced', () => {
+    expect(checkProgram(`${scene}\n${blue}\n`, { assetSrcs: [red, red] }).report).toBe('')
+  })
+  it('no warning for two libraries with different names', () => {
+    expect(checkProgram(`${scene}\n`, { assetSrcs: [red, red.replace('Pastille', 'Autre')] }).report).toBe('')
+  })
+})
