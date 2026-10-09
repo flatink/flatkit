@@ -97,7 +97,8 @@ No flag, no counter in `every frame`. The rules:
 - **`wait <seconds>`** suspends the handler it is written in — the rest of the program goes on. The duration
   is an expression, read when the `wait` is reached. It is counted in **steps of the simulation** (60 per
   second, see [How a frame runs](#how-a-frame-runs)), never in real time: `wait 1.5` is 90 steps, on any
-  display and in `flatc --play`. A `wait` always lasts one step at least, `wait 0` included.
+  display and in `flatc --play`. A `wait` always lasts one step at least, `wait 0` included. `wait(1.5)`
+  reads the same.
 - **`wait until <cond>`** reads the condition once per step and goes on at the first step that finds it
   true. Already true when reached: no pause at all.
 - **Where**: `when clicked` / `pressed` / `released` / `dropped on …` and the other object events,
@@ -107,7 +108,10 @@ No flag, no counter in `every frame`. The rules:
   it) **nor in a `fn`** (its parameters are shared by every call). Both are compile errors.
 - ⚠️ **Triggered again while it waits, a handler starts over**: the waiting run is dropped, its end never
   happens, and the new run starts from the top. A second click on the door above cancels the first
-  sequence. Two DIFFERENT handlers wait side by side without knowing of each other.
+  sequence. Two DIFFERENT handlers wait side by side without knowing of each other. The same goes for an
+  `at frame <n>` script on a timeline that loops: if it waits longer than a lap, the playhead is back on
+  frame n first and it starts over, for ever (`--check` warns). Hold the playhead with `pause`, or start
+  the sequence from `when loaded`.
 - ⚠️ **Everything else keeps running during the wait**, and may change what the handler left: read a
   variable again after a `wait` rather than trusting what it held before.
 - **`repeat i from a to b` with a `wait` in it**: `i` is right after each pause, but it is an ordinary

@@ -11,7 +11,7 @@ import { resolveInstanceParams } from '@flatkit/engine/params'
 import { resolveInstanceFrame, scheduleSounds, applyEasing, type Timeline, type Easing } from '@flatkit/engine/timeline'
 import { stateValueOf, initialStateValue, stateMachineByParam } from '@flatkit/engine/states'
 import { compileCached, evalExpr, exprScope, SIM_HZ, type ExprContext, type Compiled } from '@flatkit/engine/expr'
-import { runActions, canWait, startTask, resumeTask, MAX_SEND_FIELDS, MAX_SEND_TEXT, SEND_EVENT_NAME, isSendField, type Action, type ActionHost, type Task, type Interaction, type ItemEvent } from '@flatkit/engine/actions'
+import { runActions, canWait, startTask, resumeTask, MAX_TASKS, MAX_SEND_FIELDS, MAX_SEND_TEXT, SEND_EVENT_NAME, isSendField, type Action, type ActionHost, type Task, type Interaction, type ItemEvent } from '@flatkit/engine/actions'
 import { containerLayers, getSymbol, isGroup, isInstance, isPoseable, isText } from '@flatkit/engine/layers'
 import { renderLayers, collectModifierTargets, docHasModifiers, type FilterCacheEntry, type RenderCtx } from './drawScene'
 import { restState, advanceModifier, type ModState } from '@flatkit/engine/channelModifiers'
@@ -160,9 +160,13 @@ export function lerpVars(prev: Map<string, number | number[]>, cur: Map<string, 
 }
 
 /** Document keys that hold LOGIC or raw data, never something the renderer evaluates. */
-/** Handlers that may wait at once. With "a handler triggered again starts over" there is at most one per
- *  handler, so this bounds a hostile document, not a real one (the largest measured holds 163). */
-const MAX_TASKS = 256
+/** Does a handler read `self`, or convert through its object's space? Read once per handler. */
+const selfReaders = new WeakMap<Action[], boolean>()
+function readsSelf(actions: Action[]): boolean {
+  let r = selfReaders.get(actions)
+  if (r === undefined) { r = /\bself\b|\bto(?:Local|Global)[XY]\b/.test(JSON.stringify(actions)); selfReaders.set(actions, r) }
+  return r
+}
 const NOT_PICTURE = new Set(['interactions', 'functions', 'variables', 'assets', 'imports', 'onLoad', 'onEnterFrame', 'frameActions', 'labels', 'sounds'])
 const TIME_NAMES = ['time', 'frame', 'clock', 'random']
 /**
@@ -611,7 +615,7 @@ export class FlatPlayer {
     try { task = startTask(actions, this.#host) } finally { this.#actionDepth-- }
     if (!task) return
     // `self` is resolved again at each resumption — only for a handler that reads it (a scene walk).
-    this.#tasks.set(actions, { task, selfId: selfId && /\bself\b|\bto(?:Local|Global)[XY]\b/.test(JSON.stringify(actions)) ? selfId : null })
+    this.#tasks.set(actions, { task, selfId: selfId && readsSelf(actions) ? selfId : null })
     if (this.#tasks.size > MAX_TASKS) this.#tasks.delete(this.#tasks.keys().next().value!) // the oldest gives way
     if (this.#idled) this.play() // the tick had stopped asking for frames: there is something to wait for again
   }
@@ -625,8 +629,9 @@ export class FlatPlayer {
       for (const [key, t] of [...this.#tasks]) {
         if (this.#tasks.get(key) !== t) continue // dropped, or started over, by one resumed before it
         if (t.task.until === undefined && t.task.steps > 1) { t.task.steps--; continue } // still counting: nothing to run
-        const waiting = t.selfId ? this.#withSelf(t.selfId, () => resumeTask(t.task, this.#host, budget)) : resumeTask(t.task, this.#host, budget)
-        if (!waiting && this.#tasks.get(key) === t) this.#tasks.delete(key)
+        let waiting = false // a task that throws (actions no compiler wrote) is gone too: it must not throw at every step
+        try { waiting = t.selfId ? this.#withSelf(t.selfId, () => resumeTask(t.task, this.#host, budget)) : resumeTask(t.task, this.#host, budget) }
+        finally { if (!waiting && this.#tasks.get(key) === t) this.#tasks.delete(key) }
       }
     } finally { this.#actionDepth-- }
   }

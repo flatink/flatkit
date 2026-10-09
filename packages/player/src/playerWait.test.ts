@@ -119,3 +119,29 @@ describe('FlatPlayer — a handler that waits, on the real tick', () => {
     pl.destroy()
   })
 })
+
+describe('FlatPlayer — a waiting handler from a document no compiler wrote', () => {
+  beforeEach(() => {
+    vi.stubGlobal('window', { addEventListener: () => {}, removeEventListener: () => {}, devicePixelRatio: 1 })
+    vi.stubGlobal('addEventListener', () => {}); vi.stubGlobal('removeEventListener', () => {})
+    vi.stubGlobal('requestAnimationFrame', () => 1); vi.stubGlobal('cancelAnimationFrame', () => {})
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('a task whose actions are malformed throws ONCE and is gone: the steps after it run', async () => {
+    const { FlatPlayer } = await import('./player')
+    const broken = [{ do: 'wait', seconds: '0' }, { do: 'repeat', count: '5', body: { length: 1, 0: null, some: () => true } }] as unknown as Action[]
+    const pl = new FlatPlayer(fakeCanvas(), doc({ frameActions: [{ frame: 1, actions: broken }] }), { input: false })
+    let thrown = 0
+    for (let i = 0; i < 10; i++) { try { pl.stepSim(1) } catch { thrown++ } }
+    expect(thrown).toBe(1)
+    pl.destroy()
+  })
+  it('a wait of a huge number of seconds just stays there', async () => {
+    const { FlatPlayer } = await import('./player')
+    const pl = new FlatPlayer(fakeCanvas(), doc({ frameActions: [{ frame: 1, actions: [{ do: 'wait', seconds: '1000000000 * 1000000000' }, { do: 'setVar', name: 'b', value: '1' }] }] }), { input: false })
+    pl.stepSim(600)
+    expect(pl.getVar('b')).toBe(0)
+    pl.destroy()
+  })
+})

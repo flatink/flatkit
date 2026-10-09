@@ -653,10 +653,11 @@ class Parser {
         return { do: 'sound', assetId }
       }
       case 'wait': {
-        // Reserved keyword. Back-compat: `wait` used as a variable/function stays an assignment.
+        // Reserved keyword. Back-compat: `wait` used as a variable stays an assignment. `wait(1.5)` is the
+        // statement, not a call: it is the first form a reader of other languages writes.
         this.skipSpace()
         const c = this.peek()
-        if (c === '=' || c === '(' || c === '[' || c === '.') return this.assignStatement('wait', m)
+        if (c === '=' || c === '[' || c === '.') return this.assignStatement('wait', m)
         this.waitMarks.push(m)
         const pos = this.mark()
         const text = this.lineExpr()

@@ -162,3 +162,34 @@ describe('what does not change', () => {
     expect(printUnits(parseUnits(text).units)).toBe(text)
   })
 })
+
+// Review pass (quality / security / performance) on the first cut.
+describe('review pass', () => {
+  it('`wait(1.5)` — the form a model writes first — is a wait, not a call to an unknown function', () => {
+    const s = prog('var b = 0', 'object "Btn" { when clicked {\n  wait(0.1)\n  b = 1\n} }')
+    expect(checkProgram(s).report).toBe('')
+    expect(play(s, [tap('Btn'), steps(5)]).b).toBe(0)
+    expect(play(s, [tap('Btn'), steps(6)]).b).toBe(1)
+  })
+  it('an `at frame` script that waits longer than a lap of the timeline starts over at every lap: --check says so', () => {
+    const r = checkProgram(prog('timeline 24 60\nvar b = 0', 'at frame 0 {\n  wait 2\n  wait 1\n  b = 1\n}'))
+    expect(r.ok).toBe(true)
+    expect(r.diagnostics).toHaveLength(1)
+    expect(r.diagnostics[0]).toMatchObject({ severity: 'warning', line: 8 })
+    expect(r.report).toContain('at frame 0: it waits 3 s, the timeline loops every 2.5 s')
+  })
+  it('…but not when it fits in a lap, nor when the scene holds or moves its playhead', () => {
+    expect(checkProgram(prog('timeline 24 60\nvar b = 0', 'at frame 0 {\n  wait 2\n  b = 1\n}')).report).toBe('')
+    expect(checkProgram(prog('timeline 24 60\nvar b = 0', 'at frame 0 {\n  wait 3\n  b = 1\n}\nat frame 30 { pause }')).report).toBe('')
+    expect(checkProgram(prog('timeline 24 60\nvar b = 0', 'at frame 0 {\n  pause\n  wait 3\n  b = 1\n  play\n}')).report).toBe('')
+  })
+  it('checkProgram does not read a single library twice', async () => {
+    const flat = await import('@flatkit/engine/flatFormat')
+    const { vi } = await import('vitest')
+    const spy = vi.spyOn(flat, 'parseFlatLib')
+    try {
+      checkProgram('size 10 10\nscene { layer "l" { instance "A" as "a" at 0,0 } }\n', { assetSrcs: ['symbol "A" { layer "c" { circle 0 0 2 fill #ff0000 } }'] })
+      expect(spy).toHaveBeenCalledTimes(1)
+    } finally { spy.mockRestore() }
+  })
+})

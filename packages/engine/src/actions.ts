@@ -201,11 +201,17 @@ const waits = new WeakMap<Action[], boolean>()
 export function canWait(actions: Action[]): boolean {
   let w = waits.get(actions)
   if (w === undefined) {
-    w = actions.some((a) => a.do === 'wait' || a.do === 'waitUntil' || (a.do === 'if' && (canWait(a.then) || (!!a.else && canWait(a.else)))) || ((a.do === 'repeat' || a.do === 'repeatRange') && canWait(a.body)))
+    w = actions.some((a) => a.do === 'wait' || a.do === 'waitUntil' || (a.do === 'if' && ifWaits(a)) || ((a.do === 'repeat' || a.do === 'repeatRange') && canWait(a.body)))
     waits.set(actions, w)
   }
   return w
 }
+
+const ifWaits = (a: Extract<Action, { do: 'if' }>): boolean => canWait(a.then) || (!!a.else && canWait(a.else))
+
+/** Handlers that may wait at once. With "a handler triggered again starts over" there is at most one per
+ *  handler, so this bounds a hostile document, not a real one (the largest measured holds 163). */
+export const MAX_TASKS = 256
 
 /** Runs the task until it waits (true) or ends (false). A tick budget run dry ends it, like any handler. */
 function advance(task: Task, host: ActionHost, budget: Budget): boolean {
@@ -231,7 +237,7 @@ function advance(task: Task, host: ActionHost, budget: Budget): boolean {
       task.until = a.cond
       return true
     }
-    if (a.do === 'if' && canWait([a])) {
+    if (a.do === 'if' && ifWaits(a)) {
       budget.n++
       const branch = host.evalNumber(a.cond) !== 0 ? a.then : a.else
       if (branch) stack.push({ list: branch, i: 0 })

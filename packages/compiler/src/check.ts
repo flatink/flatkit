@@ -16,7 +16,7 @@
 //  The CLI calls the same function, so the two cannot drift.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Action, Doc, Layer } from '@flatkit/types'
-import { canWait } from '@flatkit/engine/actions'
+import { canWait, MAX_TASKS } from '@flatkit/engine/actions'
 import { isGroup, isText } from '@flatkit/engine/layers'
 import { forEachAction } from './docWalk'
 import { declarationLines, lineIndex } from './sourceLines'
@@ -214,8 +214,9 @@ export function programDiagnostics(doc: Doc, src: string): CheckDiagnostic[] {
   if (noSize) push(noSize)
   for (const { scope, diag } of duplicateBindingDiagnostics(src)) push({ scope, line: diag.line, col: diag.col, severity: diag.severity === 'error' ? 'error' : 'warning', message: diag.message })
   for (const d of unreachableBehaviorDiagnostics(doc, src)) push(d)
+  for (const d of loopedWaitDiagnostics(doc, src)) push(d)
   const waiting = waitingHandlers(doc)
-  if (waiting > MAX_WAITING_HANDLERS) push({ scope: 'scene', line: 1, col: 1, severity: 'warning', message: `${waiting} handlers hold a \`wait\`: the player keeps at most ${MAX_WAITING_HANDLERS} of them waiting at once — past that the one that has waited longest is dropped, and its end never runs` })
+  if (waiting > MAX_TASKS) push({ scope: 'scene', line: 1, col: 1, severity: 'warning', message: `${waiting} handlers hold a \`wait\`: the player keeps at most ${MAX_TASKS} of them waiting at once — past that the one that has waited longest is dropped, and its end never runs` })
   for (const { scope, diag } of lintDoc(doc, src)) push({ scope, ...(diag.line === 1 && diag.col === 1 ? { line: locateDocWarning(diag.message, src) ?? 1 } : { line: diag.line }), col: diag.col, severity: diag.severity === 'warning' ? 'warning' : 'error', message: diag.message, ...(diag.fix ? { fix: diag.fix } : {}) })
   // Collapse LAST: the same "unexpected statement" is reported by the source pass and by the Doc lint,
   // so folding one of them alone leaves the other's copy behind.
@@ -244,8 +245,31 @@ export function libraryNameDiagnostics(libs: { name: string; symbols: string[] }
   return out
 }
 
-/** The player's cap on handlers waiting at once (`MAX_TASKS` in the player). */
-const MAX_WAITING_HANDLERS = 256
+/**
+ * An `at frame <n>` script that waits longer than a lap of the timeline: the playhead is back on frame n
+ * before it is through, and a handler triggered again while it waits STARTS OVER — so what follows the wait
+ * never runs, and nothing says so. Only what is certain is reported: the literal durations, and a scene that
+ * never holds nor moves its playhead (a `pause` or a `go to` anywhere, and the lap is no longer the period).
+ */
+function loopedWaitDiagnostics(doc: Doc, src: string): CheckDiagnostic[] {
+  const tl = doc.timeline
+  const scripts = (tl?.frameActions ?? []).filter((fa) => canWait(fa.actions))
+  if (!tl || !scripts.length || !(tl.fps > 0)) return []
+  let steered = false
+  forEachAction(doc, (a) => { if (a.do === 'pause' || a.do === 'gotoFrame' || a.do === 'gotoLabel') steered = true })
+  if (steered) return []
+  const lap = tl.durationFrames / tl.fps
+  const out: CheckDiagnostic[] = []
+  for (const fa of scripts) {
+    let waited = 0
+    for (const a of fa.actions) if (a.do === 'wait' && /^\s*\d*\.?\d+\s*$/.test(a.seconds)) waited += Number(a.seconds)
+    if (!(waited > lap)) continue
+    out.push({ scope: 'scene', line: lineOf(src, new RegExp(`\\bat[ \\t]+frame[ \\t]+${fa.frame}\\b`)), col: 1, severity: 'warning',
+      message: `at frame ${fa.frame}: it waits ${+waited.toFixed(2)} s, the timeline loops every ${+lap.toFixed(2)} s — the playhead is back on frame ${fa.frame} before the script is through, and a handler triggered again while it waits starts over: what follows the \`wait\` never runs. Hold the playhead (\`pause\`), lengthen the timeline, or start the sequence from \`when loaded\`` })
+  }
+  return out
+}
+
 /** How many handlers of the Doc may wait: object events, `when loaded` and `at frame` scripts. */
 function waitingHandlers(doc: Doc): number {
   const lists: Action[][] = (doc.interactions ?? []).map((i) => i.actions)
@@ -280,7 +304,8 @@ export function checkProgram(src: string, opts: CheckOptions = {}): CheckResult 
     const f = e instanceof FlatSyntaxError ? e : null
     return tally([{ scope: 'scene', line: f?.line ?? 1, col: f?.col ?? 1, severity: 'error', message: `compile error: ${(e as Error).message}`, ...(f?.fix ? { fix: f.fix } : {}) }], null)
   }
-  const libs = (opts.assetSrcs ?? []).map((lib, i) => ({ name: opts.assetNames?.[i] ?? `library ${i + 1}`, symbols: librarySymbolNames(lib) }))
+  // One library cannot clash with another: it is not read a second time just to learn its names.
+  const libs = (opts.assetSrcs?.length ?? 0) < 2 ? [] : opts.assetSrcs!.map((lib, i) => ({ name: opts.assetNames?.[i] ?? `library ${i + 1}`, symbols: librarySymbolNames(lib) }))
   return tally([...libraryNameDiagnostics(libs, doc, src), ...programDiagnostics(doc, src)], doc)
 }
 
