@@ -276,15 +276,20 @@ describe('rendering — `stroke … fixed` keeps its width on a stretched shape'
 })
 
 describe('the skia-canvas that was found', () => {
-  it('version 3 — what a bare `pnpm add -D skia-canvas` installs — is named, with the way out', async () => {
-    const { skiaVersionWarning } = await import('./render')
-    expect(skiaVersionWarning('3.0.8')).toContain('skia-canvas 3.0.8 found: flatc needs version 4')
-    expect(skiaVersionWarning('3.0.8')).toContain('skia-canvas@next')
+  it('version 3 — what a bare `pnpm add -D skia-canvas` installs — is refused, with the way out', async () => {
+    const { skiaVersionError } = await import('./render')
+    expect(skiaVersionError('3.0.8')).toContain('skia-canvas 3.0.8 found: flatc needs version 4')
+    expect(skiaVersionError('3.0.8')).toContain('skia-canvas@next')
   })
-  it('version 4, release candidates included, and an unknown version say nothing', async () => {
-    const { skiaVersionWarning } = await import('./render')
-    expect(skiaVersionWarning('4.0.0-rc7')).toBe('')
-    expect(skiaVersionWarning('4.1.0')).toBe('')
-    expect(skiaVersionWarning(undefined)).toBe('')
+  it('version 4, release candidates included, and an unknown version are accepted', async () => {
+    const { skiaVersionError } = await import('./render')
+    expect(skiaVersionError('4.0.0-rc7')).toBe('')
+    expect(skiaVersionError('4.1.0')).toBe('')
+    expect(skiaVersionError(undefined)).toBe('')
+  })
+  it('the renderer does not start on an old one: a wrong picture is worse than no picture', async () => {
+    const mod = await import('./render')
+    expect(mod.refuseOldSkia('3.0.8')).toBeInstanceOf(Error)
+    expect(mod.refuseOldSkia('4.0.0-rc9.1')).toBeNull()
   })
 })

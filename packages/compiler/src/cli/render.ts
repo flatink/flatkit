@@ -105,15 +105,19 @@ export type Renderer = {
  * per process. `params` sets a SYMBOL's exposed params (a state name or a number) before the first
  * frame — the reason a consumer had to write its own harness to preview anything with a state.
  */
-/** What to say about the `skia-canvas` that was found. Version 4 is the one supported; 3 is npm's `latest`
- *  tag, so a bare `pnpm add -D skia-canvas` installs it — and it renders, with half the picture transparent
- *  behind a moved shape larger than the frame. Nothing said so. */
-export function skiaVersionWarning(version: string | undefined): string {
+/** What is wrong with the `skia-canvas` that was found, or ''. Version 4 is the one supported; 3 is npm's
+ *  `latest` tag, so a bare `pnpm add -D skia-canvas` installs it — and it rendered, with half the picture
+ *  transparent behind a moved shape larger than the frame. Nothing said so. */
+export function skiaVersionError(version: string | undefined): string {
   return version && Number.parseInt(version, 10) < 4
-    ? `skia-canvas ${version} found: flatc needs version 4 (\`pnpm add -D skia-canvas@next\`). Version 3 drops what lies behind a moved shape larger than the frame — the picture below may be wrong.`
+    ? `skia-canvas ${version} found: flatc needs version 4 (\`pnpm add -D skia-canvas@next\`). Version 3 drops what lies behind a moved shape larger than the frame, so its pictures cannot be trusted.`
     : ''
 }
-let skiaWarned = false
+/** The refusal itself: a wrong picture is worse than no picture. */
+export function refuseOldSkia(version: string | undefined): Error | null {
+  const why = skiaVersionError(version)
+  return why ? new Error(why) : null
+}
 /** The installed `skia-canvas` version (its package.json is not an exported subpath: found beside its entry). */
 function skiaVersion(pkg: string): string | undefined {
   try { return (JSON.parse(readFileSync(join(dirname(createRequire(import.meta.url).resolve(pkg)), '..', 'package.json'), 'utf8')) as { version?: string }).version }
@@ -134,8 +138,8 @@ export async function createRenderer(doc: Doc, opts: { scale?: number; params?: 
     )
   }
   const { Canvas, loadImage, Path2D, FontLibrary, DOMMatrix } = skia
-  const old = skiaWarned ? '' : skiaVersionWarning(skiaVersion(skiaPkg))
-  if (old) { skiaWarned = true; process.stderr.write(`flatc: warning: ${old}\n`) }
+  const old = refuseOldSkia(skiaVersion(skiaPkg))
+  if (old) throw old
   const scale = opts.scale && opts.scale > 0 ? opts.scale : 2
   const W = doc.width, H = doc.height
   // A picture is width x height x 4 bytes, several times over (the canvas, filter layers, the PNG): a

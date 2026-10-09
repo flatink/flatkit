@@ -190,7 +190,7 @@ item, and a roster item no cel ever poses. Each renders an empty frame with no o
 
 Render a PNG (skia backend, faithful to the browser). Needs the optional `skia-canvas` peer dependency,
 **version 4**: `pnpm add -D skia-canvas@next` (or `npm i -D skia-canvas@next`). ⚠️ A bare
-`pnpm add -D skia-canvas` installs 3.x, npm's `latest` tag — `flatc` then renders with a warning on stderr.
+`pnpm add -D skia-canvas` installs 3.x, npm's `latest` tag — `flatc` refuses to render with it, and says so.
 pnpm users: allow its build script (`pnpm approve-builds`).
 
 `skia-canvas` **4** (from `4.0.0-rc7`) is required. Version 3 is no longer accepted: it drops what lies
