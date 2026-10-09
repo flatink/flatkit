@@ -50,6 +50,20 @@ describe('sameOriginAssetResolver', () => {
     } finally { vi.unstubAllGlobals() }
   })
 
+  it('only a PATH is taken as relative: an empty base, a protocol-relative one or a bare word still resolve nothing', () => {
+    // A missing setting (`''`) must not quietly turn into "anything next to the page", nor `//host/` into
+    // another origin: the resolver fails closed, as it did before a relative base was accepted.
+    vi.stubGlobal('location', { href: 'https://host.example/app/page.html' })
+    try {
+      for (const base of ['', '   ', '//evil.example/assets/', 'not a url', 'assets']) {
+        const r = sameOriginAssetResolver(base)
+        expect(r(asset('logo.png')), JSON.stringify(base)).toBeNull()
+        expect(r(asset('data:image/png;base64,AAAA')), JSON.stringify(base)).toBeNull()
+      }
+      for (const base of ['/a/', './a/', '../a/']) expect(sameOriginAssetResolver(base)(asset('logo.png')), base).toMatch(/^https:\/\/host\.example\//)
+    } finally { vi.unstubAllGlobals() }
+  })
+
   it('an invalid base URL disables the resolver entirely', () => {
     const r = sameOriginAssetResolver('not a url')
     expect(r(asset('logo.png'))).toBeNull()

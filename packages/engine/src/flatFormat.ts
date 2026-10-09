@@ -885,6 +885,7 @@ export function expandFeedback(src: string): string {
     const tokens: { t: string; arg?: string }[] = []
     const re = /shake\(\s*([^)]*?)\s*\)|([A-Za-z][\w-]*)/g
     let m: RegExpExecArray | null
+    if (/^\s*[=,[.(]/.test(rest)) return full // `feedback = …`, `{ feedback, … }`: a NAME (a variable, a record field), not the sugar
     const code = rest.replace(/\/\/.*$/, '') // the comment is not part of the list: `feedback lift // dim later` is lift alone
     const close = code.indexOf('}') // …nor is the brace that closes the block on the same line: it stays
     const words = close < 0 ? code : code.slice(0, close)

@@ -61,7 +61,7 @@ function walk(doc: Doc, items: Item[], frame: number, matrix: Transform, fps: nu
 }
 
 /** The path a guide layer lays down at `frame` (the outlines of its resolved matter), or undefined. */
-function guidePath(guide: Layer, frame: number, fps: number, ctx: ExprContext | undefined): Path | undefined {
+export function guidePath(guide: Layer, frame: number, fps: number, ctx: ExprContext | undefined): Path | undefined {
   const subpaths = resolveLayerAt(guide, frame, { fps, ctx }).flatMap((it) => (isRegion(it) ? (it.xform ? transformPath(it.path, it.xform) : it.path).subpaths : []))
   return subpaths.length ? { subpaths } : undefined
 }
@@ -69,11 +69,15 @@ function guidePath(guide: Layer, frame: number, fps: number, ctx: ExprContext | 
  *  the guide's path. (`Boat.x` used to read the straight line between its two poses while the boat was
  *  drawn on the curve.) `each` returns `true` to stop. */
 function stack(layers: Layer[], frame: number, parent: Transform, fps: number, ctx: ExprContext | undefined, each: (items: Item[]) => boolean): boolean {
-  const { guides } = layerStructure(layers)
+  // Nesting is rare (a guide, a mask, a folder): a flat stack — nearly all of them — asks for nothing more.
+  let guides: ReadonlyMap<string, Layer> | undefined
+  for (const l of layers) if (l.parent) { guides = layerStructure(layers).guides; break }
+  let paths: Map<Layer, Path | undefined> | undefined // one guide drives several layers: resolved once
   for (const l of layers) {
     if (!l.visible) continue
-    const gl = guides.size ? guides.get(l.id) : undefined
-    const guide = gl ? guidePath(gl, frame, fps, ctx) : undefined
+    const gl = guides?.get(l.id)
+    let guide: Path | undefined
+    if (gl) { paths ??= new Map(); if (paths.has(gl)) guide = paths.get(gl); else paths.set(gl, (guide = guidePath(gl, frame, fps, ctx))) }
     if (each(resolveLayerAt(l, frame, { fps, ctx, parent, ...(guide ? { guide, orient: l.orientToGuide } : {}) }))) return true
   }
   return false

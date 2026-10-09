@@ -8,7 +8,7 @@ A pass over every guide, README and agent prompt, each example compiled and each
 
 Fixes in the code:
 
-- `sameOriginAssetResolver('/activities/42/')` -- the example of the host guide -- resolved nothing, embedded assets included: a relative base is now resolved against the page it runs in. In Node, give an absolute URL as before.
+- `sameOriginAssetResolver('/activities/42/')` -- the example of the host guide -- resolved nothing, embedded assets included: a base that is a path (`/...`, `./...`, `../...`) is now resolved against the page it runs in. An empty base or a protocol-relative one still resolves nothing, and in Node an absolute URL is needed as before.
 - An unresolved `$(name)` in path data is always a compile error. It was one only when nothing in the name read as an SVG command: `$(trace)` compiled to a path of NaN with a mere warning.
 - `feedback lift   // dim later` no longer turns `dim` on: the tokens are read before the comment.
 - `flatc --render` (and `createRenderer` / `renderDocToPng`) refuse skia-canvas 3, which is npm's `latest` tag and what a bare `pnpm add -D skia-canvas` installs: it rendered without a word, with half the picture missing behind a moved shape larger than the frame. The error names the version found and the install hint says `skia-canvas@next`.

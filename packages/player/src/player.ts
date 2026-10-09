@@ -119,8 +119,10 @@ const isEmbeddedData = (data: string | undefined): data is string => !!data && d
  */
 export function sameOriginAssetResolver(baseUrl: string): (asset: Asset) => string | null {
   let base: URL
-  // A relative base (`/activities/42/`) is the host's own page: resolved against it where there is one.
-  try { base = new URL(baseUrl, (globalThis as { location?: { href?: string } }).location?.href) } catch { return () => null }
+  // A PATH (`/activities/42/`, `./assets/`) is on the host's own page: resolved against it where there is
+  // one. Nothing else is taken as relative — an empty setting or `//other.host/` must keep resolving nothing.
+  const page = /^(?:\/(?!\/)|\.\.?\/)/.test(baseUrl) ? (globalThis as { location?: { href?: string } }).location?.href : undefined
+  try { base = new URL(baseUrl, page) } catch { return () => null }
   return (asset) => {
     const data = asset.data
     if (typeof data !== 'string' || !data) return null

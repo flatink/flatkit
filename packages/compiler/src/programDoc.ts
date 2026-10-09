@@ -251,7 +251,7 @@ function instanceParamWarnings(doc: Doc): string[] {
         // A state name INSIDE an expression (`score > 5 ? open : closed`) is an unknown name there: it reads 0,
         // and the instance silently went to the frame the number gave.
         else if (!replay && !/^[A-Za-z_]\w*$/.test(value)) {
-          const inside = states.find((st) => !known.has(st) && new RegExp(`(?<![\\w.])${st}(?![\\w(])`).test(value.replace(/"[^"]*"/g, '')))
+          const inside = states.find((st) => !known.has(st) && new RegExp(`(?<![\\w.])${escapeRe(st)}(?![\\w(])`).test(value.replace(/"[^"]*"/g, '')))
           if (inside) say(`${who}: a state name is only read when it is the WHOLE value — inside an expression "${inside}" is an unknown name, read as 0. Write \`if <cond> { ${a.target}.${a.param} = ${inside} } else { … }\``)
         }
       } else if (def!.type === 'color') { if (!COLOR_LITERAL.test(value)) say(`${who}: "${a.param}" is a color param — it takes a color literal (#rrggbb), not an expression`) }
@@ -403,20 +403,32 @@ export function docStructureWarnings(doc: Doc): { scope: string; diag: Diagnosti
   //     do contours of opposite directions (a hole under both rules).
   // The warning names its path by how it STARTS — as far as it takes to tell it from the other paths of the
   // document: two paths that begin alike (a shape and its variant) sent the reader to the wrong one.
-  const allPaths: Path[] = []
-  const collect = (layers: Layer[]): void => {
-    for (const l of layers) for (const it of [...l.items, ...(l.cels ?? []).flatMap((c) => c.matter ?? [])]) {
-      if (isGroup(it)) collect(it.layers)
-      else if (isRegion(it) && !it.poly) allPaths.push(it.path)
-    }
+  const START_MAX = 12 // anchors a name may run to
+  const anchorsOf = (p: Path): string[] => {
+    const out: string[] = []
+    for (const sp of p.subpaths) for (let i = 0; i < sp.segments.length && out.length < START_MAX; i++) out.push(`${i ? 'L' : 'M'}${sp.segments[i]!.anchor.x} ${sp.segments[i]!.anchor.y}`)
+    return out
   }
-  collect(doc.layers)
-  for (const sym of doc.symbols) collect(sym.layers)
-  const anchorsOf = (p: Path): string[] => p.subpaths.flatMap((sp) => sp.segments.map((sg, i) => `${i ? 'L' : 'M'}${sg.anchor.x} ${sg.anchor.y}`))
+  // How many paths of the document share each start, by length — built on the FIRST warning only (most
+  // documents have none), so naming a path is a lookup however many paths there are.
+  let shared: Map<string, number> | null = null
+  const startsOf = (): Map<string, number> => {
+    if (shared) return shared
+    shared = new Map()
+    const collect = (layers: Layer[]): void => {
+      for (const l of layers) for (const it of [...l.items, ...(l.cels ?? []).flatMap((c) => c.matter ?? [])]) {
+        if (isGroup(it)) collect(it.layers)
+        else if (isRegion(it) && !it.poly) { const a = anchorsOf(it.path); for (let n = 2; n <= a.length; n++) { const k = a.slice(0, n).join(' '); shared!.set(k, (shared!.get(k) ?? 0) + 1) } }
+      }
+    }
+    collect(doc.layers)
+    for (const sym of doc.symbols) collect(sym.layers)
+    return shared
+  }
   const pathStart = (p: Path): string => {
-    const mine = anchorsOf(p), others = allPaths.filter((o) => o !== p).map(anchorsOf)
-    let n = 2
-    while (n < Math.min(mine.length, 12) && others.some((o) => o.length >= n && o.slice(0, n).join(' ') === mine.slice(0, n).join(' '))) n++
+    const mine = anchorsOf(p), counts = startsOf()
+    let n = Math.min(2, mine.length)
+    while (n < mine.length && (counts.get(mine.slice(0, n).join(' ')) ?? 0) > 1) n++
     return mine.slice(0, n).join(' ')
   }
   const holed = (layers: Layer[]): void => {

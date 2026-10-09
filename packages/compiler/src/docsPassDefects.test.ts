@@ -126,3 +126,28 @@ describe('an object that follows a guide layer', () => {
     expect(v.sy as number).toBeCloseTo(75, 0)
   })
 })
+
+// Review pass on the fixes above.
+describe('review pass', () => {
+  it('`feedback` used as a NAME is left alone: `feedback = lift` assigns, `{ feedback = lift }` is a record field', () => {
+    const src = 'size 300 300\nvar feedback = 0\nvar lift = 2\nscene { layer "c" { group "X" at 20,20 { layer "a" { rect 0 0 10 10 fill #333333 } } } }\nobject "X" {\n  when clicked {\n    feedback = lift\n    send "evt", { feedback = lift }\n  }\n}\n'
+    expect(checkProgram(src).errors).toBe(0)
+    const r = playHeadless(compileFlatpack(src), [{ type: 'tap', target: 'X' }])
+    expect(r.vars.feedback).toBe(2)
+    expect(r.sends).toEqual([{ name: 'evt', fields: { feedback: 2 } }])
+  })
+  it('a state whose name is not a plain word (a document no compiler wrote) does not break the check', async () => {
+    const { lintDoc } = await import('./programDoc')
+    const doc = compileFlatpack('size 200 200\nvar score = 9\nsymbol "Door" {\n  timeline 24 24\n  states door { closed at 0   open at 24   initial closed }\n  layer "c" { group "P" at 0,0 { layer "x" { rect 0 0 20 40 fill #885500 } } }\n}\nscene { layer "l" { instance "Door" as "FrontDoor" at 50,50 } }\nobject "FrontDoor" { when clicked { FrontDoor.door = score > 5 ? open : closed } }\n')
+    const sm = (doc.symbols[0] as unknown as { states: { states: { name: string }[] }[] }).states[0]!
+    sm.states[0]!.name = 'a(+'
+    expect(() => lintDoc(doc)).not.toThrow()
+  })
+  it('many paths that start alike: naming one stays cheap', () => {
+    const paths = Array.from({ length: 1500 }, (_, i) => `    path "M0 0 L40 0 L40 40 L0 40 Z M20 20 L60 20 L60 60 L20 ${60 + i} Z" fill #333333`).join('\n')
+    const t0 = performance.now()
+    const r = checkProgram(`size 300 300\nscene {\n  layer "c" {\n${paths}\n  }\n}\n`)
+    expect(r.warnings).toBeGreaterThan(1000)
+    expect(performance.now() - t0).toBeLessThan(4000)
+  })
+})

@@ -262,9 +262,10 @@ import { FlatPlayer, sameOriginAssetResolver } from '@flatkit/player'
 new FlatPlayer(canvas, doc, { resolveAsset: sameOriginAssetResolver('/activities/42/') })
 ```
 
-The base is the folder the assets live in: an absolute URL, or a path of your own page (resolved against
-`location`; before 0.48.1 a relative base resolved nothing — pass `new URL('/activities/42/', location.href).href`
-on an older player). In Node there is no page: give an absolute URL.
+The base is the folder the assets live in: an absolute URL, or a PATH on your own page — `/…`, `./…` or
+`../…`, resolved against `location`. Anything else (an empty string, `//other.host/…`) resolves nothing, on
+purpose. (Before 0.48.1 a path resolved nothing either: pass `new URL('/activities/42/', location.href).href`
+to an older player.) In Node there is no page: give an absolute URL.
 
 Read [SECURITY.md](../SECURITY.md) for the full threat model.
 

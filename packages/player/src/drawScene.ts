@@ -16,7 +16,8 @@ import { regionBBox, type BBox } from '@flatkit/engine/bbox'
 import { regionPaint, resolveStopColor, resolveTintColor, type Paint, type Tint } from '@flatkit/engine/paint'
 import { cssFilterString, type Filter } from '@flatkit/engine/filters'
 import { containerLayers, getSymbol, isContainer, isGroup, isInstance, isPoseable, isText, isImage, isRegion, layerStructure } from '@flatkit/engine/layers'
-import { pathToBezier, transformPath, makePathSampler, pathBBox, trimPath, type Path } from '@flatkit/engine/path'
+import { pathToBezier, makePathSampler, pathBBox, trimPath, type Path } from '@flatkit/engine/path'
+import { guidePath } from '@flatkit/engine/sceneRefs'
 import { type BaseOf } from '@flatkit/engine/timeline'
 import { resolveInstanceParams, instanceFrames } from '@flatkit/engine/params'
 import { resolveLayerAt } from '@flatkit/engine/cel'
@@ -931,14 +932,7 @@ function maskClipOf(pieces: MaskPiece[]): MaskClip {
 
 /** Path of a guide layer = subpaths of its resolved matter (baked xform), or null if empty. */
 export function guidePathOf(guide: Layer, frame: number, rctx: RenderCtx): Path | null {
-  const items = resolveLayerAt(guide, frame, { fps: rctx.fps, ctx: rctx.expr })
-  const subpaths = []
-  for (const it of items) {
-    if (!isRegion(it)) continue
-    const path = it.xform ? transformPath(it.path, it.xform) : it.path
-    subpaths.push(...path.subpaths)
-  }
-  return subpaths.length ? { subpaths } : null
+  return guidePath(guide, frame, rctx.fps, rctx.expr) ?? null
 }
 
 /** Outline of a mask layer: the shapes of its resolved matter (regions, containers) in one path — an
