@@ -1,5 +1,13 @@
 # @flatkit/sugarflat
 
+## 0.6.6
+
+### Patch Changes
+
+- [`3fa3028`](https://github.com/flatink/flatkit/commit/3fa3028018ca52e95a7177338b8578531a7173c7) Thanks [@kaelhem](https://github.com/kaelhem)! - The counter of a `compose` block (`<name>_Total`) is listed in `meta[].objects`, like every other id the block emits. The README also gains the `counter` theme role, the optional `prompt` of `stepper` and `slider`, and the real payloads of `correct` / `incorrect` / `step` / `part` / `completed`.
+- Updated dependencies [[`3fa3028`](https://github.com/flatink/flatkit/commit/3fa3028018ca52e95a7177338b8578531a7173c7), [`bfdc1e3`](https://github.com/flatink/flatkit/commit/bfdc1e3cde7c50668c9a29283d21e940224c3d75)]:
+  - @flatkit/compiler@0.48.1
+
 ## 0.6.5
 
 ### Patch Changes
