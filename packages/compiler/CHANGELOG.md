@@ -1,5 +1,44 @@
 # @flatkit/compiler
 
+## 0.48.0
+
+### Minor Changes
+
+- [`c03add7`](https://github.com/flatink/flatkit/commit/c03add7489170424d7a2d49b58419685c103f24b) Thanks [@kaelhem](https://github.com/kaelhem)! - A warning when two `.flat` libraries declare the same symbol name. The last library read is the one instanced, and `flatc` reads every `.flat` of the program's folder, so which one wins was a matter of file names, with the other shadowed without a word. `flatc` (with or without `--check`, and `--check a.flat b.flat`) now names both files and says which one is instanced. `checkProgram` reports it too; the new `assetNames` option names the libraries in the message (without it: `library 1`, `library 2`), and `libraryNameDiagnostics` is exported. No warning when the program declares that name itself: its own symbol is the one instanced, as documented.
+
+- [`127ffcc`](https://github.com/flatink/flatkit/commit/127ffcc45f425d358ae0b1c84747d484b218cca8) Thanks [@kaelhem](https://github.com/kaelhem)! - `wait` in a handler: "do this, wait, do that" without a hand-written state machine in `every frame`.
+  
+  ```
+  object "Door" {
+    when clicked {
+      opened = 1
+      wait 1.5
+      sound "creak"
+      wait until Player.x > 400
+      opened = 0
+    }
+  }
+  ```
+  
+  - `wait <seconds>` suspends the handler it is written in; the duration is an expression, counted in steps of the simulation (60 per second), never in real time, so `flatc --play` replays it exactly. A `wait` lasts one step at least.
+  - `wait until <cond>` reads the condition once per step; already true when reached, it does not pause.
+  - Allowed in object events, `when loaded` and `at frame <n>`, inside `if` and `repeat` too. In `every frame` and in a `fn` it is a compile error that says what to write instead.
+  - A handler triggered again while it waits starts over: the waiting run is dropped. Different handlers wait side by side.
+  - Waiting handlers are resumed at the start of each step, in the order they started, before `every frame`. They share the step's action budget. The player keeps at most 256 of them; `--check` warns when a document declares more.
+  - The host's `pause()` freezes them, its `seek()` and `load()` drop them; a script's own `pause` and `go to` do not.
+  - `wait(1.5)` reads as `wait 1.5`.
+  - `--check` warns on an `at frame <n>` script that waits longer than a lap of a timeline nothing holds: the playhead is back on the frame first, so the script starts over for ever and what follows the wait never runs.
+  - Nothing changes for a program that does not wait: such a handler runs through the same interpreter as before. `wait` remains usable as a variable name.
+  
+  New in the model: the actions `{ do: 'wait', seconds }` and `{ do: 'waitUntil', cond }`. Not in this release: `forever` and `repeat until`.
+
+### Patch Changes
+
+- Updated dependencies [[`364a652`](https://github.com/flatink/flatkit/commit/364a6526f1cfa480ca079f297e1ce4b0b87359d0), [`127ffcc`](https://github.com/flatink/flatkit/commit/127ffcc45f425d358ae0b1c84747d484b218cca8)]:
+  - @flatkit/engine@0.48.0
+  - @flatkit/player@0.48.0
+  - @flatkit/types@0.48.0
+
 ## 0.47.0
 
 ### Minor Changes
