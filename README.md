@@ -7,7 +7,7 @@
 
 **The open language, compiler, and player for the [FlatInk](http://flatink.zwyk-studio.com/) animation format** — a modern, web-native take on the "one file that just plays" idea behind the old SWF.
 
-Write a scene as readable text, compile it to a single self-contained `.flatpack`, and play it in any `<canvas>` with a runtime small enough to drop into someone else's bundle. Animations *and* interactivity — drags, drop zones, scratch-to-reveal, connect-the-dots, physics, sound — all in plain data, no plugin, no black box.
+Write a scene as readable text, compile it to a single self-contained `.flatpack`, and play it in any `<canvas>` with a runtime small enough to drop into someone else's bundle. Animations *and* interactivity — drags, drop zones, scratch-to-reveal, connect-the-dots, per-frame logic, sound — all in plain data, no plugin, no black box.
 
 > **Status: beta.** The packages and the `.flatpack` format are still moving; expect breaking changes (and tell us when something feels wrong).
 
@@ -31,6 +31,8 @@ Draw shapes, key your timeline, wire up interactions by clicking — then **expo
 | [`@flatkit/engine`](packages/engine) | The pure core — model evaluation, expressions, timeline, geometry, layers. No canvas, no clipper. Shared by the compiler and the player. |
 | [`@flatkit/compiler`](packages/compiler) | The language (parser + AST) and the compiler (`.flatink` → `.flatpack`). Ships the `flatc` CLI. |
 | [`@flatkit/player`](packages/player) | A tiny runtime that plays a `.flatpack` in a `<canvas>`. No editor, no heavy dependencies. |
+| [`@flatkit/sugarflat`](packages/sugarflat) | A sugar layer over the language: compact activity blocks that unfold into plain FlatInk. Versioned on its own. |
+| [`@flatkit/mcp`](packages/mcp) | An MCP server for LLM agents: the asset library, check / preview / publish through the forge, and the language reference as resources. Versioned on its own. |
 
 ### Why the split
 
@@ -71,7 +73,7 @@ pnpm install
 pnpm verify      # lint + english check + typecheck + tests
 ```
 
-The four packages (`types`, `engine`, `compiler`, `player`) are in place and tested; the `.flatpack` format and public APIs are still moving (beta), so expect breaking changes.
+The four core packages (`types`, `engine`, `compiler`, `player`) are versioned together, `sugarflat` and `mcp` on their own. All are in place and tested; the `.flatpack` format and public APIs are still moving (beta), so expect breaking changes.
 
 ## Security
 

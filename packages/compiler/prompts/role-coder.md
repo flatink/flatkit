@@ -50,6 +50,7 @@ wait <seconds>          wait until <cond>      // suspend THIS handler, then go 
                                                // (event / when loaded / at frame handlers only; NOT in `every frame` or a `fn`;
                                                //  triggered again while waiting, the handler starts over)
 play   pause   go to frame <n> [and play|and pause]   go to "<label>" [and play]
+label <frame> "<label>"                                  // at the TOP LEVEL: names a frame for go to "<label>"
 send "<evt>" [, <expr> | , text("<id>") | , { a = <expr>, b }]   sound "<assetId>"   <fn>(<args>)
 ```
 
@@ -71,7 +72,7 @@ object "Dial" { spring rotation = aim { stiffness 0.08 damping 0.86 } }   // smo
 Pure numeric expressions (no booleans — logic/compares yield `1`/`0`). Operators `?: || && == != < >
 <= >= + - * / % - ! . [] fn()`. Built-ins: `sin cos tan atan2 abs sqrt pow exp log floor ceil round
 sign min max hypot clamp(x,lo,hi) lerp(a,b,t) mod(a,b) between(x,lo,hi) rad deg turns`. Constants
-`PI TAU E`, `DT` (= 1/60 s: `every frame` is a fixed 60 Hz step, integrate with `v = v + a * DT`). Reserved: `time` (s), `frame`, `value`, `mouse.x/y`, `keys.<Key>`, `self.*`, `<Name>.*`.
+`PI TAU E`, `DT` (= 1/60 s: `every frame` is a fixed 60 Hz step, integrate with `v = v + a * DT`). `random()` = a number in `[0, 1[` (reproducible under `flatc --play`, `--seed N`). Reserved: `time` (s, WRAPS), `clock` (s, monotone), `frame`, `value`, `mouse.x/y`, `keys.<Key>` (the typed key, or the physical one: `keys.ShiftLeft`, `keys.Digit1`), `self.*`, `<Name>.*`.
 
 Functions: `fn dist(ax,ay,bx,by) = hypot(ax-bx, ay-by)` (value) · `fn reset() { score = 0 }` (procedure).
 
@@ -88,8 +89,11 @@ object "Piece" {
 }
 turn    <angle> around x,y [{ snap <deg> }]       // → RADIANS → rotation = <angle> directly
 turnDeg <angle> around x,y [{ snap <deg> }]       // → DEGREES → pair with rotationDeg = <angle>
-trace <progress> along <Group> [{ tolerance <px> }]  // follow path → 0..1 monotone
-reveal <progress> [{ brush <px> }]                // scratch/wipe grabbed area → 0..1 cumulative
+trace <progress> along <Group> [{ tolerance <px> }]  // follow path → 0..1 monotone; options ONE PER LINE: `step <px>` (a trace,
+                                                  //   not a cursor — without it a press near the finish is done), `both ends`, `point <x>,<y>`
+reveal <progress> [{ brush <px> }]                // scratch/wipe grabbed area → 0..1 cumulative; also `grain <px>` (resolution),
+                                                  //   `erase` (the runtime rubs the target out), `cells <array>` (WHERE it was rubbed)
+focusable [order <n>] [noring]                    // in an object block: Tab reaches it, Enter/Space fire `when clicked`
 link  endX,endY,target to <Group>                 // elastic thread; target = hit index 1..n (0=none), WORLD coords
 ```
 
@@ -153,13 +157,14 @@ scene { layer "Pad" {
   repeat i from 0 to 8 { instance "Key"($(i+1)) as "K$(i)" at $(70 + (i%3)*80),$(80 + floor(i/3)*80) }
 } }
 each "Key" as i { when clicked { input = input*10 + (i+1) } }        // one handler per generated instance
+// handlers and interactors under `each` need a PARAMETERIZED symbol (as "Key"(…) here); on a plain or `.flat` symbol: bindings only
 ```
 `match` factors a whole drag+drop matching activity:
 ```
 match Word1, Word2 onto Good, Bad {
   correct Word1 -> Good, Word2 -> Bad
   lock on wrong                              // optional; absent = retryable
-  on correct as it { send "found", text(it) }
+  on correct as it { send "found", text(it) }   // text(it) needs a text whose id is the item's name (`text "chat" as "Word1"` in group "Word1"); else send a number
   on done { send "win" }
 }
 ```
@@ -171,7 +176,8 @@ It generates per item `<Item>_placed` / `<Item>_ok` / `<Item>_zone`; you keep th
 1. **`size W H` first line, required.** Then `scene { … }`, then behavior.
 2. **Two grammars — don't cross them.** No `var`/`when`/`if` inside `scene`; no `circle`/`path` inside
    `object`. Drawing in the scene half, logic in the behavior half.
-3. **One action per line.** `x = 1  y = 2` errors. `send "evt", x = 1` is a footgun error (a `send`
+3. **One action per line.** Two assignments may share a line (`x = 1  y = 2`); any other action after an
+   assignment is an error (`score = score + 1  send "ok"`). `send "evt", x = 1` is a footgun error (a `send`
    carries at most one payload: `send "evt"`, `send "evt", <expr>`, `send "evt", text("id")`, or the
    record `send "evt", { a = <expr>, b }` — several NAMED numbers in one event, `{ b }` = `{ b = b }`).
 4. **Radians by default; `*Deg` twins for degrees.** `rotation`, `sin/cos/atan2`, `gesture.angle`, and the
@@ -186,7 +192,8 @@ It generates per item `<Item>_placed` / `<Item>_ok` / `<Item>_zone`; you keep th
 6. **Use the vars an interactor writes.** `drag px, py` only moves the object if you bind `x = px  y = py`.
    Outputs accept array elements (`drag hx[i], hy[i]`) — the natural form under `each` (array must exist).
 7. **Drop test = object CENTER** by default. `when dropped on Zone at pointer` tests the pointer;
-   `group "Zone" … hitbox W H { … }` sets an explicit drop rectangle. Several `when dropped on` per
+   `group "Zone" … hitbox W H { … }` sets an explicit drop rectangle — also its TOUCH area — CENTRED on the
+   group's origin (±W/2, ±H/2: draw the zone around 0,0). Several `when dropped on` per
    object run in declaration order (right-zone / wrong-zones pattern).
 8. **Event order on release:** `when released` fires **BEFORE** the drop test; `link`/`drag` write their
    output vars before `released`/`dragged`, so a release handler can read `<target>` already.
@@ -208,8 +215,8 @@ It generates per item `<Item>_placed` / `<Item>_ok` / `<Item>_zone`; you keep th
     survives a re-layout. Re-injecting (`x = $(X) + bump`) is only for a genuinely absolute position. The
     most common "anim shows up in the wrong place."
 14. **`time` WRAPS every `durationFrames` (2.5 s by default); `clock` is monotone.** Any instant you capture
-    and compare later must use `clock` — `when wrong { shown = clock }` + `opacity = pulse(shown, 4)`.
-    On `time`, a one-shot end-of-game ramp replays for ever and a `shake` skips on every loop.
+    and compare later must use `clock` — `when dropped on Bad { shown = clock }` + `opacity = pulse(shown, 4)`.
+    On `time`, a `pulse` NEVER fires (silently), a hand-written ramp replays for ever and a `shake` skips.
 15. **`{ enabled <expr> }` gates the GESTURE, not the handlers** — `when pressed`/`released`/`clicked` keep
     firing. Guard the body: `when released { if done == 0 { … } }`. (A `link`'s target index resolves to 0.)
 16. **Check the program as `.flatink`** — a `.flat` is a symbol library, so a program under that name is not

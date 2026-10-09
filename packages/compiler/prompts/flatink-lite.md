@@ -43,8 +43,8 @@ data: `path "M0 60 L80 40 L200 52" smooth`. `--check` warns about a missing `smo
 Style: `fill #rrggbb | nofill` · `stroke #rgb <w> [cap round][join round][dash a,b]` · `opacity 0..1` ·
 `draw <0..1> [from <0..1>]` (stroke extent by ARC LENGTH; quoted = expression: `draw "avance"` = ink drawn
 behind a finger, the measure `trace` reports) ·
-`fill linear(90, 0:#a, 1:#b)` (0=→,90=↓) · `fill radial(0.5,0.5,0.5, 0:#fff,1:#000)` ·
-`filter glow <blur> <color> | shadow <dx> <dy> <blur> <color> | blur <r>` · `tint <color> <amt>` · `nohit`.
+`fill linear(90, 0:#bdecff, 1:#2f8fe0)` (0=→,90=↓) · `fill radial(0.5,0.5,0.5, 0:#fff,1:#000)` ·
+`filter glow <blur> <color> | shadow <dx> <dy> <blur> <color> | blur <r>` · `tint <color> <amt>` (on a group / instance / text, NOT on a bare shape) · `nohit`.
 
 ## Animation: timeline / cel / pose — in a `symbol` AND in a program's `scene`
 ```
@@ -73,19 +73,20 @@ pose "Name" [at x,y] [rotate deg] [scale s | scaleX sx scaleY sy] [opacity o] [s
 Events (in `object`): `when clicked | hovered | unhovered | pressed | released | dragged | held |
 dropped on <Zone> [at pointer]`. Scene-wide: `when loaded`, `every frame`, `at frame n`. **`when` takes a GESTURE, never a condition** -- no `when <cond>`: watch it in `every frame` and guard it with a flag so it fires once (`if done < 0.5 { done = 1 … }`), the block runs 60x/s. Scene-wide blocks live at the TOP LEVEL, outside any `object`; a `when clicked`/binding/interactor at the top level does nothing -- it needs an `object "Name" { … }`.
 Actions (one per line): `<var> = <expr>` · `arr[i] = <expr>` · `if/else if/else` · `repeat n times {}` ·
-`repeat i from a to b {}` · `wait <seconds>` / `wait until <cond>` (suspends THIS handler; not in `every frame` nor in a `fn`) · `play`/`pause` · `go to frame n [and play]` · `send "evt" [, <expr> | , text("id") | , { a = <expr>, b }]` · `sound "id"`.
+`repeat i from a to b {}` · `wait <seconds>` / `wait until <cond>` (suspends THIS handler; not in `every frame` nor in a `fn`) · `play`/`pause` · `go to frame n [and play]` · `go to "name"` (declared at the top level: `label 24 "name"`) · `send "evt" [, <expr> | , text("id") | , { a = <expr>, b }]` · `sound "id"`.
 Drag/interactors (write into your vars; all take `{ enabled <expr> }`):
 ```
 drag x, y [{ confine to <Zone>
-             snap <grid> }]   // ONE OPTION PER LINE. Then USE them: x = px, y = py
+             snap <grid> }]   // ONE OPTION PER LINE. Then USE them, one binding per line: x = px  then  y = py
 turn <angle> around x,y
 trace <progress> along <Group> [{ tolerance <px>
                                   step <px>          // a TRACE, not a cursor (without it, one press near the finish = done)
-                                  both ends · point <x>,<y> }]   // pair with `draw "<progress>"` on the SAME path data
+                                  both ends          // enterable from either end
+                                  point <x>,<y> }]   // pen tip (world); pair with `draw "<progress>"` on the SAME path data
 reveal <progress> [{ brush <px>        // the FINGER's radius
                      grain <px>         // the RESOLUTION of coverage + erase (default: the brush) — fine grain, wide finger
                      erase              // the runtime rubs the target out where scratched (a scratch card = a grey rect + this)
-                     cells <array> }]   // fraction + WHERE: cells[row*cols+col] = 1, cols = ceil(zone_w/brush)
+                     cells <array> }]   // fraction + WHERE: cells[row*cols+col] = 1, cols = ceil(zone_w/grain)
 link endX,endY,target to <Group>     // target = hit index 1..n (0=none), WORLD coords
   // link draws NO thread. A bar drawn from its own origin, then:
   //   rotation = angle(srcX, srcY, endX, endY)   scaleX = dist(srcX, srcY, endX, endY) / <drawn length>
@@ -99,7 +100,7 @@ State/funcs: `var a = 0` · `var arr = fill(8,0)` (also as an ASSIGNMENT: `arr =
 ## Factoring (compile-time, vanish from model — use `var` for runtime)
 `def gap = 70` · `repeat i from 0 to 4 { circle $(40 + i*gap) 80 6 fill #fff }` (`$()` = compile-time math)
 · `symbol "Card"(label, tint="#fff") { … text "$(label)" … fill $(tint) }` · `instance "Card"($(i+1)) as "C$(i)" at …`
-· `each "Key" as i { when clicked { … } }` · `at center` · `align top of "Bin" [offset dx,dy]`.
+· `each "Key" as i { when clicked { … } }` (handlers/interactors under `each` need a PARAMETERIZED `symbol "Key"(…)`; on a plain symbol, bindings only) · `at center` · `align top of "Bin" [offset dx,dy]`.
 
 ## Expressions
 Pure numeric, no booleans (compare/logic → 1/0). Ops: `?: || && == != < > <= >= + - * / % - ! . [] fn()` · inline table `[10, 20, 30][i]`.
@@ -124,13 +125,14 @@ Stateful easing: `spring <ch> "<target>" stiffness <0..1> damping <0..1>` · `sm
 5. **A pose is a PATCH** — keeps every channel it doesn't name. Don't restate `at x,y` to change opacity.
 6. **A cel is a full snapshot:** a container shows only on cels that `pose` it (omit → it disappears).
    Per-**keyframe**, not per-frame. Keep statics on a **cel-less layer**, or carry forward with `cel N hold {…}`.
-7. **Render order in an animated layer:** static `path`s draw **behind** posed containers (declaration
-   order not preserved). To put a static shape in front, give it its **own layer above**.
+7. **A layer WITH cels draws only the cel's `matter { … }` and the containers that cel poses.** A bare shape
+   written in such a layer is never drawn: put it in `cel N { matter { … } }`, or on its own cel-less layer
+   (above, to be in front).
 8. **`image` origin = top-left** (center with `at -w/2,-h/2`). **Text doesn't wrap** without `wrap`.
 9. **Rings/holes = ONE path, multiple closed subpaths** (even-odd fill; `nonzero` after the path = the SVG rule). `stroke`/`opacity`/`filter`
    exist on `path` AND `text` — don't fake them.
 10. **Drop test = object CENTER** by default (`at pointer` for the pointer; `hitbox W H` for an explicit
-    rect). `when released` fires BEFORE the drop test. `reveal`/`trace` progress is monotone.
+    rect, CENTRED on the group's origin: draw the zone around 0,0). `when released` fires BEFORE the drop test. `reveal`/`trace` progress is monotone.
 11. **Compile-time (`def`/`$()`/`repeat` in scene/param symbols) vs runtime (`var`)** — don't confuse. A
     `def` isn't a runtime var: inject it in behavior expressions with `$(name)`, not as a bare identifier.
     Use the vars an interactor writes (`drag px,py` only moves if you bind `x = px  y = py`); arrays must
@@ -145,7 +147,7 @@ Stateful easing: `spring <ch> "<target>" stiffness <0..1> damping <0..1>` · `sm
     really want an absolute position. Parameterized symbols
     (`symbol "X"(args)`) are `.flatink`-inline only — never in a `.flat` lib (parens ⇔ parameterized).
 14. **`time` WRAPS every `durationFrames` (2.5 s by default); `clock` is monotone.** Capture instants with
-    `clock` (`when wrong { shown = clock }` + `opacity = pulse(shown, 4)`), or the ramp replays for ever.
+    `clock` (`when dropped on Bad { shown = clock }` + `opacity = pulse(shown, 4)`): on `time` a `pulse` never fires, and a hand-written ramp replays for ever.
 15. **`{ enabled <expr> }` gates the GESTURE only** — `when pressed`/`released`/`clicked` still fire. Guard
     the body: `when released { if done == 0 { … } }`.
 

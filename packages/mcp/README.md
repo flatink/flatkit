@@ -37,7 +37,7 @@ publishes. Start an agent with `flatink://prompt/flatink-core` (full grammar) or
 and hand it a card when context is tight.
 
 Library assets referenced in the source (`image "<name>" <w> <h> at x,y`) are passed via the `library:[...]`
-parameter of `preview_scene`/`publish_scene` and inlined server-side (base64). An unknown name returns an
+parameter of `check_scene`/`preview_scene`/`publish_scene` and inlined server-side (base64). An unknown name returns an
 error with the closest matching names (auto-correction).
 
 ## Install (recommended: `npx`)

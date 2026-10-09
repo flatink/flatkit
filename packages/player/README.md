@@ -24,7 +24,8 @@ const player = new FlatPlayer(canvas, doc, { autoplay: true })
 - `loadEmbeddedFonts(doc)` registers a doc's embedded `font` assets so text uses the authored faces (no-op
   outside a DOM, never throws). See
   [docs/embedding-fonts.md](https://github.com/flatink/flatkit/blob/main/docs/embedding-fonts.md).
-- Subpath entries: `@flatkit/player/debug` (headless playback + gesture trace), `@flatkit/player/render`
+- Subpath entries: `@flatkit/player/browser` (the whole player as ONE self-contained ES module, engine
+  inlined: no bundler needed), `@flatkit/player/debug` (headless playback + gesture trace), `@flatkit/player/render`
   (canvas drawing primitives), `@flatkit/player/hit` (hit-testing).
 
 ## Talking to the scene

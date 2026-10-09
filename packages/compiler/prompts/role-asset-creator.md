@@ -39,7 +39,7 @@ opacity 0..1                                          // or 8-digit hex alpha #r
 fill linear(90, 0:#bdecff, 1:#2f8fe0)                 // angle 0 = →, 90 = ↓
 fill radial(0.5, 0.5, 0.5, 0:#fff, 1:#000)            // cx, cy, r in 0..1, then stops
 filter glow <blur> <color> | shadow <dx> <dy> <blur> <color> | blur <r> | adjust <b> <c> <s> <h>
-tint <color> <amount(0..1)>      nohit                // nohit = drawn but click-through
+tint <color> <amount(0..1)>      nohit                // tint: on a group / instance / text, NOT on a bare shape · nohit = drawn but click-through
 ```
 
 ## Repetition without copy-paste (compile-time)
@@ -98,6 +98,9 @@ symbol "Boat" {
 8. **Layer order = z-order.** Bottom layer drawn first. Put shadows/backings on lower layers.
 9. **Don't hand-compute Bezier circles** — use `circle`/`ellipse`/`rect` sugar; they normalize to paths.
 10. **Center art on `0,0`** so the asset rotates/scales cleanly when someone animates it later.
+11. **A name holds ONE symbol.** Two `symbol "X"` in a file are a compile error (and two libraries of one
+    folder declaring the same name, a warning: the last one read wins).
+12. **Text in a box:** `valign top|middle|bottom` places the lines in the height of the `box`.
 
 ## Self-check
 - File is only `symbol "…" { … }` blocks, no `size`, no behavior.

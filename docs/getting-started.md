@@ -1,7 +1,7 @@
 # Getting started
 
 > Prerequisite: the `flatc` CLI — `pnpm add -D @flatkit/compiler` (or run it from this repo with
-> `pnpm flatc …`). See [Tooling](tooling.md) for the full CLI.
+> `pnpm flatc …`, from source). See [Tooling](tooling.md) for the full CLI.
 
 ## 1. Your first scene
 
@@ -19,7 +19,8 @@ scene {
 }
 ```
 
-- `size` is **required and must come first** (the canvas, in scene units).
+- `size` sets the canvas, in scene units. Put it first: without it the program still compiles, on a
+  default 800x600 canvas, and `--check` only warns.
 - `scene { … }` holds **layers**; layers hold **items** (`circle`, `text`, `path`, `image`, `group`…).
 - Coordinates are plain numbers; the origin is the top-left of the canvas.
 - On `text` (and `image`), `at x,y` comes **right after the content**, before `font`/`box`/`fill` — not at
@@ -29,13 +30,13 @@ Compile and look at it:
 
 ```sh
 flatc hello.flatink -o hello.flatpack     # → a single playable file
-flatc hello.flatink --render -o hello.png  # → a PNG, to see what you drew (needs skia-canvas)
+flatc hello.flatink --render -o hello.png  # → a PNG, to see what you drew (needs skia-canvas 4, see Tooling)
 ```
 
 ## 2. Make it move
 
 Animation comes from **channel expressions** in a behavior block, which target a **named object**
-(`group`/`instance`/`text`). A bare shape can't carry channels — its `as "<id>"` name only makes it
+(`group`/`instance`/`text`/`image`). A bare shape can't carry channels — its `as "<id>"` name only makes it
 addressable for **text-on-path** — so wrap it in a named **group** (the name lives on the group), then
 drive a channel:
 
@@ -98,7 +99,7 @@ const doc = await fetch('hello.flatpack').then((r) => r.json())
 const player = new FlatPlayer(canvas, doc, { autoplay: true })
 ```
 
-Or verify it headlessly (great in CI) without a browser — see [Tooling → headless play](tooling.md#headless-play--play).
+Or verify it headlessly (great in CI) without a browser — see [Tooling → headless play](tooling.md#headless-play----play).
 
 ## Where next
 

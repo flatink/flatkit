@@ -50,7 +50,8 @@ rect    <x> <y> <w> <h>  [<r> | <rx> <ry>]      // optional rounded corners
 path    "M0 0 L10 0 L10 10 Z"                    // raw SVG path data: L is a STRAIGHT line
 path    "M0 60 L80 40 L200 52 L320 44" smooth    // the same points joined by a curve (a hill, a wave)
 polyline xs ys [count "n"] [closed]              // points read from two array vars, every frame
-text    "Hi" font "sans-serif" size 24 align center line 1.2 color #fff box 200 40
+text    "Hi" font "sans-serif" size 24 align center line 1.2 color #fff box 200 40 [bold] [italic] [wrap] [valign top|middle|bottom]
+text    "Score: {}" at 20,20 bind "score"         // dynamic text: {} shows the expression, every frame
 image   "logo" 80 80 at -40,-40                  // origin = top-left → center with at -w/2,-h/2
 group   "Name" at x,y pivot px,py [rotate deg] [scale s] { layer "c" { … } }   // nests its own layers; a FIXED rotate/scale, around the pivot
 instance "Symbol" as "Name" at x,y              // place a symbol from a .flat lib
@@ -71,7 +72,8 @@ opacity 0..1                                       // also 8-digit hex alpha #rr
 fill linear(90, 0:#bdecff, 1:#2f8fe0)              // angle 0 = →, 90 = ↓ ; stops offset:color
 fill radial(0.5, 0.5, 0.5, 0:#fff, 1:#000)         // cx, cy, r (0..1), then stops
 filter glow <blur> <color> | shadow <dx> <dy> <blur> <color> | blur <r> | adjust <b> <c> <s> <h>
-tint <color> <amount(0..1)>                        // Flash-style tint
+tint <color> <amount(0..1)>                        // Flash-style tint — on a group / instance / text (and in a pose), NOT on a bare shape
+stroke #000 3 fixed                                // `fixed` keeps the width when the group is scaled or stretched
 nohit                                              // drawn but ignored by hit-test
 draw <to> [from <start>]                           // stroke extent by ARC LENGTH (0..1); quoted = expression
 ```
@@ -185,7 +187,7 @@ Actions (one per line): `<var> = <expr>` · `arr[i] = <expr>` · `if/else if/els
 `repeat <n> times { }` · `repeat i from a to b { }` · `wait <seconds>` / `wait until <cond>` (suspends THIS
 handler, then goes on: "do, wait, do" with no flag in `every frame`; in an event / `when loaded` / `at frame`
 handler only, not in `every frame` nor in a `fn`; triggered again while waiting, the handler starts over) · `play`/`pause` · `go to frame N [and play]` ·
-`go to "label" [and play]` · `send "evt" [, <expr> | , text("id") | , { a = <expr>, b }]` · `sound "id"` · `<fn>(args)`.
+`go to "label" [and play]` (declare it at the top level: `label 24 "intro"`) · `send "evt" [, <expr> | , text("id") | , { a = <expr>, b }]` · `sound "id"` · `<fn>(args)`.
 
 Drag & interactors (each writes into your vars; all accept `{ enabled <expr> }`):
 ```
@@ -210,11 +212,11 @@ link  <endX>,<endY>,<target> to <Group>            // elastic thread → target 
 length. Add **`step <px>`** or the drill is free: without it the progress is where the finger PROJECTS, so
 one press near the finish completes it. With it, the run must start at an end and pass through everything
 (and it resumes across a lift, since a child stops mid-letter). Restart with `avance = 0` — and the same variable RESTORES a session: seed it (or the `cells` array of a
-`reveal`) and the gesture resumes where the reader left it. **A scratch card is `reveal cleared { brush 28 · erase }` on a grey rectangle** — nothing else: `erase`
+`reveal`) and the gesture resumes where the reader left it. **A scratch card is a `reveal cleared { … }` block holding `brush 28` and `erase`, each on its own line, on a grey rectangle** — nothing else: `erase`
 makes the runtime rub the veil out under the finger (a `mask` layer CANNOT do it, its matter is a hard
 clip path and nothing stamps it at the pointer). **`reveal … cells grille`** is the other half, for a scene
 that must REACT to the uncovered area: it writes `grille[i] = 1` for each cleared cell (`i = row * cols + col`,
-`cols = ceil(zone_width / brush)` over the object's world bbox), so `each "Grain" as i {
+`cols = ceil(zone_width / grain)`, the grain defaulting to the brush, over the object's world bbox), so `each "Grain" as i {
 opacity = 1 - grille[i] }` erases the veil WHERE it was rubbed. Declare `var grille = fill(cols*rows, 0)` —
 `--check` states the exact number. A `reveal` target stays grabbable over its whole zone even once its
 cells are invisible.
@@ -262,7 +264,10 @@ State & helpers:
 ```
 var x = 0    var arr = [0,0,0]    var z = fill(8, 0)     // runtime state (arrays via fill)
 fn dist(ax,ay,bx,by) = hypot(ax-bx, ay-by)              // value fn
-fn reset() { score = 0  go to frame 0 }                  // procedure fn
+fn reset() {                                             // procedure fn: one action per line
+  score = 0
+  go to frame 0
+}
 self.hovered self.grabbed self.pressed self.focused      // own interaction state (0/1)
 focusable [order <n>] [noring]                           // in an object block: Tab reaches it, Enter/Space fire `when clicked`, the player rings it
 feedback lift tilt dim shake(<expr>)                     // one-liner reactions (auto use "feedback")
@@ -277,6 +282,8 @@ symbol "Card"(label, tint = "#fff") { … text "$(label)" … fill $(tint) … }
 symbol "Dot" { layer "a" { circle 0 0 10 fill #c33 } }   // a plain symbol may live in the program too: instance "Dot" as "D" at 100,100
 instance "Card"($(i+1)) as "C$(i)" at $(80 + i*90),200
 each "Key" as i { when clicked { input = input*10 + (i+1) } }    // shared behavior over instances
+// ^ handlers (`when …`) and interactors (`drag`…) under `each` need a PARAMETERIZED symbol (`symbol "Key"(label)`,
+//   instanced with parens); on a plain or `.flat` symbol, `each` takes channel bindings only (`opacity = bricks[i]`)
 match Word1, Word2 onto Good, Bad {                       // declarative drag+drop pairing
   correct Word1 -> Good, Word2 -> Bad
   on done { send "win" }
@@ -300,17 +307,18 @@ qualified (`collision.boxHit(…)`). **The `use` line is optional** — calling 
 package automatically (your own `fn` of the same name still wins). Timing: `lerp(v, target, k)` (builtin)
 eases toward a target each frame (`niv = lerp(niv, target, 0.1)`); `feedback.pulse(since, dur)` is a 1→0
 ramp over `dur` s for a readable timed feedback — capture the instant with **`clock`**:
-`var shown = -999` + `when wrong { shown = clock }`, `opacity = pulse(shown, 4)`.
+`var shown = -999` + `when dropped on Bad { shown = clock }`, `opacity = pulse(shown, 4)`.
 
 ## CRITICAL GOTCHAS — do not get these wrong
 
-0. **A comment is `//`, everywhere.** `#` opens a COLOUR (`#ffcc00`). Used as a comment it survives in
-   the header half and is a parse ERROR inside `scene { … }` — reported as `"layer" expected, "#" found`,
-   which points nowhere near the real cause.
+0. **A comment is `//`, everywhere.** `#` opens a COLOUR (`#ffcc00`). A `# note` is an error in every part
+   of the file: `declaration expected` on a line of its own outside the scene, `"#" opens a colour …
+   comments with //` inside it.
 1. **`size W H` is required and MUST be the first line** of a `.flatink`. A `.flat` has no `size`.
 2. **Two grammars.** Drawing keywords live in `scene`/`symbol` layers; logic keywords live in
    `object`/`every frame`/`fn`. Don't mix (no `var`/`when` inside `scene`; no `circle` inside `object`).
-3. **One action per line** in handlers. `x = 1  y = 2` is an error.
+3. **One action per line** in handlers. Two assignments may share a line (`x = 1  y = 2`), but any other
+   action after an assignment is an error (`score = score + 1  send "ok"` → *two statements on one line*).
 4. **Angles split by context:** `pose rotate`/`scale` are **degrees & multipliers**. The
    **`rotation` channel and `expr rotation`, plus `sin/cos/atan2`, are RADIANS.** Convert with
    `rad(deg)`, `turns(n)` (1 turn/sec), `deg(rad)`.
@@ -339,9 +347,10 @@ ramp over `dur` s for a readable timed feedback — capture the instant with **`
 13. **`$()` is for compile-time interpolation in scene coords**; runtime expressions use bare
     identifiers and `[]` indexing. Arrays must exist before indexed write (`var hx = fill(n,0)`).
 14. **Drop test = object center** by default; use `when dropped on Zone at pointer` for the pointer, or
-    `group "Zone" … hitbox W H { … }` for an explicit rectangle (also the object's TOUCH area: a stroke-only ring is clicked in its middle only with a `hitbox`). `when released` fires BEFORE the drop test.
+    `group "Zone" … hitbox W H { … }` for an explicit rectangle, CENTRED on the group's origin (±W/2, ±H/2: draw the zone around 0,0, `rect -W/2 -H/2 W H`, not from its corner) (also the object's TOUCH area: a stroke-only ring is clicked in its middle only with a `hitbox`). `when released` fires BEFORE the drop test.
 15. **`reveal`/`trace` progress is monotone** (never decreases). `link` works in WORLD coords.
-16. **Stroke width scales with the group** (drawn in scaled space) — don't compensate by hand.
+16. **Stroke width scales with the group** (drawn in scaled space) — don't compensate by hand: write
+    `stroke #000 3 fixed` to keep it constant.
 17. **All rotation is radians; author degrees with the `*Deg` twins.** The `rotation` channel,
     `expr rotation`, `sin/cos/atan2`, `gesture.angle`, AND the **`turn`** interactor are **radians** — so
     wire directly: `rotation = angle(self.x, self.y, mouse.x, mouse.y)`, or `turn a around cx,cy` then
@@ -370,7 +379,8 @@ ramp over `dur` s for a readable timed feedback — capture the instant with **`
     draggable, but `when pressed` / `released` / `clicked` **still fire**. Guard the body yourself:
     `when released { if done == 0 { … } }`. (A `link`'s target index is the exception — it resolves to 0.)
 23. **Timestamps use `clock`, never `time`.** `time` resets every `durationFrames` (2.5 s by default), so a
-    one-shot ramp captured on `time` REPLAYS for ever and a `shake` SKIPS on every loop. Set a long
+    `pulse` captured on `time` NEVER fires (it compares against `clock`, silently), a hand-written ramp on
+    `time` replays on every loop and a `shake` skips. Set a long
     `timeline` only if you need `time` itself; for instants, `clock` is the answer.
 24. **Check the program as `.flatink`.** The extension decides how a file is read: a `.flat` is a symbol
     library, so a program saved under that name has nothing checked. `flatc` refuses it now. In a working

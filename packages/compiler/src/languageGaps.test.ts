@@ -184,3 +184,37 @@ describe('`repeat` bounds', () => {
     expect(() => parseFlat(LIB)).toThrow(/repeat.*constant.*"count - 1"/s)
   })
 })
+
+// Found by the docs pass: the page said an unresolved `$(name)` in a path is a compile error. It was — when
+// nothing in the name read as an SVG command. `$(trace)`, `$(chemin)`, `$(shape)` hold a `t`, a `c`, an `s`:
+// they compiled, with a "partly readable" warning, to a path of NaN that draws nothing.
+describe('an unresolved `$(name)` in path data', () => {
+  const prog = (d: string) => `size 100 100\nscene { layer "l" { path "${d}" nofill stroke #000000 2 } }\n`
+  for (const name of ['P', 'trace', 'chemin', 'shape', 'PATH']) {
+    it(`\`$(${name})\` is a compile error that says the \`def\` is missing`, () => {
+      const r = checkProgram(prog(`$(${name})`))
+      expect(r.ok).toBe(false)
+      expect(r.report).toContain('`$(…)` was not replaced')
+    })
+  }
+  it('…also when the rest of the data is fine', () => {
+    expect(checkProgram(prog('M0 0 L$(w) 10')).report).toContain('`$(…)` was not replaced')
+  })
+  it('a declared `def` still goes through', () => {
+    expect(checkProgram('def P = "M0 0 L50 50"\n' + prog('$(P)')).report).toBe('')
+  })
+})
+
+// Found by the docs pass: `feedback lift   // dim later` turned `dim` ON — the tokens were read from the
+// whole line, comment included, and the docs' own example carried such a comment.
+describe('`feedback` reads its tokens, not its comment', () => {
+  const prog = (line: string) => `size 100 100\nscene { layer "l" { group "B" at 50,50 { layer "c" { rect -10 -10 20 20 fill #cc3333 } } } }\nobject "B" {\n  ${line}\n  when pressed { }\n}\n`
+  const channels = (line: string) => Object.keys(((compileFlatpack(prog(line)).layers[0].items[0]) as { expressions?: Record<string, string> }).expressions ?? {}).sort()
+  it('a reaction named only in the comment is not turned on', () => {
+    expect(channels('feedback lift   // dim and tilt later')).toEqual(channels('feedback lift'))
+    expect(channels('feedback lift')).not.toContain('opacity')
+  })
+  it('the tokens before the comment still are', () => {
+    expect(channels('feedback lift dim   // both')).toContain('opacity')
+  })
+})

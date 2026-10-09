@@ -40,6 +40,11 @@
   (the expression of the first ends where the next `name =` begins). An ACTION after an assignment is
   not: `score = score + 1  send "ok", 1` reports *"two statements on one line — `send …` was swallowed
   into the expression before it"*, and `flatc --fix` splits it. When in doubt, one statement per line.
+- **`wait <seconds>` / `wait until <cond>` pause a HANDLER, nothing else.** Allowed in an object's
+  `when …`, in `when loaded` and `at frame n`; a compile error in `every frame` (it runs whole at every
+  step) and in a `fn`. A handler triggered again while it waits **starts over** — the first run is dropped,
+  not queued. Not to be confused with the `{ "type": "wait", "frames": N }` gesture of a `--play` script.
+  See [Behavior](behavior-and-interactions.md#wait--a-handler-that-takes-its-time).
 - **`else` may open the line after the `}`** of its `if` (a comment in between is fine too). It used to
   be read as an assignment to a variable `else`, and the recovery ran the `else` body every time.
 - **The space between a keyword and its literal is NOT significant.** `send"win"`, `send "win"` and
@@ -228,6 +233,9 @@
 
 Inside an `object "Name" { … }`, besides `drag x, y` / `dragX` / `dragY`:
 
+(Options inside an interactor's `{ … }` go **one per line**; the `·` in the signatures below only separates
+them in the listing. And an object takes ONE interactor.)
+
 - **`turn <angle> around <x>,<y> [{ snap <deg> · enabled <expr> }]`**: pointer-driven
   rotation. Writes into `<angle>` the pivot→cursor direction **in radians** (like the `rotation` channel
   and `gesture.angle`), so `rotation = <angle>` wires directly. To work in **degrees**, use the twin
@@ -238,7 +246,7 @@ Inside an `object "Name" { … }`, besides `drag x, y` / `dragX` / `dragY`:
   of the named group), `<progress>` rises from 0 to 1 (monotone, never goes back down).
   Great for tracing a letter, a border, a constellation. (`tolerance` defaults to 24 px.)
   - ⚠️ **Without `step`, `<progress>` is where the finger PROJECTS, not what it walked** — a press three
-    pixels from the finish reports 1. That is a cursor: right for a slider, wrong for a writing drill.
+    pixels from the finish, with the slightest move, reports 0.99. That is a cursor: right for a slider, wrong for a writing drill.
     **`step <px>`** makes it a trace: the progress only grows through what the finger passes, by at most
     `step` px of arc length per frame. It must then be entered at an END (nothing else is within `step` of
     0), a leap ahead waits instead of counting, and the progress belongs to the OBJECT — lifting the finger
@@ -259,11 +267,12 @@ Inside an `object "Name" { … }`, besides `drag x, y` / `dragX` / `dragY`:
     pointer. The composite is cached: once the cells stop changing, a
     frame costs one blit.
   - **`brush` is the finger, `grain <px>` is the resolution** — a wide touch with a fine edge is
-    `brush 48` + `grain 12` (absent = the brush, i.e. as coarse as the finger). Keep the grain at or under
+    `brush 48` + `grain 12` (absent = the brush, i.e. as coarse as the finger). The cells of `cells <array>` are then `grain` wide:
+    `cols = ceil(width / grain)`. Keep the grain at or under
     the brush, or a touch can land between two cell centres and clear nothing.
   - **`cells <array>`** hands you that grid — **where** it was scratched, not only how much:
     `grille[i] = 1` once cell `i` is cleared, `i = row * cols + col` over the object's world bbox,
-    `cols = ceil(w / brush)`. One `each "Grain" as i { opacity = 1 - grille[i] }` then erases the veil
+    `cols = ceil(w / grain)` (the brush when there is no grain). One `each "Grain" as i { opacity = 1 - grille[i] }` then erases the veil
     under the finger. Declare the array at exactly `cols * rows` — `--check` states the number.
     See [Behavior](behavior-and-interactions.md#seeing-where-it-was-scratched-reveal--cells).
   - A `reveal` target is grabbable **over its whole zone**, whatever its content looks like — so a veil
@@ -289,19 +298,25 @@ Inside an `object "Name" { … }`, besides `drag x, y` / `dragX` / `dragY`:
 ## Feedback (reactions in one line)
 
 An object's channel expressions can read **its own interaction state**: `self.hovered`,
-`self.grabbed`, `self.pressed` (each `0`/`1`). So a hover-lift or a grab-squash is just an
-expression — no mirror variable, no handler:
+`self.grabbed`, `self.pressed`, `self.focused` (each `0`/`1`). So a hover-lift or a grab-squash is just an
+expression — no mirror variable:
 
 ```
 object "Button" {
   scaleX  = self.hovered ? 1.06 : 1
   opacity = self.hovered ? 0.85 : 1
   scaleY  = self.grabbed ? 0.94 : 1
+  when pressed { }
 }
 ```
 
-`self.hovered` tracks the pointer **handler-independently** (you do not need a `when enter/leave`),
-and composes with `self.x`/`self.y` etc. (same `self`).
+`self.hovered` needs no `when hovered` / `when unhovered` on the object, and composes with
+`self.x`/`self.y` etc. (same `self`). Two limits:
+
+- ⚠️ **`self.grabbed` is 1 only on an object that can be GRABBED**: one with a `when pressed` / `released` /
+  `dragged` / `held` handler or an interactor (`drag`, `turn`, …). A button that only has `when clicked`
+  never squashes — add `when pressed { }`, as above. `self.pressed` is the same flag under another name.
+- A program with **no handler and no interactor at all** tracks no pointer: nothing hovers.
 
 - **`feedback <tokens>` sugar** — the one-liner. Inside an `object` block,
   `feedback lift tilt dim shake(<expr>)` unfolds into the channel bindings above (auto-injecting
@@ -366,8 +381,8 @@ and composes with `self.x`/`self.y` etc. (same `self`).
   use `var`. (Avoid naming a `def` like a symbol parameter — collision.)
   A `def` whose value is a **quoted text** is inserted as written — the way to use the same path data
   (or a colour, a font name) several times: `def P = "M20 20 L280 180"`, then `path "$(P)" …` for the
-  trace guide, the ink, the halo. A `path` whose data yields nothing (an unresolved `$(…)`, a typo) is a
-  compile error, not an empty shape.
+  trace guide, the ink, the halo. A `path` whose data yields nothing (a typo), or still holds a `$(…)`
+  that no `def` replaced, is a compile error, not an empty shape.
 - **`at center` anchor**: positions an item at the canvas center. `at center` (both axes),
   `at center,540` (x centered, y = 540), `at 120,center` (x = 120, y centered). Sugar
   resolved at parse from `size` (re-serialized as coords, like `def`). Composes with `$()`.
@@ -493,7 +508,9 @@ and composes with `self.x`/`self.y` etc. (same `self`).
   `drag source→target` = the engine grabs `source` (at its RESOLVED position, expressions
   included) and releases it at the center of `target`; `tap target` = a click at the object's
   center; **`scratch target`** = the engine sweeps the `reveal` target's whole bbox for you
-  (boustrophedon at the brush spacing) so its coverage reaches ~1 — no more dozens of hand-typed
+  (boustrophedon at the brush spacing) so its coverage reaches ~1 (exactly 1 without `grain`; with a `grain` finer than the
+  brush the round brush leaves the corner cells — 0.97-0.99 on a large zone, less on a zone only two brushes
+  wide, so read the value rather than `expect` 1) — no more dozens of hand-typed
   `move`s; **`connect source→target`** = pulls a `link` wire from `source` and releases over
   `target`, resolving the target index. Unknown object → **hard error** (not a silent miss). The
   generator describes the INTENT; the engine guarantees the interaction.
@@ -504,16 +521,17 @@ and composes with `self.x`/`self.y` etc. (same `self`).
     { "type": "set",  "name": "unlocked", "value": 1 }, { "type": "wait", "frames": 60 }
   ]
   ```
-  (`set` drives a variable from the "host"; `wait` lets the simulation run N fixed 60 Hz
-  steps — required to "wait out" `every frame` physics, time does not advance on its own in
-  headless mode.)
+  (`set` drives a variable from the "host"; `wait` lets the simulation run N fixed 60 Hz steps. Each
+  press, move and release also takes ONE step, so `every frame` sees a drag — `--settle N` changes that
+  number, `--settle 0` is the instantaneous replay. Beyond those steps, time does not advance on its own.
+  A replay is seeded: `--seed N` picks another draw of `random()`.)
 - **`flatc --play … --trace`**: instead of the final JSON, a **human-readable log per
   gesture** — the emitted `send`s + the **variable diff** at each step. Step-by-step
   inspection to understand/debug a script (a headless debug-player):
   ```
-  drag Word1→Bin1   sends:[found]          vars{Word1_placed:undefined→1 Word1_ok:undefined→1}
+  drag Word1->Bin1  sends:[found=chat]       vars{Word1_placed:undefined→1 Word1_ok:undefined→1}
   wait 5
-  drag Word2→Bin2   sends:[found, win]     vars{Word2_placed:undefined→1 Word2_ok:undefined→1}
+  drag Word2->Bin2  sends:[found=dort, win]  vars{Word2_placed:undefined→1 Word2_ok:undefined→1}
   ```
 - **`expect` — self-verification in CI**: a gesture `{ "type": "expect", "sends": ["done"],
   "vars": { "score": 3 } }` in the script compares and makes **`flatc --play` exit ≠ 0** on

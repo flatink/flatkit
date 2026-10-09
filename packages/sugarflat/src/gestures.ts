@@ -265,7 +265,7 @@ function expandCompose(name: string, body: string, theme: Theme, ctx: GestureCon
     vars,
     layers,
     behavior,
-    meta: { keyword: 'compose', name, prompt, items: chips.map((c) => c.value), targets: [], objects: chips.map((_c, i) => `${p}C${i}`), doneVar, ...(sh ? { shuffle: true } : {}) },
+    meta: { keyword: 'compose', name, prompt, items: chips.map((c) => c.value), targets: [], objects: [...chips.map((_c, i) => `${p}C${i}`), ...(counter ? [`${p}Total`] : [])], doneVar, ...(sh ? { shuffle: true } : {}) },
   }
 }
 

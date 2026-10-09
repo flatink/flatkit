@@ -14,6 +14,24 @@ scene {
 
 Layers stack bottom-to-top. A `layer` takes `"name"` and options (`opacity <n>`, `locked`, `hidden`).
 
+Besides `mask layer` (below; `off` after its name disables the mask), a layer can be a **`guide layer`**:
+its path is not drawn, and the tweened containers of the layers nested in it travel along that path instead
+of going straight from one pose to the next. `orient` on a nested layer turns them to the tangent.
+
+```
+guide layer "Track" {
+  path "M10 10 C60 140 160 140 210 10" nofill stroke #000000 1
+  layer "c" orient {
+    group "Boat" at 10,10 { layer "x" { rect -8 -3 16 6 fill #ff0000 } }
+    cel 0 tween { pose "Boat" at 10,10 }
+    cel 60 { pose "Boat" at 210,10 }
+  }
+}
+```
+
+⚠️ The guide moves what is DRAWN. `Boat.x` / `Boat.y` read from a handler still give the straight-line
+position between the two poses. A **`folder layer`** only groups layers (`collapsed` is an editor hint).
+
 ## Shapes
 
 Sugar primitives (normalized to a `path` on save — no need to hand-compute Beziers):
@@ -21,11 +39,11 @@ Sugar primitives (normalized to a `path` on save — no need to hand-compute Bez
 ```
 circle  <cx> <cy> <r>
 ellipse <cx> <cy> <rx> <ry>
-rect    <x> <y> <w> <h>            # · <r> for uniform rounded corners · <rx> <ry> for distinct
-path    "M0 0 L10 0 L10 10 Z"      # raw SVG path data
-circle  100 100 40 as "Ring"       # name a shape (right after the geometry) → addressable, e.g. text `along "Ring"`
-path    "M0 0 L8 3 L15 9 …" smooth # free-hand material: rounded wherever the outline turns gently
-path    "M… Z M… Z" nonzero fill #461fbf # the SVG fill rule: contours of the same direction add up
+rect    <x> <y> <w> <h>            // · <r> for uniform rounded corners · <rx> <ry> for distinct
+path    "M0 0 L10 0 L10 10 Z"      // raw SVG path data
+circle  100 100 40 as "Ring"       // name a shape (right after the geometry) → addressable, e.g. text `along "Ring"`
+path    "M0 0 L8 3 L15 9 …" smooth // free-hand material: rounded wherever the outline turns gently
+path    "M… Z M… Z" nonzero fill #461fbf // the SVG fill rule: contours of the same direction add up
 ```
 
 A `path` means what its data says: `L`, `H` and `V` are **straight lines**, next to a curve or on their own
@@ -44,9 +62,9 @@ area follows. `flatc --check` warns about a filled path whose same-way contours 
 
 ```
 circle 0 0 20 fill #ff3366
-path "…" fill #000 stroke #ffffff 3 cap round join round       # stroke: <color> <width> [cap] [join] [miter n] [dash a,b] [fixed]
-path "…" nofill stroke #888 2                                   # outline only (a line, a thread)
-rect 0 0 40 40 fill #00aaff opacity 0.5                         # 0..1 (8-digit hex alpha also works)
+path "…" fill #000 stroke #ffffff 3 cap round join round       // stroke: <color> <width> [cap] [join] [miter n] [dash a,b] [fixed]
+path "…" nofill stroke #888 2                                   // outline only (a line, a thread)
+rect 0 0 40 40 fill #00aaff opacity 0.5                         // 0..1 (8-digit hex alpha also works)
 ```
 
 A stroke is drawn in the shape's own space, so it scales with its group — and a shape STRETCHED by
@@ -66,10 +84,12 @@ it is being computed, a polygon the learner deforms:
 var tx = fill(200, 0)
 var ty = fill(200, 0)
 var n = 0
+var px = [40, 120, 80]
+var py = [150, 150, 100]
 scene {
   layer "c" {
-    polyline tx ty count "n" nofill stroke #cc3333 3 cap round    # the first n points, as a line
-    polyline px py closed fill #3366cc                             # all the points, as a filled polygon
+    polyline tx ty count "n" nofill stroke #cc3333 3 cap round    // the first n points, as a line
+    polyline px py closed fill #3366cc                             // all the points, as a filled polygon
   }
 }
 every frame {
@@ -94,9 +114,9 @@ every frame {
 behind a finger, a signature that writes itself, a route that grows:
 
 ```
-path "…" nofill stroke #fff 18 cap round draw 0.35          # the first 35 % of the LINE's length
-path "…" nofill stroke #fff 18 cap round draw "progress"    # …driven by a variable, every frame
-path "…" nofill stroke #fff 18 draw "p" from "p - 0.15"     # a WINDOW: a comet trail chasing `p`
+path "…" nofill stroke #fff 18 cap round draw 0.35          // the first 35 % of the LINE's length
+path "…" nofill stroke #fff 18 cap round draw "progress"    // …driven by a variable, every frame
+path "…" nofill stroke #fff 18 draw "p" from "p - 0.15"     // a WINDOW: a comet trail chasing `p`
 ```
 
 - `draw <to>` = the end of the drawn window (`1` = whole, the default), `from <start>` its beginning (`0`
@@ -116,8 +136,8 @@ path "…" nofill stroke #fff 18 draw "p" from "p - 0.15"     # a WINDOW: a come
 ### Paints (gradients)
 
 ```
-fill linear(90, 0:#bdecff, 1:#2f8fe0)          # angle: 0 = →, 90 = ↓ ; stops are offset:color
-fill radial(0.5, 0.5, 0.5, 0:#fff, 1:#000)     # cx, cy, r (0..1), then stops
+fill linear(90, 0:#bdecff, 1:#2f8fe0)          // angle: 0 = →, 90 = ↓ ; stops are offset:color
+fill radial(0.5, 0.5, 0.5, 0:#fff, 1:#000)     // cx, cy, r (0..1), then stops
 ```
 
 A stop's color can be a symbol **`color` param** instead of a literal — so a gradient (a halo, a glow) is
@@ -126,7 +146,7 @@ alpha, since a param is a 6-digit hue:
 
 ```
 params { color teinte = #ffe9a8 }
-circle 0 0 60 fill radial(0.5, 0.5, 0.5, 0:teinte@0.8, 1:teinte@0)   # same hue, alpha fading 0.8 → 0
+circle 0 0 60 fill radial(0.5, 0.5, 0.5, 0:teinte@0.8, 1:teinte@0)   // same hue, alpha fading 0.8 → 0
 ```
 
 A gradient fades THROUGH the hue of its transparent stop, as any canvas gradient does: `0:#ffe9b000,
@@ -178,7 +198,7 @@ mask layer "Window" { circle 60 60 50 fill #fff  layer "c" { … } }  // arbitra
 
 ```
 text "Hello" font "sans-serif" size 24 align center line 1.2 color #ffffff box 200 40
-text "OUTLINE" font "sans-serif" size 64 color #ffd23f stroke #e23b3b 6 join round   # outlined text
+text "OUTLINE" font "sans-serif" size 64 color #ffd23f stroke #e23b3b 6 join round   // outlined text
 ```
 
 - `box <w> <h>` sets the text box; `align left|center|right`; `line` = line-height; `bold` / `italic`.
@@ -207,15 +227,16 @@ text "OUTLINE" font "sans-serif" size 64 color #ffd23f stroke #e23b3b 6 join rou
   space between thousands), and `text("…")` sends it that way too. Several values fill the slots in order:
   `text "{} sur {}" bind "found", "total"` (a single `bind` fills every `{}`).
 - **Stable id**: `text "…" as "myId"` lets behavior reference it via `text("myId")` (e.g. in a `send`
-  payload). Without `as`, the id is auto-generated and not referenceable.
+  payload). Without `as`, a text is addressed by what it shows (`text("Titre")`) — fine for a fixed label;
+  give it an `as` as soon as its content is bound, long, or likely to change.
 
 ### Text on a path
 
 Lay glyphs **along a curve** instead of a straight baseline — banners, badges, ribbons, dials:
 
 ```
-text "SURF CLUB" along "Banner" align center             # follow a NAMED shape's outline
-text "loop" along path "M0 80 C120 0 360 0 480 80"       # …or inline SVG path data
+text "SURF CLUB" along "Banner" align center             // follow a NAMED shape's outline
+text "loop" along path "M0 80 C120 0 360 0 480 80"       // …or inline SVG path data
 ```
 
 - **`along "<id>"`** follows a **named shape** (`circle`/`rect`/`ellipse`/`path … as "<id>"`). A *closed*
@@ -278,6 +299,10 @@ layout (stack with `repeat` + `$()`, see [factoring](behavior-and-interactions.m
 
 - `pivot <x>,<y>` — origin offset (the rotation/scale center).
 - `tint <color> <amount>` — Flash-style tint, `amount` 0..1. `<color>` may be a symbol `color` param (`tint teinte 0.4`), recolorable per instance.
+- `opacity <0..1>` — on a group / instance / text / image, fades the whole item (a shape takes its own).
+- `blend add|screen|multiply` — how the item is composited over what is behind it (`add` for glows and
+  light). On a group, instance, text or image — not on a bare shape: wrap the shape in a group.
+- `hitbox <w> <h>` — an explicit touch and drop rectangle, see [Drag & drop](behavior-and-interactions.md#drag--drop).
 - `nohit` — stays **drawn** but ignored by hit-testing (clicks pass through). On a group, applies to the
   whole subtree. Ideal for a decorative full-screen veil.
 

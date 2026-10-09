@@ -884,7 +884,8 @@ export function expandFeedback(src: string): string {
     const tokens: { t: string; arg?: string }[] = []
     const re = /shake\(\s*([^)]*?)\s*\)|([A-Za-z][\w-]*)/g
     let m: RegExpExecArray | null
-    while ((m = re.exec(rest))) tokens.push(m[1] !== undefined ? { t: 'shake', arg: m[1] } : { t: m[2] })
+    const words = rest.replace(/\/\/.*$/, '') // the comment is not part of the list: `feedback lift // dim later` is lift alone
+    while ((m = re.exec(words))) tokens.push(m[1] !== undefined ? { t: 'shake', arg: m[1] } : { t: m[2] })
     const has = (t: string) => tokens.some((x) => x.t === t)
     const lines: string[] = []
     if (has('lift')) lines.push('scaleX = lift(self.hovered)')
@@ -1910,9 +1911,12 @@ class FlatParser {
     // Data that yields NOTHING used to compile to an empty path, drawn as nothing, with `--check` passing:
     // an unresolved `$(name)`, an empty string. (Data that is only partly readable — a curve short of a
     // number — still draws what it can, as it always did: `--check` warns about it, real libraries hold some.)
-    if (!path.subpaths.length) {
+    // …and a `$(name)` left in the data is never path data, whatever its letters: `$(trace)` holds a `t`, a
+    // `c` and an `a`, read as commands, and compiled to a path of NaN with a mere "partly readable" warning.
+    const unresolved = /\$\(/.test(d)
+    if (!path.subpaths.length || unresolved) {
       this.p = at
-      const hint = /\$\(/.test(d) ? ' — `$(…)` was not replaced: is the `def` (or the parameter) it names declared?' : ''
+      const hint = unresolved ? ' — `$(…)` was not replaced: is the `def` (or the parameter) it names declared?' : ''
       this.fail(`path "${d.length > 40 ? d.slice(0, 40) + '…' : d}" holds no drawable data: SVG path data is expected, starting with a move (\`M x y …\`)${hint}`)
     }
     return path

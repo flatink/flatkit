@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import type { Asset } from '@flatkit/types'
 import { sameOriginAssetResolver } from './player'
 
@@ -34,6 +34,20 @@ describe('sameOriginAssetResolver', () => {
   it('rejects empty / non-string data', () => {
     expect(resolve(asset(''))).toBeNull()
     expect(resolve({ ...asset('x'), data: undefined as unknown as string })).toBeNull()
+  })
+
+  it('a RELATIVE base is the host page\'s own: resolved against `location` where there is one', () => {
+    // Without a page (Node) it resolves nothing, as before…
+    expect(sameOriginAssetResolver('/activities/42/')(asset('logo.png'))).toBeNull()
+    // …in a page it used to resolve nothing either — the example of the host guide, embedded assets included.
+    vi.stubGlobal('location', { href: 'https://host.example/app/page.html' })
+    try {
+      const r = sameOriginAssetResolver('/activities/42/')
+      expect(r(asset('fx.assets/pic.png'))).toBe('https://host.example/activities/42/fx.assets/pic.png')
+      expect(r(asset('data:image/png;base64,AAAA'))).toBe('data:image/png;base64,AAAA')
+      expect(r(asset('https://evil.example/x.png'))).toBeNull()
+      expect(r(asset('//evil.example/x.png'))).toBeNull()
+    } finally { vi.unstubAllGlobals() }
   })
 
   it('an invalid base URL disables the resolver entirely', () => {

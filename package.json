@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "pnpm -r build",
+    "flatc": "node packages/compiler/bin/flatc.mjs",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "lint": "eslint . --max-warnings 0",

@@ -119,7 +119,8 @@ const isEmbeddedData = (data: string | undefined): data is string => !!data && d
  */
 export function sameOriginAssetResolver(baseUrl: string): (asset: Asset) => string | null {
   let base: URL
-  try { base = new URL(baseUrl) } catch { return () => null }
+  // A relative base (`/activities/42/`) is the host's own page: resolved against it where there is one.
+  try { base = new URL(baseUrl, (globalThis as { location?: { href?: string } }).location?.href) } catch { return () => null }
   return (asset) => {
     const data = asset.data
     if (typeof data !== 'string' || !data) return null

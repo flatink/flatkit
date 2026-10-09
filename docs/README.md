@@ -19,7 +19,7 @@ scene {                     ← THE SCENE: what you see (shapes, text, images, g
 
 object "Star" {             ← THE BEHAVIOR: how it moves and reacts
   when clicked { score = score + 1 }
-  rotation = clock * 30
+  rotationDeg = clock * 30
 }
 ```
 

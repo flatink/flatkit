@@ -1,11 +1,12 @@
 # Editor integration — Text on a path (hand-off note for the editor side)
 
-> **Audience:** whoever works on the **FlatInk editor**, which consumes the **published**
-> `@flatkit/*` packages over npm (not the workspace). **Prerequisite:** bump to the `@flatkit/*` version
-> that ships text-on-path (the `curved-text` release — `pnpm update --latest @flatkit/player @flatkit/compiler`),
-> then this note tells you what the editor must add to *author* the feature.
+> **Status (2026-10):** the library side shipped in **0.15.0**, and the editor (`flatink/apps/editor`) has
+> had the authoring MVP since 2026-06: attach a text to a shape (auto-named), `side` / `start` / `spacing`
+> in the inspector. **Still open there:** the marquee and animated-spacing toggles (`startExpr`,
+> `spacingExpr`) and the inline `along path "<d>"` guide. The rest of this note is kept as the reference
+> for those; read "missing" below as "was missing when this was written".
 >
-> Full spec: [`rfc-text-on-path.md`](./rfc-text-on-path.md). User-facing DSL: [`scene-and-drawing.md`](./scene-and-drawing.md#text-on-a-path).
+> User-facing DSL: [`scene-and-drawing.md`](./scene-and-drawing.md#text-on-a-path).
 
 ## TL;DR
 

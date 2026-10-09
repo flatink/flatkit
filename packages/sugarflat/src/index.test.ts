@@ -470,6 +470,11 @@ describe('the gestures, played — flatink/flatink #55 #56 #58', async () => {
     expect(out).toMatch(/text "2 €"/)
     expect(out).toMatch(/text "50 c"/)
   })
+  it('compose: the counter\'s group is in `meta.objects` like every other id — nothing has to be guessed', () => {
+    const src = 'compose c {\n  total 2.5\n  chip 0.5 at 100,100\n  chip 2 at 300,100\n  counter at 400,300\n}\n'
+    expect(desugar(src).meta[0].objects).toEqual(['c_C0', 'c_C1', 'c_Total'])
+    expect(desugar(src.replace('  counter at 400,300\n', '')).meta[0].objects).toEqual(['c_C0', 'c_C1'])
+  })
   it('compose: `counter at x,y` shows the running total, which the theme draws (and BLANK does not)', () => {
     const src = 'compose c {\n  total 2.5\n  chip 0.5 at 100,100\n  chip 2 at 300,100\n  counter at 400,300\n}\n'
     const out = desugar(src).flatink

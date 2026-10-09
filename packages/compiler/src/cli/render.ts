@@ -10,9 +10,10 @@ import { FlatPlayer, type SendEvent } from '@flatkit/player'
 import { createReplayer, type Gesture, type Handlers, type Replayer } from '@flatkit/player/debug'
 import type { Doc, Item } from '@flatkit/types'
 import { isGroup, isInstance } from '@flatkit/engine/layers'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 export type RenderOpts = { frame?: number; vars?: Record<string, number>; scale?: number; steps?: number; params?: Record<string, string>; script?: Gesture[]; settle?: number }
 
@@ -104,6 +105,21 @@ export type Renderer = {
  * per process. `params` sets a SYMBOL's exposed params (a state name or a number) before the first
  * frame — the reason a consumer had to write its own harness to preview anything with a state.
  */
+/** What to say about the `skia-canvas` that was found. Version 4 is the one supported; 3 is npm's `latest`
+ *  tag, so a bare `pnpm add -D skia-canvas` installs it — and it renders, with half the picture transparent
+ *  behind a moved shape larger than the frame. Nothing said so. */
+export function skiaVersionWarning(version: string | undefined): string {
+  return version && Number.parseInt(version, 10) < 4
+    ? `skia-canvas ${version} found: flatc needs version 4 (\`pnpm add -D skia-canvas@next\`). Version 3 drops what lies behind a moved shape larger than the frame — the picture below may be wrong.`
+    : ''
+}
+let skiaWarned = false
+/** The installed `skia-canvas` version (its package.json is not an exported subpath: found beside its entry). */
+function skiaVersion(pkg: string): string | undefined {
+  try { return (JSON.parse(readFileSync(join(dirname(createRequire(import.meta.url).resolve(pkg)), '..', 'package.json'), 'utf8')) as { version?: string }).version }
+  catch { return undefined }
+}
+
 export async function createRenderer(doc: Doc, opts: { scale?: number; params?: Record<string, string>; interactive?: boolean; settle?: number } = {}): Promise<Renderer> {
   // Non-literal specifier: tsc does not resolve it, so skia-canvas is not a build dependency.
   const skiaPkg: string = 'skia-canvas'
@@ -111,13 +127,15 @@ export async function createRenderer(doc: Doc, opts: { scale?: number; params?: 
   try { skia = (await import(skiaPkg)) as unknown as SkiaCanvas }
   catch {
     throw new Error(
-      'skia-canvas is required for rendering. Install it as a dev dependency: `npm i -D skia-canvas` ' +
+      'skia-canvas 4 is required for rendering. Install it as a dev dependency: `npm i -D skia-canvas@next` ' +
       '(pnpm users: also allow its build script with `pnpm approve-builds` or add "skia-canvas" to ' +
       'pnpm.onlyBuiltDependencies, then reinstall). If the native binary is still missing afterwards, ' +
       'run `node node_modules/skia-canvas/lib/prebuild.mjs download`.',
     )
   }
   const { Canvas, loadImage, Path2D, FontLibrary, DOMMatrix } = skia
+  const old = skiaWarned ? '' : skiaVersionWarning(skiaVersion(skiaPkg))
+  if (old) { skiaWarned = true; process.stderr.write(`flatc: warning: ${old}\n`) }
   const scale = opts.scale && opts.scale > 0 ? opts.scale : 2
   const W = doc.width, H = doc.height
   // A picture is width x height x 4 bytes, several times over (the canvas, filter layers, the PNG): a

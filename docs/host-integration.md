@@ -20,6 +20,10 @@ const player = new FlatPlayer(canvas, doc, {
 })
 ```
 
+No bundler? `@flatkit/player/browser` is the same API as ONE self-contained ES module (engine inlined, no
+bare imports): serve `node_modules/@flatkit/player/dist/browser.js` and import it from a
+`<script type="module">`.
+
 | Option | Default | What it does |
 |---|---|---|
 | `autoplay` | `false` | runs the player on mount; a `pause` in `when loaded` still holds the playhead |
@@ -27,7 +31,8 @@ const player = new FlatPlayer(canvas, doc, {
 | `padding` | `0` | margin around the page, in CSS px |
 | `audio` | `true` | `false` mutes `sound "…"` and audio tracks. Sounds are decoded when the document loads, so the first one plays on time. A browser keeps the sound locked until the user touches the page: with `autoplay`, the clips start at the first click, key or tap anywhere on it, in step with the playhead — nothing to wire on the host side |
 | `input` | `true` | `false` = non-interactive preview: it animates but ignores pointer **and keyboard** |
-| `render` | `true` | `false` = headless (logic + `send`s only, no Canvas API needed) |
+| `render` | `true` | `false` = headless: logic and `send`s only, nothing is drawn. The canvas object must still hand out a 2D context (a stub will do); for a replay in Node use `playHeadless` from `@flatkit/player/debug` |
+| `image` | browser decoding | `(assetId) => CanvasImageSource \| null`: an image provider, for a host that decodes the images itself (rendering in Node) |
 | `resolveAsset` | embedded only | maps an asset to a URL. Default: embedded `data:` URIs only — see [Security](#security) |
 | `onEvent` | — | called on every `send` |
 | `focusRing` | `true` | the ring drawn around the object that holds the keyboard focus (`focusable`). `false` = none, or `{ color, width }` |
@@ -138,6 +143,9 @@ const saved = player.allVars()                 // …persist it however you like
 player.load({ ...doc, variables: saved })      // …and the activity resumes
 ```
 
+`when loaded` runs again after `load()`, on top of the variables you seeded: a scene meant to be restored
+must not reset its state there unconditionally (declare the starting values on the `var` lines instead).
+
 The gestures that keep state **beside** the variables re-seat themselves on what you seed, so a restored
 scene is coherent and not merely correct-looking:
 
@@ -159,7 +167,40 @@ the scene: a script `pause` holds it while the scene lives on, and the host's `p
 it — the scene's own `play` (or `go to … and play`) does. `isPlaying` is true when the timeline moves. `load(doc)` swaps the document in
 place, and `render()` forces a repaint (useful after a late font settles).
 
+What each call does, precisely:
+
+- `seek(frame)` clamps to `0…duration`, does not run the `at frame` script of the frame it lands on, and
+  snaps springs to their target.
+- `stop()` is `pause()` + `seek(0)`, and it releases a playhead the scene was holding.
+- `toggle()` follows the PLAYER (running or frozen), not `isPlaying`: while a script `pause` holds the
+  playhead, `isPlaying` is false and `toggle()` still freezes the whole scene.
+- `load(doc)` keeps the playhead where it was and the player running or frozen as it was; it resets the
+  variables to the new document's, releases a held playhead, restarts a seeded `random()` and runs
+  `when loaded` again.
+- **Handlers that `wait`**: `pause()` freezes them with everything else and `play()` lets them go on;
+  `seek()`, `stop()` and `load()` drop them — what was waiting belonged to where the playhead was. A
+  script's own `pause` and `go to` do neither.
+
+Sound: `player.setAudio(false)` mutes at once (`true` resumes in step with the playhead), and
+`player.audioEnabled` reads it. `player.warmHitCache()` computes the hit-test geometry now, for a host that
+prefers to pay it behind its own loading state (the player otherwise does it when the browser idles).
+
 ## Keyboard
+
+The **keyboard** listeners are attached to the **window** (a scene reacts immediately, with no click-to-focus step),
+but the player is a good citizen about it — you should not have to do anything:
+
+- **It never steals what you are typing.** A keystroke headed to an `<input>`, `<textarea>`, `<select>`
+  or any `contenteditable` element of the host page is ignored by the scene.
+- **It only consumes the keys the scene actually declares.** The player scans the document for
+  `keys.<Name>` and calls `preventDefault()` on those alone: an activity bound to the arrows stops
+  scrolling the page under it, while every other key keeps its native behavior. Browser/OS shortcuts
+  (any `Ctrl`/`Cmd`/`Alt` combination), `Tab` and the function keys are never consumed, whatever the
+  scene declares.
+- **A key never stays stuck.** Losing the window (alt-tab, an iframe taking the focus) releases the
+  held keys, even though the browser delivers no `keyup` in that case.
+
+`input: false` remains the total opt-out: no pointer and no keyboard listener at all.
 
 `keys.<Key>` in an expression is `1` while the key is held. The name is the browser's
 `KeyboardEvent.key` value — `keys.ArrowRight`, `keys.a`, `keys.Escape` — plus one alias: the space bar
@@ -187,20 +228,7 @@ focus, so it never interferes with the rest of your page.
 Each pointer has its own gesture: two fingers can press, hold and drag two objects at once, and lifting
 one releases only what it was holding. `mouse.x` / `mouse.y` follow the pointer that moved last.
 
-The listeners are attached to the **window** (a scene reacts immediately, with no click-to-focus step),
-but the player is a good citizen about it — you should not have to do anything:
-
-- **It never steals what you are typing.** A keystroke headed to an `<input>`, `<textarea>`, `<select>`
-  or any `contenteditable` element of the host page is ignored by the scene.
-- **It only consumes the keys the scene actually declares.** The player scans the document for
-  `keys.<Name>` and calls `preventDefault()` on those alone: an activity bound to the arrows stops
-  scrolling the page under it, while every other key keeps its native behavior. Browser/OS shortcuts
-  (any `Ctrl`/`Cmd`/`Alt` combination), `Tab` and the function keys are never consumed, whatever the
-  scene declares.
-- **A key never stays stuck.** Losing the window (alt-tab, an iframe taking the focus) releases the
-  held keys, even though the browser delivers no `keyup` in that case.
-
-`input: false` remains the total opt-out: no pointer and no keyboard listener at all.
+Pointer and wheel listeners are attached to the canvas itself.
 
 **On-screen controls.** There is no keyboard on a phone, so a key can also be driven programmatically —
 wire your own D-pad to `setKey`, and the scene cannot tell the difference:
@@ -233,6 +261,10 @@ the *host* picks the origin:
 import { FlatPlayer, sameOriginAssetResolver } from '@flatkit/player'
 new FlatPlayer(canvas, doc, { resolveAsset: sameOriginAssetResolver('/activities/42/') })
 ```
+
+The base is the folder the assets live in: an absolute URL, or a path of your own page (resolved against
+`location`; before 0.48.1 a relative base resolved nothing — pass `new URL('/activities/42/', location.href).href`
+on an older player). In Node there is no page: give an absolute URL.
 
 Read [SECURITY.md](../SECURITY.md) for the full threat model.
 

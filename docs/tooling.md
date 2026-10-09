@@ -1,7 +1,7 @@
 # Tooling — the `flatc` CLI
 
 `flatc` compiles `.flatink` text into a single `.flatpack`, and helps you **see**, **test**, and
-**ship** scenes. Install with `pnpm add -D @flatkit/compiler` (or `pnpm flatc …` in this repo).
+**ship** scenes. Install with `pnpm add -D @flatkit/compiler` (or `pnpm flatc …` in this repo, which runs it from source).
 `flatc --help` lists everything.
 
 ## Files
@@ -18,6 +18,17 @@ flatc game.flatink hero.flat -o game.flatpack
 
 `.flat` libs in the program's folder are discovered automatically; media declared by
 `asset "id" "path" kind` are embedded as `data:` URIs.
+
+Two rules about symbol names: a name declared twice in one library, or twice in the program, is a compile
+**error** that gives the line of the first; the same name declared by two libraries is a **warning** — the
+last library read is the one instanced, and with folder auto-discovery "last" is a matter of file names.
+No warning when the program declares that name itself: its own symbol wins, on purpose.
+
+**Packages.** `use "name"` resolves first to an embedded stdlib package (`collision`, `easing`, `gesture`,
+`feedback`: referenced in the pack, resolved by the player), then to a local file next to the program —
+`name.flatink` (its functions) and/or `name.flat` (its symbols) — which `flatc` inlines into the
+`.flatpack`. A name that is neither is an error on its `use` line. A package may not leave the program's
+folder.
 
 > **The extension decides how a file is read**, so it decides what `--check` verifies. A `.flat` is read
 > as a bag of symbols: a whole *program* saved under that name has no symbols in it, so `--check` used to
@@ -53,22 +64,36 @@ flatc: --fix: 2 repair(s) applied to game.flatink · errors 4 → 0
 flatc: check passed ✓
 ```
 
-Four slips are repaired today, all of them a missing separator: `at 12 -16` (the comma), `#` used as a
-comment (`//`, and only when the rest of the line holds no brace — otherwise it would comment out the
-closing one), two statements on one line, and a run-on interactor block. Anything needing a DECISION — an
+Five slips are repaired today: `at 12 -16` (the comma), `#` used as a comment in the header or the scene
+(`//`, and only when the rest of the line holds no brace — otherwise it would comment out the closing one;
+a `#` line in the behavior half is reported, not repaired), two statements on one line, a run-on interactor
+block, and `repeat 3 {` (the missing `times`). Anything needing a DECISION — an
 unknown event name, a `when <condition>`, a binding at the program level that must name its object — is
 reported and left alone.
 
 **From code**, the same repairs without a subprocess — this is the point of carrying them:
 
 ```ts
-import { checkProgram, repairLoop } from '@flatkit/compiler'
+import { checkProgram, applyFixes, repairLoop } from '@flatkit/compiler'
 
-const { text, applied } = repairLoop(srcFromAnLLM, checkProgram(srcFromAnLLM).diagnostics,
-                                     (candidate) => checkProgram(candidate).diagnostics)
+let text = srcFromAnLLM
+// 1. A source the parser REJECTS shows one error at a time (`doc: null`): repair those first, with no
+//    "the count must drop" rule — the count legitimately rises once the source parses.
+for (let pass = 0; pass < 10; pass++) {
+  const c = checkProgram(text)
+  if (c.doc !== null) break
+  const step = applyFixes(text, c.diagnostics)
+  if (!step.applied) break
+  text = step.text
+}
+// 2. Then the loop proper: it keeps a pass only if the error count strictly drops.
+;({ text } = repairLoop(text, checkProgram(text).diagnostics, (candidate) => checkProgram(candidate).diagnostics))
 const after = checkProgram(text)          // ALWAYS re-check: the loop never claims the result is valid
 if (!after.ok) regenerate(after.report)   // only now does it cost a model round-trip
 ```
+
+`repairLoop` alone leaves a source that does not parse untouched whenever its first repair unmasks other
+errors; step 1 is what `flatc --fix` does before it.
 
 `repairLoop` is the iteration, as a pure function: it applies, re-checks, and keeps a pass only if the
 error count strictly drops — stopping when nothing more applies. Reach for `applyFixes` alone if you want
@@ -152,6 +177,10 @@ knowing: `flatc` reads a FILE and auto-discovers the `.flat` libs beside it, `ch
 STRING and only the `assetSrcs` you hand it. Two different inputs, two legitimate verdicts. If the two ever
 disagree, compare what each was actually given before suspecting the pass.
 
+`assetNames` (same order as `assetSrcs`) gives each library the name a two-libraries warning calls it by;
+without it they are `library 1`, `library 2`. The result carries `ok`, `errors`, `warnings`, `report` (the
+text `flatc` prints), `doc`, and `diagnostics` — each `{ scope, line, col, severity, message, fix? }`.
+
 It also flags the three **silent drops of a cel layer** (such a layer draws only the current cel's
 `matter` and the containers that cel poses): a bare shape left in the layer, a `pose "X"` naming no roster
 item, and a roster item no cel ever poses. Each renders an empty frame with no other signal — see
@@ -159,8 +188,10 @@ item, and a roster item no cel ever poses. Each renders an empty frame with no o
 
 ## See what you draw — `--render`
 
-Render a PNG (skia backend, faithful to the browser). Needs the optional `skia-canvas` dep
-(`npm i -D skia-canvas`).
+Render a PNG (skia backend, faithful to the browser). Needs the optional `skia-canvas` peer dependency,
+**version 4**: `pnpm add -D skia-canvas@next` (or `npm i -D skia-canvas@next`). ⚠️ A bare
+`pnpm add -D skia-canvas` installs 3.x, npm's `latest` tag — `flatc` then renders with a warning on stderr.
+pnpm users: allow its build script (`pnpm approve-builds`).
 
 `skia-canvas` **4** (from `4.0.0-rc7`) is required. Version 3 is no longer accepted: it drops what lies
 behind a shape larger than the frame once that shape is moved by its group (half the picture comes out
@@ -242,6 +273,9 @@ Run a scene **without a canvas**, replay a gesture script, and print `{ sends, v
 flatc <file> --play --script gestures.json [--trace] [--settle N]
 ```
 
+`<file>` is a `.flatink` (compiled on the fly, with its libraries) or an already compiled `.flatpack`.
+`--play` does not lint: run `--check` first — a program with errors is replayed as far as it compiled.
+
 **Prefer semantic gestures** (by object NAME — robust, the engine resolves coordinates):
 
 ```json
@@ -260,6 +294,12 @@ flatc <file> --play --script gestures.json [--trace] [--settle N]
 - `drag` / `tap` / `scratch` (sweeps a `reveal` zone) / `connect` (pulls a `link` wire) — by name.
   `tap` also takes a point instead of a name — `{ "type": "tap", "x": 120, "y": 80 }` — for a rail or
   an area that has no name.
+- **`wheel`** scrolls by `dy` px (`mouse.wheel`), then runs `frames` steps — default `1` — so `every frame`
+  integrates it: `{ "type": "wheel", "dy": 50 }`.
+- Every pointer gesture takes an optional **`"id"`** (the pointer id, default `1`): two low-level
+  sequences with different ids are two fingers.
+- A handler's `wait <seconds>` elapses in simulation steps, like everything else: `wait 0.5` is 30 steps,
+  counting the settle steps of the gesture that triggered it.
 - Audio is off in `--play`: a `sound` action is a silent no-op, so a program is replayed as written.
 - `random()` is seeded in `--play` (seed `1`), so a replay says the same thing twice and an `expect` can
   assert on a draw. `--seed N` picks another one.
@@ -274,10 +314,14 @@ flatc <file> --play --script gestures.json [--trace] [--settle N]
   its sub-moves). A script that already paces itself with `wait` gestures gets one more frame per event:
   drop the `wait`, or keep the script as it is with `--settle 0`. A script that `expect`s a value which
   decays every frame (a feedback pulse read right after the tap) needs `"settle": 0` on that tap.
-- **`turn`** turns a `turn`/`turnDeg` target **to** `angle`: the value the gesture ENDS at, wherever the
-  press was — not a rotation added to the current one. Degrees for `turnDeg`, radians for `turn`; `0` is
-  to the right of the pivot, positive is clockwise on screen. It is swept in sub-steps, so several turns
-  land (`"angle": 540`). The press goes to the object's position, then to the centre of its drawn box (a
+- **`turn`** sweeps the pointer around the pivot of a `turn`/`turnDeg` target and releases it at `angle` —
+  the direction the gesture ENDS at, wherever the press was, not a rotation added to the current one.
+  Degrees for `turnDeg`, radians for `turn`; `0` is to the right of the pivot, positive is clockwise on
+  screen. The interactor's variable holds that direction, wrapped to (-180, 180] degrees (or (-π, π]):
+  `"angle": 190` leaves `-170`, `"angle": 540` leaves `180`. The sweep is made of sub-steps, so a scene
+  that accumulates the turns itself in `every frame` sees all of them. The value comes from pointer
+  coordinates — `"angle": 120` may read `120.00000000000001`, and `expect` compares exactly: assert on a
+  rounded variable, or on a `snap`ped dial. The press goes to the object's position, then to the centre of its drawn box (a
   hand drawn *from* its pivot has its origin on the edge of its shape). **`"from": [x, y]`** names the
   press point — the way to pick one of two hands overlapping at noon. A press that does not grab the
   target is **reported** — a `warnings` entry in the JSON, a `flatc: warning:` line on stderr — naming
@@ -346,8 +390,9 @@ inside the timeline hooks — so it sees what a pattern over the source cannot:
   rest of the program defines, and the event fires.
 
 Symmetrically, it does not fire on the word `send` sitting in a comment or inside a string a text draws —
-which a pattern would reject. `manifestVars` and `docToManifest` answer the same kind of question for the
-variables a program reads and the contract its objects carry.
+which a pattern would reject. `manifestObjects` (each named object with its contract: the events it handles, the
+channels driven, the variables read) and `docToManifest` (the whole map as text, variables included)
+answer the same kind of question for the rest of the program.
 
 ## Teaching the language to a model
 
@@ -380,7 +425,7 @@ events: correct, completed, incorrect
 ```
 
 Longer, hand-written prompts (a full reference plus one file per role — asset creator, motion designer,
-coder) ship with the package under `prompts/`; see [its README](../packages/compiler/prompts/README.md).
+coder) ship with the package under `prompts/`; see [its README](https://github.com/flatink/flatkit/blob/main/packages/compiler/prompts/README.md).
 
 ## See also
 

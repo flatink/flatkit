@@ -107,7 +107,7 @@ Two ways to avoid re-typing an unchanged container:
 
 ```
 cel 0  tween { pose "Base" at 0,0   pose "Ring" scale 1 }
-cel 30 hold tween { pose "Ring" scale 4 }   # Base carried automatically
+cel 30 hold tween { pose "Ring" scale 4 }   // Base carried automatically
 cel 60 hold       { pose "Ring" scale 1 }
 ```
 
@@ -185,8 +185,10 @@ the work:
 
 - **`hold` on every cel after the first.** A cel is a full snapshot, so a cel that does not pose the
   title makes the title vanish. `hold` carries forward everything the cel does not mention — which for a
-  staggered entrance means *every* cel but the first. Forget it and elements disappear mid-run;
-  `--check` reports it (see [presence across cels](#presence-across-cels--a-cel-is-a-full-snapshot)).
+  staggered entrance means *every* cel but the first. Forget it and elements disappear mid-run.
+  `--check` catches the blink — a container posed, absent on a later cel, then posed again — but not one
+  that is dropped and never comes back: that is how an exit is written, so it stays silent (see
+  [presence across cels](#presence-across-cels--a-cel-is-a-full-snapshot)).
 - **Frames may be fractional.** A deck thinks in seconds: `cel 28.8` is 1.2 s at 24 fps.
 - **Keyframes and expressions COMPOSE.** The cels drive `Sub`'s position and opacity; the `dy` binding
   adds an offset on top of whatever the keyframe resolved. Keyframes for the choreography, expressions
@@ -204,8 +206,11 @@ Instead of keyframes you can bind a channel to an expression on the container it
 group "Fan" pivot 0,0 expr rotation "turns(time)" { … }   ← one turn per second
 ```
 
-- The animatable channels are `x`, `y`, `scaleX`, `scaleY`, `rotation`, `opacity`.
-- **`rotation` is in RADIANS** (like `sin`/`cos`/`atan2`). Use the helpers to stay in degrees:
+- The animatable channels are `x`, `y`, `scaleX`, `scaleY`, `rotation`, `opacity`, plus the additive
+  offsets `dx` / `dy` (`pos = at + (dx, dy)`: they add to what the keyframes or `at` resolved, instead of
+  replacing it).
+- **`rotation` is in RADIANS** (like `sin`/`cos`/`atan2`); `rotationDeg` is the same channel in degrees
+  (`expr rotationDeg "45"`). Or use the helpers:
   - `rad(deg)` → radians, e.g. `expr rotation "rad(45)"`
   - `turns(n)` → `n` full turns in radians, e.g. `expr rotation "turns(time)"` or `"turns(time * 0.5)"`
   - `deg(rad)` → the inverse, for readouts.
@@ -218,8 +223,8 @@ per-instance state that **integrates** toward a target each frame — so an asse
 the asset**, with no scene code:
 
 ```
-group "Suspente" spring rotation "crochetX" stiffness 0.08 damping 0.86 { … }   # cable swings, then settles
-group "Aiguille" smooth rotationDeg "valeur * 270" k 0.18 { … }                 # needle eases to its value
+group "Suspente" spring rotation "crochetX" stiffness 0.08 damping 0.86 { … }   // cable swings, then settles
+group "Aiguille" smooth rotationDeg "valeur * 270" k 0.18 { … }                 // needle eases to its value
 ```
 
 - `smooth <channel> "<target>" k <0..1>` — 1st-order lag: each step `value += (target − value) * k`. Small
@@ -270,17 +275,19 @@ The timeline loops over `[0, durationFrames)`. An `instance` of a symbol chooses
 advances** (Flash's symbol-instance models), written after the instance's attributes:
 
 ```
-instance "Walk" as "legs"                # synced (default)
-instance "Walk" as "legs" loop           # independent (MovieClip)
-instance "Splash" as "fx" once           # play once, then hold the last frame
+instance "Walk" as "legs"                // synced (default)
+instance "Walk" as "legs" loop           // independent (MovieClip)
+instance "Splash" as "fx" once           // play once, then hold the last frame
 ```
 
 | mode | clock | behavior |
 |---|---|---|
 | *(default)* / `synced` | the parent's frame | **Graphic symbol**: scrubbed and *truncated* by the parent — if an ancestor's timeline is shorter than (or not a multiple of) the sub-loop, it snaps mid-cycle. Best for lip-sync, deterministic scrub. |
-| `loop` (`independent`) | the runtime's monotone clock | **MovieClip**: loops on its *own* duration, immune to any ancestor's loop length. Use for state-loops and idles that must keep their phase across the parent's wrap. |
+| `loop` | the runtime's monotone clock | **MovieClip**: loops on its *own* duration, immune to any ancestor's loop length. Use for state-loops and idles that must keep their phase across the parent's wrap. |
 | `once` | the monotone clock, clamped | plays through **once**, then **holds** the last frame — a one-shot (a splash, an explosion, a pose that stays). |
-| `singleFrame` | — | frozen on a fixed frame. |
+
+(In the model `loop` is called `independent`; the word to write is `loop`. The model also has a
+`singleFrame` mode, frozen on a fixed frame, which the editor sets: the text format has no word for it.)
 
 A `loop`/`once` instance runs on the global heartbeat, so it never needs its parent padded to a common
 multiple ("LCM") of its sub-loops. In the **editor** it shows frame 0 (MovieClip-style authoring); it plays
@@ -418,7 +425,7 @@ clipped**. Use `--bbox frame0` for the old frame-0-only measure, and `--pad N` t
 
 ```
 flatc --preview Boat.flat --render -o boat.png            # union bbox (default) — full motion fits
-flatc --preview Boat.flat --bbox frame0 --pad 40 -o b.png # frame-0 bounds + 40px margin
+flatc --preview Boat.flat --render --bbox frame0 --pad 40 -o b.png # frame-0 bounds + 40px margin
 ```
 
 See also: [Tooling](tooling.md) for the full `flatc` reference, and

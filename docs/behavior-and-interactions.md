@@ -5,13 +5,19 @@ Everything after the `scene { … }` block is behavior. It attaches to named sce
 
 ```
 var score = 0
+var won = 0
 
 object "Coin" {
   when clicked { score = score + 1 }     // an EVENT handler (actions)
   rotation = clock * 90                   // a CHANNEL binding (expression, every frame)
 }
 
-every frame { if (score >= 10) { send "win" } }
+every frame {
+  if (score >= 10 && won == 0) {          // guarded: `every frame` runs 60 times a second
+    won = 1
+    send "win"
+  }
+}
 ```
 
 ## Events
@@ -56,19 +62,21 @@ one they do nothing, and `--check` says so.
 In a handler body, one action per line:
 
 ```
-play  ·  pause                          # timeline control
+play  ·  pause                          // timeline control
 go to frame <n> [and play|and pause]
 go to "<label>" [and play|and pause]
-<name> = <expr>                          # set a variable (the `set` keyword is optional)
-<arr>[<expr>] = <expr>                   # indexed assignment (nested indices ok: occ[sl[i]] = 0)
+<name> = <expr>                          // set a variable (the `set` keyword is optional)
+<arr>[<expr>] = <expr>                   // indexed assignment (nested indices ok: occ[sl[i]] = 0)
 if <cond> { … } [else if <cond> { … }] [else { … }]
-repeat <n> times { … }                   # runtime loop (bounded)
-repeat i from <a> to <b> { … }           # runtime range loop (`i` is the loop's own: gone, or back to its value, after it)
-<fn>(<args>)                             # call a function
-send "<event>" [, <payload>]             # emit an event to the host (see below)
-sound "<assetId>"                        # one-shot audio
-wait <seconds>                           # suspend THIS handler, then go on (see below)
-wait until <cond>                        # …until the condition is true
+repeat <n> times { … }                   // runtime loop (bounded)
+repeat i from <a> to <b> { … }           // runtime range loop (`i` is the loop's own: gone, or back to its value, after it)
+<fn>(<args>)                             // call a function
+send "<event>" [, <payload>]             // emit an event to the host (see below)
+<arr> = fill(<n>, <v>)                   // replace a whole array (see Variables)
+<Instance>.<param> = <value>             // set an instance's param or state (see animating-symbols.md)
+sound "<assetId>"                        // one-shot audio
+wait <seconds>                           // suspend THIS handler, then go on (see below)
+wait until <cond>                        // …until the condition is true
 ```
 
 `pause` holds the **playhead** only, like Flash's `stop()`: `every frame`, `clock`, springs and handlers go
@@ -119,16 +127,19 @@ No flag, no counter in `every frame`. The rules:
 - The host's `pause()` freezes waiting handlers with everything else; a script's `pause` (the playhead
   only) does not. The host's `seek()` and `load()` drop them; a script's own `go to` keeps them.
 - `self` still names the handler's object after a pause, read as it is by then.
+- At most **256** handlers wait at once; past that the one that has waited longest is dropped and its end
+  never runs (`--check` warns when a program declares more). Handlers resumed in a step share that step's
+  action budget.
 
 ### `send` — talking to the host
 
 `send` is the one-way channel from the scene to the page that embeds it. Four payload forms:
 
 ```
-send "win"                               # bare — just the event
-send "score", lives * 100                # a NUMBER (any expression)
-send "answer", text("txtCard")           # the TEXT a text item shows (a `bind` one: its displayed value)
-send "save", { x = px, y = py, doors }   # a RECORD: named numbers (a state patch)
+send "win"                               // bare — just the event
+send "score", lives * 100                // a NUMBER (any expression)
+send "answer", text("txtCard")           // the TEXT a text item shows (a `bind` one: its displayed value)
+send "save", { x = px, y = py, doors }   // a RECORD: named numbers (a state patch)
 ```
 
 In a record, `{ doors }` is shorthand for `{ doors = doors }` — handy when the field and the variable
@@ -142,9 +153,9 @@ for the record. Nothing comes back: `send` is fire-and-forget and never blocks t
 ## Variables
 
 ```
-var score = 0                # scalar (declared at the top of the file, Layer B state)
-var slots = [0, 0, 0]        # array literal
-var seen = fill(8, 0)        # array of 8 zeros
+var score = 0                // scalar (declared at the top of the file, Layer B state)
+var slots = [0, 0, 0]        // array literal
+var seen = fill(8, 0)        // array of 8 zeros
 ```
 
 Read/write them in expressions and actions. **`fill(n, v)` also works as an assignment** —
@@ -205,10 +216,11 @@ object "Piece" {
   ```
   `confine to <Zone>` clamps to a named item, `snap <grid>` snaps in pixels, `enabled <expr>` is active only while the expression is not 0 (a dynamic lock — no ternary needed).
 - ⚠️ **`enabled` gates the GESTURE, not the handlers.** Once it is off the object stops being draggable, but
-  `when pressed` / `when released` / `when clicked` **still fire** on it. Guard the handler body yourself
-  (`when released { if done == 0 { … } }`) whenever it must run only while the gesture is live. (A `link`'s
-  target index is the exception: it resolves to `0` — "no target reached" — on a gated-off release, so it
-  can never hand you the previous gesture's answer.)
+  `when pressed` / `when dragged` / `when released` / `when clicked` **still fire** on it; `when dropped on`
+  does not (nothing was carried). Guard the handler body yourself (`when released { if done == 0 { … } }`)
+  whenever it must run only while the gesture is live. (A `link`'s target index is the exception: on a
+  gated-off release of an object that has a `when pressed` / `released` handler it is written `0` — "no
+  target reached" — so it can never hand you the previous gesture's answer.)
 - **Drop zones**: by default the object's **center** is tested against the zone; `at pointer` tests the
   pointer instead. Define an explicit rectangle with `group "Zone" … hitbox <w> <h> { … }` — it is also
   where the object is touched (click, press, drag, hover) when nothing drawn inside it is hit first.
@@ -217,14 +229,16 @@ object "Piece" {
 
 ## Interactors
 
-Higher-level pointer behaviors (each writes into your variables; all accept `{ enabled <expr> }`):
+Higher-level pointer behaviors (each writes into your variables; all accept `{ enabled <expr> }`). An
+object takes **one** interactor (`drag` included): two on the same object is a `--check` error — split the
+gesture across two objects. Inside the `{ … }` block, **one option per line**.
 
 ```
-turn    <angle> around <x>,<y> [{ snap <deg> }]    # dial / clock hand → angle in RADIANS → rotation = angle
-turnDeg <angle> around <x>,<y> [{ snap <deg> }]    # …in DEGREES → rotationDeg = angle  (rotationDeg = sugar for rotation = rad(…))
-trace <progress> along <Group> [{ tolerance <px> · step <px> · both ends · point <x>,<y> }]  # follow a path → progress 0..1 (monotone)
-reveal <progress> [{ brush <px> · grain <px> · erase · cells <array> }]  # scratch/wipe the grabbed area → fraction 0..1 (cumulative across grabs)
-link  <endX>, <endY>, <target> to <Group>          # pull a thread → end follows the pointer; <target> = hit index 1..n on release (0 = none)
+turn    <angle> around <x>,<y> [{ snap <deg> }]    // dial / clock hand → angle in RADIANS → rotation = angle
+turnDeg <angle> around <x>,<y> [{ snap <deg> }]    // …in DEGREES → rotationDeg = angle  (rotationDeg = sugar for rotation = rad(…))
+trace <progress> along <Group> [{ tolerance <px> · step <px> · both ends · point <x>,<y> }]  // follow a path → progress 0..1 (monotone)
+reveal <progress> [{ brush <px> · grain <px> · erase · cells <array> }]  // scratch/wipe the grabbed area → fraction 0..1 (cumulative across grabs)
+link  <endX>, <endY>, <target> to <Group>          // pull a thread → end follows the pointer; <target> = hit index 1..n on release (0 = none)
 ```
 
 Each output also accepts an **array element** (`drag hx[i], hy[i]`, `reveal seen[2]`) — the natural form
@@ -240,10 +254,10 @@ actually passes, by at most `step` px of arc length between two frames:
 ```
 object "Route" {
   trace progress along Route {
-    tolerance 30      # how far off the path the finger may stray
-    step 40           # …and how far it may LEAP along it: past that, the progress waits
-    both ends         # the run may start at either end (or either way round a closed shape)
-    point tipX, tipY  # the world point where the ink stops — the pen tip
+    tolerance 30      // how far off the path the finger may stray
+    step 40           // …and how far it may LEAP along it: past that, the progress waits
+    both ends         // the run may start at either end (or either way round a closed shape)
+    point tipX, tipY  // the world point where the ink stops — the pen tip
   }
 }
 ```
@@ -340,23 +354,25 @@ number — **where** — for when the scene has to *react* to the uncovered area
 
 ```
 var cleared = 0
-var scratched = fill(551, 0)         # one slot per cell; --check tells you the count
+var scratched = fill(551, 0)         // one slot per cell; --check tells you the count
 
 object "Veil" {
   reveal cleared {
     brush 32
-    cells scratched                  # scratched[i] = 1 once cell i is cleared
+    cells scratched                  // scratched[i] = 1 once cell i is cleared
   }
 }
 
-each "Cell" as i { opacity = 1 - scratched[i] }    # …and the veil disappears where it was rubbed
+each "Cell" as i { opacity = 1 - scratched[i] }    // …and the veil disappears where it was rubbed
 ```
 
 The grid is derived from the zone, so it is reproducible on paper: it covers the object's **world bbox**,
-each cell is a **`brush` × `brush`** square, `cols = ceil(width / brush)`, `rows = ceil(height / brush)`,
-and **`i = row * cols + col`** (cell `(col,row)` is centred at `minX + (col + 0.5) * brush`,
-`minY + (row + 0.5) * brush`). A cell is cleared once its **centre** falls within `brush` of the pointer —
-so a single touch clears a small plus-shape, not one square. Cells are written **once**, never back to 0:
+each cell is a square of side **`grain`** (the `brush` when no `grain` is given),
+`cols = ceil(width / grain)`, `rows = ceil(height / grain)`, and **`i = row * cols + col`** (cell
+`(col,row)` is centred at `minX + (col + 0.5) * grain`, `minY + (row + 0.5) * grain`). A cell is cleared
+once its **centre** falls within `brush` of the pointer — so with no `grain` a touch clears a small
+plus-shape, not one square. Cells are ticked as the pointer MOVES: a press that does not move clears
+nothing (a replay script needs at least one `move`). Cells are written **once**, never back to 0:
 the grid is as monotone as the fraction, and both agree. (The array is yours to read *and* write, but the
 coverage behind it has no reset — so each new grab re-syncs the array from the interactor's own state,
 rather than letting a scene show an intact cell over a zone counted as cleared.)
@@ -394,9 +410,13 @@ scene {
   layer "Jeu" { group "Src" at 120,300 { layer "c" { circle 0 0 20 fill #3355ff } } }
 }
 
-object "Src" { link ex, ey, hit to Cibles }
+object "Src" {
+  link ex, ey, hit to Cibles
+  when pressed  { pulling = 1 }
+  when released { pulling = 0 }
+}
 object "Fil" {
-  opacity  = self.grabbed          // only visible while the thread is being pulled
+  opacity  = pulling               // only visible while the thread is being pulled
   rotation = angle(120, 300, ex, ey)
   scaleX   = dist(120, 300, ex, ey) / 100   // 100 = the bar's DRAWN length
 }
@@ -432,7 +452,7 @@ wheel is still), read in an `every frame` accumulator — the same idiom as the 
 
 ```
 every frame {
-  off = clamp(off + mouse.wheel, 0, max)   // one notch ≈ tens of px; scale/clamp to taste
+  off = clamp(off + mouse.wheel, 0, maxOff)   // one notch ≈ tens of px; scale/clamp to taste
 }
 ```
 
@@ -457,12 +477,12 @@ An object that declares `focusable` can be reached and used **without a pointer*
 
 ```
 object "Validate" {
-  focusable order 3            # order is optional: ranked objects first (lower first), then the others in document order
-  when clicked { check() }     # Enter or Space on the focused object fires this too
+  focusable order 3            // order is optional: ranked objects first (lower first), then the others in document order
+  when clicked { check() }     // Enter or Space on the focused object fires this too
 }
 object "Hint" {
-  focusable noring             # no default ring: this object draws its own…
-  opacity = self.focused ? 1 : 0.7      # …from `self.focused` (1 while it holds the focus)
+  focusable noring             // no default ring: this object draws its own…
+  opacity = self.focused ? 1 : 0.7      // …from `self.focused` (1 while it holds the focus)
 }
 ```
 
@@ -478,16 +498,22 @@ object "Hint" {
 ## Feedback
 
 An object can read **its own interaction state** in channel expressions: `self.focused`, `self.hovered`, `self.grabbed`,
-`self.pressed` (each `0`/`1`). So hover-lift and grab-squash are just expressions — no mirror variable,
-no handler:
+`self.pressed` (each `0`/`1`). So hover-lift and grab-squash are just expressions — no mirror variable:
 
 ```
 object "Button" {
   scaleX  = self.hovered ? 1.06 : 1
   scaleY  = self.grabbed ? 0.94 : 1
   opacity = self.hovered ? 0.85 : 1
+  when pressed { }
 }
 ```
+
+`self.hovered` follows the pointer on any object. `self.grabbed` and `self.pressed` (the same value) are 1
+only on an object that can be GRABBED: one with an interactor (`drag`, `turn`, …) or a `when pressed` /
+`released` / `dragged` / `held` handler. A button that only has `when clicked` reads 0 while it is pressed —
+hence the empty `when pressed { }` above. And a program with no handler and no interactor at all tracks no
+pointer: nothing hovers.
 
 The **`feedback` one-liner** generates these for you (auto-importing `use "feedback"`), composing per
 channel so it never clashes with your `x`/`y` bindings:
@@ -554,6 +580,9 @@ match Word1, Word2 onto Good, Bad {
   on done { send "win" }
 }
 ```
+
+`it` is the item's NAME. `text(it)` sends something only when a text of that same name exists (`text "chat"
+as "Word1"` inside the group `Word1`); `--check` reports it otherwise — send a number, or nothing, instead.
 
 It generates, per item, `<Item>_placed` / `<Item>_ok` / `<Item>_zone` state and the drag+drop handlers;
 you keep the visual (`var <Item>_x`/`_y` + your channel expressions).

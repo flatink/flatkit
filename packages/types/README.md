@@ -4,10 +4,12 @@ Shared TypeScript types for the [FlatInk](http://flatink.zwyk-studio.com/) anima
 `Layer`, `Item`, `Timeline`, `Path`, and friends. The **leaf** of the
 [`flatkit`](https://github.com/flatink/flatkit) dependency graph: zero runtime, zero dependencies.
 
-You rarely install this directly — [`@flatkit/engine`](https://www.npmjs.com/package/@flatkit/engine),
-[`@flatkit/player`](https://www.npmjs.com/package/@flatkit/player), and
-[`@flatkit/compiler`](https://www.npmjs.com/package/@flatkit/compiler) re-export the types you need. Reach
-for it when you want to type a `.flatpack` document on its own.
+You rarely install this directly when you embed the player:
+[`@flatkit/player`](https://www.npmjs.com/package/@flatkit/player) re-exports the model types (`Doc`,
+`Layer`, `Item`, `Timeline`, `Path`…). Add it next to
+[`@flatkit/compiler`](https://www.npmjs.com/package/@flatkit/compiler) or
+[`@flatkit/engine`](https://www.npmjs.com/package/@flatkit/engine) when you need to name those types
+yourself, or to type a `.flatpack` document on its own.
 
 ## Install
 

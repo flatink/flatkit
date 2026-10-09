@@ -51,11 +51,14 @@ per second), `deg(r)` (the inverse, for readouts). Or bind the **`rotationDeg`**
 | `frame` | current frame (0-based; also wraps at `durationFrames`) |
 | `value` | the channel's current value (in a channel binding) |
 | `mouse.x` `mouse.y` | pointer position (scene units) |
+| `mouse.dx` `mouse.dy` `mouse.wheel` | pointer movement and wheel delta accumulated **this frame** (0 at rest) — see [pointer gestures](behavior-and-interactions.md#pointer-gestures-drag-delta-finger-scroll-tap-vs-drag) |
+| `toLocalX(x, y)` `toLocalY(x, y)` `toGlobalX(x, y)` `toGlobalY(x, y)` | a scene point in the object's own space, and back (in an object's handlers) |
 | `random()` | a number in `[0, 1[`, a new one at each call. Reproducible when the player is given a `seed` (always the case under `flatc --play`, see `--seed`) — see [host integration](host-integration.md) |
 | `keys.<Key>` | `1` while a key is held, `0` otherwise — `<Key>` is the browser `KeyboardEvent.key` value (`keys.ArrowRight`, `keys.a`, `keys.Escape`), plus the alias `keys.Space` for the space bar, **or** the physical key, `KeyboardEvent.code` (`keys.ShiftLeft`, `keys.Digit1`, `keys.Numpad1`, `keys.KeyA`) — the way to tell the two Shift keys apart and to read the digit row. Naming a key here also makes the player **consume** it (no page scroll) — see [host integration](host-integration.md#keyboard) |
 | `self.x` `self.y` `self.scaleX` … | the object's own current pose (in its channel bindings) |
 | `self.hovered` `self.grabbed` `self.pressed` `self.focused` | the object's own interaction state (`0`/`1`; `focused` = it holds the keyboard focus, see `focusable`) — see [feedback](behavior-and-interactions.md#feedback) |
 | `<Name>.x` `<Name>.y` … | a named object's live channels (e.g. `Target.x`) |
+| `<Instance>.<param>` | an instance's number/bool param or state, read by name: the live value, else the call site's, else the default — see [animating symbols](animating-symbols.md#exposed-parameters-params) |
 
 ## Arrays
 
@@ -108,13 +111,20 @@ Time: one step of `every frame` is exactly **`DT`** = 1/60 s — integrate with 
 Define reusable helpers — a **value** function (an expression) or a **procedure** (actions):
 
 ```
-fn dist(ax, ay, bx, by) = hypot(ax - bx, ay - by)      # value
-fn reset() { score = 0  go to frame 0 }                 # procedure
+fn dist(ax, ay, bx, by) = hypot(ax - bx, ay - by)      // value
+
+fn reset() {                                           // procedure: one action per line
+  score = 0
+  go to frame 0
+}
 ```
+
+A procedure cannot `wait` (a compile error): the sequence belongs to the handler that calls it.
 
 ## Stdlib packages
 
-Import bundled helpers with `use "<name>"`. They're embedded (no network, no files), referenced in the
+Import bundled helpers with `use "<name>"`. They're embedded (no network, no files — a name that is not one of them is looked up as a
+[local package](tooling.md) next to the program), referenced in the
 `.flatpack`, and resolved by the player. Functions are available **bare** and **qualified**
 (`boxHit(…)` or `collision.boxHit(…)` — the qualified form disambiguates collisions).
 
@@ -124,11 +134,11 @@ Import bundled helpers with `use "<name>"`. They're embedded (no network, no fil
 > same name always wins.
 
 ```
-use "collision"   # boxHit(ax,ay,bx,by,hw,hh) · dist(ax,ay,bx,by) · near(ax,ay,bx,by,r)
-use "easing"      # easeIn(t) · easeOut(t) · easeInOut(t) · smooth(t)        (t in 0..1; the first three = a cel's `ease` curves)
-use "gesture"     # snap(v,step) · snapTo(v,target,r) · railT/railX/railY(px,py,ax,ay,bx,by) · angle(cx,cy,px,py) · inZone(px,py,x,y,w,h)
-use "feedback"    # lift(h) · dim(h) · tilt(g) · sink(g) · shake(bad,t) · pulse(since,dur)  (channel reactions)
-                  #   shake/pulse ride the MONOTONE `clock` → capture instants with `clock`, never `time`
+use "collision"   // boxHit(ax,ay,bx,by,hw,hh) · dist(ax,ay,bx,by) · near(ax,ay,bx,by,r)
+use "easing"      // easeIn(t) · easeOut(t) · easeInOut(t) · smooth(t)        (t in 0..1; the first three = a cel's `ease` curves)
+use "gesture"     // snap(v,step) · snapTo(v,target,r) · railT/railX/railY(px,py,ax,ay,bx,by) · angle(cx,cy,px,py) · inZone(px,py,x,y,w,h)
+use "feedback"    // lift(h) · dim(h) · tilt(g) · sink(g) · shake(bad,t) · pulse(since,dur)  (channel reactions)
+                  //   shake/pulse ride the MONOTONE `clock` → capture instants with `clock`, never `time`
 ```
 
 Example:

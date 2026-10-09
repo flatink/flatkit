@@ -141,8 +141,8 @@ copying by hand — the bounds, the rounding, the repeat while held.
 
 | | |
 |---|---|
-| `stepper <name> { min <n>  max <n>  [step <n>]  [start <n>]  minus at x,y  plus at x,y  [counter at x,y] }` | − / + buttons: a step at the press, then a repeat while held (after 0.4 s, every 0.12 s). Enter or Space on the focused button steps once |
-| `slider <name> { min <n>  max <n>  [step <n>]  [start <n>]  rail x,y to x,y  [minus at x,y  plus at x,y]  [counter at x,y] }` | a handle on a horizontal or vertical rail (the first point is the minimum): press the rail or drag. `change` is sent once, at the release |
+| `stepper <name> { [prompt "…"]  min <n>  max <n>  [step <n>]  [start <n>]  minus at x,y  plus at x,y  [counter at x,y] }` | − / + buttons: a step at the press, then a repeat while held (after 0.4 s, every 0.12 s). Enter or Space on the focused button steps once |
+| `slider <name> { [prompt "…"]  min <n>  max <n>  [step <n>]  [start <n>]  rail x,y to x,y  [minus at x,y  plus at x,y]  [counter at x,y] }` | a handle on a horizontal or vertical rail (the first point is the minimum): press the rail or drag. `change` is sent once, at the release |
 
 ```
 slider volume {
@@ -171,8 +171,9 @@ The − / + ends of a slider are its **keyboard** way in: a scene cannot read wh
 so arrow keys on a focused handle cannot be written in FlatInk today. Objects: `<name>_Minus`,
 `<name>_Plus`, `<name>_Rail`, `<name>_Handle`, `<name>_Value` (all in `meta[].objects`).
 
-Each gesture emits `send "correct" / "incorrect" / "step" / "completed"` with a record payload naming the index
-(`{ item = 2 }`), so a host reads which one without depending on what the theme drew. `desugar()` returns
+Each gesture emits `send "correct" / "incorrect" / "step"` with a record payload naming the block and the
+index (`{ block = 0, item = 2 }`), then `part` with `{ block }`; the document's `completed` carries
+nothing. So a host reads which one without depending on what the theme drew. `desugar()` returns
 the labels behind those indices, and the prompt, in `meta` — the host displays them, the gesture never
 draws them:
 
@@ -201,7 +202,7 @@ desugar(src)                                        // GREYBOX: plain, provision
 desugar(src, { gestures: gestures({ theme: mine }) }) // your appearance, same behavior
 ```
 
-A theme answers two questions per role (`item`, `target`, `card`, `chip`): how big it is, and what to
+A theme answers two questions per role (`item`, `target`, `card`, `chip`, `counter`): how big it is, and what to
 draw inside it. `BLANK` answers "nothing", which is how the no-visual-opinion rule is tested rather than
 promised — expand every gesture with it and the output must not contain one colour, font or stroke.
 

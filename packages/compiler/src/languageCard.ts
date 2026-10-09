@@ -21,11 +21,15 @@ object "Name" { … } attaches behavior BY NAME. The name must be a group / inst
 A SHAPE (\`rect … as "N"\`) or a LAYER cannot be animated: wrap the shape in \`group "N" { layer "art" { … } }\`. (Naming one is a compile error.)
 Opacities MULTIPLY down the tree — do not set \`opacity 0\` on the shape to hide it at rest, or the group's fade-in stays invisible.
 
-## Events (attach to an object or to the scene)
+## Events
+Scene-wide, at the TOP LEVEL only:
 when loaded { }      // once, on start
-every frame { }      // every frame
+every frame { }      // every frame (a fixed 60 Hz step)
 at frame N { }       // when the playhead reaches frame N
+label N "name"       // names frame N: the target of go to "name"
+In an object "Name" { } only:
 when clicked|hovered|unhovered|pressed|dragged|released|held { }
+focusable            // Tab reaches it, Enter/Space fire when clicked
 
 ## Actions
 play · pause · go to frame N [and play|and pause] · go to "label"
@@ -38,14 +42,17 @@ myProc() · send "event"[, expr | text("id") | { a = expr, b … }] · sound "as
 
 ## Expressions (drive a channel, or compute in an action)
 channel = expr         channels: ${EXPR_CHANNELS.join(' ')}   (expression wins over keyframes)
-dx = expr · dy = expr  // ADDITIVE offset: final pos = at + (dx, dy) — oscillate AROUND the anchor (dx = 30*sin(time)); absolute x/y REPLACE at
+dx = expr · dy = expr  // ADDITIVE offset: final pos = at + (dx, dy) — oscillate AROUND the anchor (dx = 30*sin(clock)); absolute x/y REPLACE at
 rotationDeg = expr     // sugar for rotation = rad(expr) — author angles in DEGREES (rotation & sin/cos/atan2 are RADIANS)
 operators: + - * / %   < > <= >= == !=   && || !   cond ? a : b
 context: time frame clock value · mouse.x mouse.y mouse.dx mouse.dy · keys.Space keys.ArrowLeft … (keys are 1/0, use directly: keys.Space ? … : …)
   time WRAPS every durationFrames (2.5 s by default) — clock is MONOTONE. Timestamps you capture and compare later MUST use clock
-  (\`when wrong { shown = clock }\` + \`opacity = pulse(shown, 4)\`), or the ramp replays on every loop.
+  (\`when dropped on Bad { shown = clock }\` + \`opacity = pulse(shown, 4)\`): captured on time, a pulse NEVER fires and a hand-written ramp replays on every loop.
+  keys.<Key> is the typed key (keys.a) or the physical one (keys.ShiftLeft, keys.Digit1) · random() = a number in [0, 1[
 Name.x Name.y Name.rotation Name.scaleX Name.scaleY Name.opacity   // any named object (identifier name), live on-screen value (read-only)
 self.x self.y self.rotation self.scaleX self.scaleY self.opacity   // the object's own channels, in its bindings (no mirror variable)
+self.hovered self.grabbed self.focused                             // its own interaction state, 1/0 (grabbed needs a when pressed / an interactor on it)
+spring rotationDeg = expr { stiffness 0.08 damping 0.8 } · smooth x = expr { k 0.2 }   // a channel that CHASES its target, in an object block
 
 ## Spaces (local vs world)
 self & channels (x, y, rotation…) = LOCAL (relative to parent — what x = … sets). Name.x, mouse.x = WORLD (the stage).
@@ -55,14 +62,26 @@ constants: ${STD_CONSTANTS.join(' ')}
 functions: ${STD_FUNCTIONS.join(' ')}
 
 ## Direct manipulation (interactors)
-drag x, y                      // object follows the pointer while held → writes vars x, y (bind them: x = vx, y = vy)
+drag x, y                      // object follows the pointer while held → writes vars x, y (bind them, one per line: x = vx then y = vy)
 { enabled <expr> } gates the GESTURE only — when/pressed/released/clicked STILL fire. Guard the body: when released { if done == 0 { … } }
 dragX vx · dragY vy            // single-axis
-drag x, y { confine to Zone  snap 10 }   // bound to a named object's box · grid snap
+drag x, y {                    // options: ONE PER LINE
+  confine to Zone              // bound to a named object's box
+  snap 10                      // grid snap
+}
 turn a around cx,cy { snap 15 }    // dial/knob → a = pivot→cursor angle in RADIANS (pair: rotation = a)
 turnDeg a around cx,cy { snap 15 } // same in DEGREES (pair: rotationDeg = a) · snap is degrees on both
-trace p along Route { tolerance 30  step 40 }  // follow a named guide → p = 0..1 by ARC LENGTH (pair: draw "p"). step = a TRACE, not a cursor: without it one press near the finish reports 1
-reveal c { brush 32  grain 8  erase  cells grid }  // scratch → c = cleared fraction; brush = finger, grain = resolution; erase = the runtime rubs the target out; grid[row*cols+col] = 1 says WHERE
+trace p along Route {          // follow a named guide → p = 0..1 by ARC LENGTH (pair: draw "p")
+  tolerance 30
+  step 40                      // a TRACE, not a cursor: without it one press near the finish reports ~1
+}
+reveal c {                     // scratch → c = cleared fraction
+  brush 32                     // the finger
+  grain 8                      // the resolution
+  erase                        // the runtime rubs the target out
+  cells grid                   // grid[row*cols+col] = 1 says WHERE
+}
+group "Zone" at x,y hitbox W H { … }   // an explicit touch + drop rectangle, CENTRED on the group's origin
 when dropped on Zone { … }     // fires on release when the object's center is inside the named zone
 
 ## Declarations
@@ -70,7 +89,7 @@ var name = 0 · var arr = fill(n, v) · var arr = [a, b, c]   // document state:
 let name = 0                               // the same thing at the top level of a program; inside a scope it stays local
 fn name(a, b) = expr                       // value function (use in expressions)
 fn name() { … }                            // procedure (block of actions)
-each "Symbol" as i { opacity = data[i] }   // bind every instance of a symbol (i = index)
+each "Symbol" as i { opacity = data[i] }   // bind every instance of a symbol (i = index); handlers under each need a PARAMETERIZED symbol "X"(…)
 use "package"          packages: ${PACKAGES.join(' ')}   // OPTIONAL: calling a package function imports it automatically
 
 ## Example

@@ -8,7 +8,9 @@ asset "Archivo Black" "ArchivoBlack.woff2" font
 scene { layer "L" { text "Déçu où ? ÇÀ" at 20,40 font "Archivo Black" size 48 } }
 ```
 
-`flatc` inlines the face into the compiled doc as a base64 data-URI:
+`flatc` inlines the face into the compiled doc as a base64 data-URI (the default, `--assets inline`; with
+`--assets external` a font is written to the sidecar folder like any other media, `asset.data` is then a
+relative key that `loadEmbeddedFonts` skips, and the host loads that face itself):
 
 ```jsonc
 // doc.assets
@@ -79,7 +81,7 @@ function useEmbeddedFonts(doc) {
 }
 
 useEmbeddedFonts(doc) //                    ← BEFORE the first render
-const player = new FlatPlayer(canvasEl, doc, { input: false, audio: false })
+// …then build the player in your own Node harness (`createRenderer` is a ready-made one, see below)
 ```
 
 `FontLibrary` is a **global, idempotent** registry for the process — registering the same family twice is
@@ -87,10 +89,9 @@ harmless (you may memoize by family to avoid re-writing temp files).
 
 ## What's already handled for you
 
-- **`flatc --render`** (the CLI, used for preview/OG images) registers embedded fonts **internally** before
-  drawing — CLI users and render pipelines get correct text for free. The host glue above is only needed when
-  you drive `@flatkit/player` **directly**.
-
-- The **browser** path ships as `loadEmbeddedFonts` (exported above). The **skia/Node** path stays a snippet:
-  it would drag the optional `skia-canvas` dependency into the package, so it's left to the host (and the
-  `flatc --render` CLI already covers headless rendering).
+- **`flatc --render`**, and **`renderDocToPng` / `createRenderer`** from `@flatkit/compiler/render` (see
+  [Tooling](tooling.md)), register the embedded fonts **internally** before drawing and install the Node
+  globals the player needs. Prefer them: under Node the player does not run on a bare `skia-canvas` canvas
+  (it expects `window`, `Path2D`, a `document` shim and `getBoundingClientRect`).
+- The **browser** path ships as `loadEmbeddedFonts` (exported above). The Node snippet above is for a host
+  that has built its own harness around the player and only needs the font step.
