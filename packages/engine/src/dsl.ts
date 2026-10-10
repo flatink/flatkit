@@ -298,18 +298,15 @@ class Parser {
   }
   private depth = 0 // blocks open around the statement being read
   private tooDeep = false
-  /** Reads a block statement one level deeper. Past `MAX_BLOCK_DEPTH` the program is refused in ONE error:
+  /** A block statement opens one level deeper. Past `MAX_BLOCK_DEPTH` the program is refused in ONE error:
    *  the parser, the linter and the interpreter all walk blocks by recursion, and a chain of two thousand
    *  `else if` ended the compiler on a stack overflow with a JavaScript trace for a message. */
-  private nested<T>(m: Mark, read: () => T | null): T | null {
-    if (this.depth >= MAX_BLOCK_DEPTH) {
-      this.err(`blocks nested more than ${MAX_BLOCK_DEPTH} deep — a chain of \`else if\` counts one per branch. Replace a lookup chain by a table (\`go to frame T[i]\`, \`x = T[i]\`), or split it into functions`, m)
-      this.tooDeep = true // …and nothing after it is reported: it would all be noise from the cut
-      this.i = this.s.length
-      return null
-    }
-    this.depth++
-    try { return read() } finally { this.depth-- }
+  private refuseDepth(m: Mark): boolean {
+    if (this.depth < MAX_BLOCK_DEPTH) return false
+    this.err(`blocks nested more than ${MAX_BLOCK_DEPTH} deep — a chain of \`else if\` counts one per branch. Replace a lookup chain by a table (\`go to frame T[i]\`, \`x = T[i]\`), or split it into functions`, m)
+    this.tooDeep = true // …and nothing after it is reported: it would all be noise from the cut
+    this.i = this.s.length
+    return true
   }
   private err(message: string, m?: Mark, fix?: TextEdit) {
     if (this.tooDeep) return
@@ -932,6 +929,11 @@ class Parser {
       const raw = this.lineExpr()
       const tail = /(?:^|\s)and\s+(play|pause)$/.exec(raw)
       const target = (tail ? raw.slice(0, tail.index) : raw).trim()
+      if (!tail && /(?:^|\s)and(?:\s|$)/.test(raw)) {
+        this.err('"play" or "pause" expected after "and"', m)
+        this.endStatement()
+        return null
+      }
       if (!target) {
         this.err('a frame number or an expression expected after "frame" (`go to frame 12`, `go to frame T[i]`)', m)
         this.endStatement()
@@ -973,10 +975,12 @@ class Parser {
 
   private ifStatement(): Action | null {
     this.skipSpace()
-    return this.nested(this.mark(), () => this.ifBlock())
-  }
-  private ifBlock(): Action | null {
     const m = this.mark()
+    if (this.refuseDepth(m)) return null
+    this.depth++
+    try { return this.ifBlock(m) } finally { this.depth-- }
+  }
+  private ifBlock(m: Mark): Action | null {
     const cond = this.header()
     if (cond === null) {
       this.recoverBlockOrLine()
@@ -1009,10 +1013,12 @@ class Parser {
 
   private repeatStatement(): Action | null {
     this.skipSpace()
-    return this.nested(this.mark(), () => this.repeatBlock())
-  }
-  private repeatBlock(): Action | null {
     const m = this.mark()
+    if (this.refuseDepth(m)) return null
+    this.depth++
+    try { return this.repeatBlock(m) } finally { this.depth-- }
+  }
+  private repeatBlock(m: Mark): Action | null {
     const head = this.header()
     if (head === null) {
       this.recoverBlockOrLine()

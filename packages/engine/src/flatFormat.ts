@@ -1362,6 +1362,9 @@ export function parseProgramFull(src: string): Program {
  *  to throw a bare `Error`, so every syntax error was reported at 1:1 -- `checkProgram` said as much in a
  *  comment. `fix` follows the same rule as everywhere: only when the repair is the single possible
  *  reading. */
+/** How deep groups may nest. */
+const MAX_GROUP_DEPTH = 256
+
 export class FlatSyntaxError extends Error {
   constructor(message: string, readonly line: number, readonly col: number, readonly fix?: TextEdit) {
     super(message)
@@ -1782,7 +1785,15 @@ class FlatParser {
     return { param, states: anchors, ...(initial ? { initial } : {}), ...(transition != null ? { transition } : {}), ...(ease ? { ease } : {}) }
   }
   // Returns the layer + its nested children FLATTENED (flat model: siblings + `parent`).
+  private layerDepth = 0
+  /** A layer, one level deeper: groups hold layers that hold groups. Past `MAX_GROUP_DEPTH` the program is
+   *  refused — the player stops walking at 256 too, and the compiler ran out of stack well before saying so. */
   private layer(parent?: string): Layer[] {
+    if (this.layerDepth >= MAX_GROUP_DEPTH) this.fail(`groups nested more than ${MAX_GROUP_DEPTH} deep — flatten the scene, or move a subtree into a symbol`)
+    this.layerDepth++
+    try { return this.layerBody(parent) } finally { this.layerDepth-- }
+  }
+  private layerBody(parent?: string): Layer[] {
     let isMask = false, isGuide = false, isFolder = false
     if (this.is('mask')) { this.next(); isMask = true }
     else if (this.is('guide')) { this.next(); isGuide = true }

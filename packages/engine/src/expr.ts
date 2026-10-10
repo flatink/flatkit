@@ -78,8 +78,14 @@ function tokenize(src: string): Tok[] {
 }
 
 // ── Parser (recursive descent) ───────────────────────────────────────────────
+/** How deep an expression may nest (parentheses, indexes, call arguments, stacked `-` / `!`). Real programs
+ *  stay under a dozen; past a few hundred the parser — and everything that walks its tree — ran out of stack. */
+const MAX_EXPR_DEPTH = 200
+const tooDeep = (): never => { throw new Error(`expression nested more than ${MAX_EXPR_DEPTH} deep`) }
+
 class Parser {
   #p = 0
+  #depth = 0
   constructor(private readonly toks: Tok[]) {}
   #peek() {
     return this.toks[this.#p]
@@ -104,15 +110,18 @@ class Parser {
   }
 
   #ternary(): Node {
+    if (++this.#depth > MAX_EXPR_DEPTH) tooDeep()
     const c = this.#or()
+    let node: Node = c
     if (this.#isOp('?')) {
       this.#next()
       const a = this.#ternary()
       this.#eat(':')
       const b = this.#ternary()
-      return { t: 'cond', c, a, b }
+      node = { t: 'cond', c, a, b }
     }
-    return c
+    this.#depth--
+    return node
   }
   #binL(next: () => Node, ops: string[]): Node {
     let l = next()
@@ -143,7 +152,10 @@ class Parser {
   #unary(): Node {
     if (this.#isOp('-') || this.#isOp('!')) {
       const op = this.#next().v
-      return { t: 'un', op, x: this.#unary() }
+      if (++this.#depth > MAX_EXPR_DEPTH) tooDeep()
+      const x = this.#unary()
+      this.#depth--
+      return { t: 'un', op, x }
     }
     return this.#primary()
   }

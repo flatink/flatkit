@@ -284,16 +284,31 @@ export const DEEP_DOCUMENT = 100
  *  the way down. Iterative: this is the pass that reports depth, it must not die of it. */
 function nesting(root: unknown): { depth: number; group?: string } {
   let depth = 0, group: string | undefined
-  const stack: [unknown, number, string | undefined][] = [[root, 1, undefined]]
-  while (stack.length) {
-    const [v, d, g] = stack.pop()!
-    if (v === null || typeof v !== 'object') continue
+  // Three parallel stacks, not one of tuples: this runs on every check of every document, and nearly all
+  // of them have nothing to report.
+  const nodes: object[] = [], depths: number[] = [], groups: (string | undefined)[] = []
+  const push = (v: unknown, d: number, g: string | undefined): void => { if (v !== null && typeof v === 'object') { nodes.push(v); depths.push(d); groups.push(g) } }
+  push(root, 1, undefined)
+  while (nodes.length) {
+    const v = nodes.pop()!, d = depths.pop()!, g = groups.pop()
     if (d > depth) { depth = d; group = g }
-    const named = !Array.isArray(v) && (v as { kind?: unknown }).kind === 'group' && typeof (v as { name?: unknown }).name === 'string' ? (v as { name: string }).name : g
-    for (const x of Array.isArray(v) ? v : Object.values(v)) if (x !== null && typeof x === 'object') stack.push([x, d + 1, named])
+    if (Array.isArray(v)) { for (let i = 0; i < v.length; i++) push(v[i], d + 1, g); continue }
+    const o = v as Record<string, unknown>
+    const named = o.kind === 'group' && typeof o.name === 'string' ? o.name : g
+    for (const k in o) {
+      const x = o[k]
+      // Geometry is most of a document and nests the same way everywhere (path → subpaths → subpath →
+      // segments → segment → its point): counted, not walked.
+      if (k === 'path' && x !== null && typeof x === 'object' && Array.isArray((x as { subpaths?: unknown }).subpaths)) {
+        const deep = d + ((x as { subpaths: unknown[] }).subpaths.length ? PATH_NESTING : 2)
+        if (deep > depth) { depth = deep; group = named }
+      } else push(x, d + 1, named)
+    }
   }
   return { depth, group }
 }
+/** Levels a non-empty path adds under the item that holds it. */
+const PATH_NESTING = 6
 
 /**
  * The places where the compiled document nests deeper than `DEEP_DOCUMENT`. An `else if` compiles to an
