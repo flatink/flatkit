@@ -64,6 +64,10 @@ export type Gesture =
 export type SendEvent = { name: string; value?: number | string; fields?: Record<string, number> }
 
 export type PlayerOptions = {
+  /** `touch-action` of the canvas. By default the player sets it from what the scene does: `none` when it
+   *  drags, `manipulation` when it is only clicked, nothing otherwise. A CSS value forces it; `false` leaves
+   *  the canvas as the host styled it. */
+  touchAction?: string | false
   autoplay?: boolean
   loop?: boolean
   padding?: number // margin around the page (CSS px)
@@ -258,18 +262,20 @@ const RESERVED = new Set(['time', 'frame', 'clock', 'value']) // runtime-provide
  *    scroll). Else the listener stays inert and the page scrolls normally.
  *  - `mousePos`: does any expression read the pointer POSITION (`mouse.x`/`mouse.y`)? If not, a pointermove
  *    changes no expression input, so the per-move `bustNamed()` (cache invalidation → rebuild) is pure waste.
+ *  - `pointer`: does it read where the pointer is or how it moves (`mouse.x`/`y`/`dx`/`dy`)? Such a scene
+ *    follows the finger without any handler: it needs the gesture as much as one that drags (`touch-action`).
  *  - `keys`: the key names the scene actually READS. The player consumes ONLY these; everything else keeps
  *    its native page behavior (scroll, shortcuts).
  *
  * The three used to ask their own question, each serializing the WHOLE `.flatpack` to do it — three full
  * stringifications of the document on every load.
  */
-type InputUse = { wheel: boolean; mousePos: boolean; keys: Set<string> }
+type InputUse = { wheel: boolean; mousePos: boolean; pointer: boolean; keys: Set<string> }
 function docInputUse(doc: Doc): InputUse {
   const src = JSON.stringify(doc)
   const keys = new Set<string>()
   for (const m of src.matchAll(/keys\s*\.\s*([A-Za-z_]\w*)/g)) keys.add(m[1])
-  return { wheel: /mouse\s*\.\s*wheel/.test(src), mousePos: /mouse\s*\.\s*[xy]/.test(src), keys }
+  return { wheel: /mouse\s*\.\s*wheel/.test(src), mousePos: /mouse\s*\.\s*[xy]/.test(src), pointer: /mouse\s*\.\s*d?[xy]\b/.test(src), keys }
 }
 
 /** Grab-time state of a `trace`: its WORLD path and that path's total length (the unit `step` is in). */
@@ -402,6 +408,10 @@ export class FlatPlayer {
   #valueFuncs: { name: string; params: string[]; comp: Compiled }[] = [] // fn name(p) = expr (compiled)
   #funcDepth = 0 // anti-recursion guard (procedures + value functions)
   readonly #mouse = { x: 0, y: 0, dx: 0, dy: 0, wheel: 0 } // dx/dy = movement SINCE the last tick; wheel = accumulated wheel delta SINCE the last tick (both reset after onEnterFrame) -> "what happened this frame?"
+  #listens = false // does the player listen to the pointer at all (`input` not false)?
+  #touchOpt: string | false | undefined // the host's `touchAction` option
+  #hostStyled: boolean | undefined // did the canvas carry a `touch-action` of its own when the player arrived?
+  #touchBefore: string | null = null // the canvas's own `touch-action`, kept while the player sets one (null = untouched)
   #usesWheel = false // does the scene read `mouse.wheel`? → capture the wheel + preventDefault (else let the page scroll over the canvas)
   #usesMousePos = false // does the scene read `mouse.x`/`mouse.y`? → only then must a pointermove bust the expr cache
   #readKeys = new Set<string>() // key names the scene reads (`keys.<Name>`) → the only ones consumed (preventDefault)
@@ -584,6 +594,35 @@ export class FlatPlayer {
     this.#usesWheel = use.wheel
     this.#usesMousePos = use.mousePos
     this.#readKeys = use.keys
+    this.#applyTouchAction(use.pointer)
+  }
+  /** Takes the touch gesture from the browser WHEN THE SCENE NEEDS IT (moiki-app/moiki-reloaded#135). With
+   *  no `touch-action` the browser reads the first movement of a finger as a scroll and sends
+   *  `pointercancel` — a release, to the player: nothing could be dragged on a phone, and nothing showed it
+   *  with a mouse. Pointer capture does not help, `touch-action` is decided first.
+   *    - a scene that DRAGS (an interactor, a press / drag / release / held handler, or one that follows
+   *      the pointer) → `none`: the gesture is the scene's;
+   *    - a scene that is only clicked → `manipulation`: taps without the double-tap wait, and the page
+   *      still scrolls and zooms over it;
+   *    - no pointer use at all → the canvas is left alone.
+   *  The host's `touchAction` option wins (`false` = hands off). What the canvas had comes back at `destroy()`. */
+  #applyTouchAction(readsPointer: boolean): void {
+    const style = (this.#canvas as { style?: { touchAction?: string } } | undefined)?.style
+    if (!style || !this.#listens || this.#touchOpt === false) return
+    // A canvas the host already styled (inline, or by a CSS rule) is the host's: asked once, before the
+    // player writes anything. Only the `touchAction` option speaks louder.
+    if (this.#hostStyled === undefined) {
+      let own = style.touchAction
+      if (!own && typeof getComputedStyle === 'function') { try { own = getComputedStyle(this.#canvas).touchAction } catch { /* not an element (a stub) */ } }
+      this.#hostStyled = !!own && own !== 'auto'
+    }
+    if (this.#hostStyled && this.#touchOpt === undefined) return
+    const d = this.doc
+    const want = this.#touchOpt ?? (d.interactors?.length || readsPointer || d.interactions?.some((i) => i.event === 'drop' || GRAB_EVENTS.includes(i.event)) ? 'none'
+      : d.interactions?.length ? 'manipulation' : null)
+    if (want === null) { if (this.#touchBefore !== null) { style.touchAction = this.#touchBefore; this.#touchBefore = null }; return }
+    if (this.#touchBefore === null) this.#touchBefore = style.touchAction ?? ''
+    style.touchAction = want
   }
   /** Invalidates the named-objects cache (input changed outside of a frame advance). */
   /** Runs `f` as PICTURE work: resolving the named objects evaluates channel bindings, and a binding that
@@ -1216,6 +1255,8 @@ export class FlatPlayer {
     if (!ctx) throw new Error('FlatPlayer: 2D context unavailable')
     this.#ctx = ctx
     this.doc = applyInstanceBinds(withCels(sanitizeDoc(doc)))
+    this.#listens = opts.input ?? true
+    this.#touchOpt = opts.touchAction
     this.#applyInputUse()
     this.#analysePicture()
     this.#seed = opts.seed
@@ -2439,5 +2480,6 @@ export class FlatPlayer {
     this.#canvas.removeEventListener('pointerleave', this.#onPointerLeave)
     this.#canvas.removeEventListener('wheel', this.#onWheel)
     this.#dropGestures()
+    if (this.#touchBefore !== null && this.#canvas.style) { this.#canvas.style.touchAction = this.#touchBefore; this.#touchBefore = null }
   }
 }

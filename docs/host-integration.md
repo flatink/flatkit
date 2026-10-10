@@ -37,6 +37,7 @@ bare imports): serve `node_modules/@flatkit/player/dist/browser.js` and import i
 | `onEvent` | — | called on every `send` |
 | `focusRing` | `true` | the ring drawn around the object that holds the keyboard focus (`focusable`). `false` = none, or `{ color, width }` |
 | `seed` | none | seed of `random()`: the scene then draws the same numbers on every run. Absent, it draws from `Math.random` |
+| `touchAction` | by the scene | the canvas's CSS `touch-action`. By default the player sets it from what the scene does (see [Pointers](#pointers)); a CSS value forces it, `false` leaves the canvas as you styled it |
 | `maxPixelRatio` | none | upper bound on the device pixel ratio the canvas is sized with. The backing store grows with the square of the ratio; on a 3x phone, `2` trades a little sharpness for a much cheaper frame |
 
 ### When the player paints
@@ -229,6 +230,23 @@ Each pointer has its own gesture: two fingers can press, hold and drag two objec
 one releases only what it was holding. `mouse.x` / `mouse.y` follow the pointer that moved last.
 
 Pointer and wheel listeners are attached to the canvas itself.
+
+**Touch: the player takes the gesture from the browser when the scene needs it** — you have nothing to
+style. Without a `touch-action`, a browser reads the first movement of a finger as a scroll and cancels the
+pointer: nothing can be dragged on a phone, and nothing shows it with a mouse. So the player sets the
+canvas's `touch-action` from the document, as it does for the wheel and the keys:
+
+| the scene… | `touch-action` | on a phone |
+|---|---|---|
+| drags: an interactor (`drag`, `turn`, `trace`, `reveal`, `link`), a `when pressed` / `dragged` / `released` / `held`, or it follows the pointer (`mouse.x`, `mouse.dx`…) | `none` | the gesture is the scene's; the page does not scroll from the canvas |
+| is only clicked (`when clicked`, hover) | `manipulation` | taps, without the double-tap wait; the page still scrolls and zooms over it |
+| uses no pointer at all | untouched | — |
+
+It follows `load()`, is not set with `input: false`, and `destroy()` takes it back. **A canvas you already
+styled is yours**: if it carries a `touch-action` when the player arrives (inline, or from a CSS rule — any
+value but `auto`), the player leaves it alone. To decide through the player instead, pass `touchAction`: a CSS value (`'pan-y'` to keep vertical scrolling over a scene that
+drags sideways), or `false` to keep your own style. A canvas that fills the screen may also want
+`overscroll-behavior: contain` on its container, which is the page's business, not the player's.
 
 **On-screen controls.** There is no keyboard on a phone, so a key can also be driven programmatically —
 wire your own D-pad to `setKey`, and the scene cannot tell the difference:
