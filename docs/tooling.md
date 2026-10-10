@@ -179,8 +179,9 @@ disagree, compare what each was actually given before suspecting the pass.
 
 `--check` also reports a compiled document that nests **more than 100 levels** deep, and names where: a
 function, a handler, a group. It is nearly always a lookup written as a chain of `else if` (two levels per
-branch) — write it as a table (`go to frame T[i]`, `x = T[i]`). Blocks nested more than 256 deep are a
-compile error.
+branch) — write it as a table (`go to frame T[i]`, `x = T[i]`). Three limits are compile errors, each far
+beyond any real program: blocks (`if` / `else if` / `repeat`) nested more than 256 deep, groups nested more
+than 256 deep, and an expression nested more than 200 deep (parentheses, indexes, stacked `-` / `!`).
 
 `assetNames` (same order as `assetSrcs`) gives each library the name a two-libraries warning calls it by;
 without it they are `library 1`, `library 2`. The result carries `ok`, `errors`, `warnings`, `report` (the

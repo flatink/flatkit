@@ -13,6 +13,8 @@ scene {
 ```
 
 Layers stack bottom-to-top. A `layer` takes `"name"` and options (`opacity <n>`, `locked`, `hidden`).
+Groups may nest 256 deep (a compile error past that); each level of nesting adds four to the depth of the
+compiled document, which `--check` reports past 100.
 
 Besides `mask layer` (below; `off` after its name disables the mask), a layer can be a **`guide layer`**:
 its path is not drawn, and the tweened containers of the layers nested in it travel along that path instead

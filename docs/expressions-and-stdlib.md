@@ -69,6 +69,12 @@ slots[i + 1] = 1                      // indexed assignment (in actions)
 v = [10, 20, 30][i]                   // a table written in place, indexed at once
 ```
 
+A table is also how a jump is chosen among many: `go to frame START[verse]` (the frame of `go to frame` is
+an expression), rather than one `else if` per case.
+
+An expression may nest 200 deep (parentheses, indexes, call arguments, stacked `-` / `!`); past that it is
+refused, with a message.
+
 A table written in place — `[a, b, c][i]` — saves a global array for a lookup used once. Its elements and
 its index are expressions, only the element picked is evaluated, and it indexes as an array does (the
 index is rounded; outside the table it is `NaN`, so the binding keeps its fallback). It is not a value on

@@ -46,7 +46,11 @@ player.getVar('score')           // scene → host
 player.destroy()                 // on unmount: releases the listeners
 ```
 
-Full contract (payload shapes, keyboard, teardown, security) →
+On a phone the player takes the touch gesture itself: it sets the canvas's `touch-action` from what the
+scene does (`none` when it drags, `manipulation` when it is only clicked), unless the canvas already
+carries one or you pass `touchAction`.
+
+Full contract (payload shapes, keyboard, pointers and touch, teardown, security) →
 [docs/host-integration.md](https://github.com/flatink/flatkit/blob/main/docs/host-integration.md).
 
 ## Security

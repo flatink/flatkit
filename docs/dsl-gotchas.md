@@ -40,6 +40,11 @@
   (the expression of the first ends where the next `name =` begins). An ACTION after an assignment is
   not: `score = score + 1  send "ok", 1` reports *"two statements on one line — `send …` was swallowed
   into the expression before it"*, and `flatc --fix` splits it. When in doubt, one statement per line.
+- **A lookup is a TABLE, not a chain of `else if`.** `x = T[i]` for a value, `go to frame T[i]` for a jump
+  (the frame of `go to frame` may be any expression). A chain compiles to an `else` holding the next `if`,
+  two levels of the compiled document per branch: `--check` warns past 100 levels — some hosts cannot store
+  a document that deep — and blocks nested more than 256 deep are a compile error. See
+  [Behavior](behavior-and-interactions.md#a-jump-that-is-looked-up-or-computed).
 - **`wait <seconds>` / `wait until <cond>` pause a HANDLER, nothing else.** Allowed in an object's
   `when …`, in `when loaded` and `at frame n`; a compile error in `every frame` (it runs whole at every
   step) and in a `fn`. A handler triggered again while it waits **starts over** — the first run is dropped,
