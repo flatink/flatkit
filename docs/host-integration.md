@@ -134,6 +134,13 @@ declares no such param or state, or when the value is not of the param's kind. I
 This is the host's counterpart of `Inst.param = value` in the scene; unlike the scene's assignment it
 takes values, not expressions.
 
+### Storing a compiled document
+
+A `.flatpack` is a file: keep it as one — a string, a blob — rather than as a tree in a document database.
+Its depth follows the program (nested groups add four levels each, nested blocks two), and a database
+that stores it as a tree has a ceiling (MongoDB: 180 levels, your own wrapping included). `flatc --check`
+warns past 100 levels and says where.
+
 ### Saving and restoring a session
 
 `allVars()` is the save file, and a document's `variables` (or `setVar`) is how you put it back — a reader

@@ -33,6 +33,7 @@ focusable            // Tab reaches it, Enter/Space fire when clicked
 
 ## Actions
 play · pause · go to frame N [and play|and pause] · go to "label"
+go to frame T[i] · go to frame start + i * 60   // the frame may be an EXPRESSION: a jump among many is a TABLE (var T = [0, 320, 655]), never a chain of else if
 name = expr            // set a variable
 arr[i] = expr          // write an array slot
 arr = fill(n, v)       // replace a WHOLE array (the only array-valued assignment; expressions are scalar)

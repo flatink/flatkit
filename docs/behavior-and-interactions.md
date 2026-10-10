@@ -63,7 +63,7 @@ In a handler body, one action per line:
 
 ```
 play  ·  pause                          // timeline control
-go to frame <n> [and play|and pause]
+go to frame <n | expr> [and play|and pause]   // a number, or computed: go to frame T[i], go to frame start + i * 60
 go to "<label>" [and play|and pause]
 <name> = <expr>                          // set a variable (the `set` keyword is optional)
 <arr>[<expr>] = <expr>                   // indexed assignment (nested indices ok: occ[sl[i]] = 0)
@@ -83,6 +83,22 @@ wait until <cond>                        // …until the condition is true
 on, so `at frame 149 { pause }` ends an intro on a scene that keeps breathing. `play` releases it. A
 timeline that does not loop holds itself the same way at its end. (The host's `pause()` is another thing:
 it freezes the whole player.)
+
+### A jump that is looked up or computed
+
+`go to frame` takes an expression, read when the action runs — so a jump chosen among many is a table, not
+a chain of `else if`:
+
+```
+var START = [0, 320, 655, 990]           // where each verse begins
+…
+when clicked { go to frame START[verse] and play }
+```
+
+`go to frame START[verse] + bar * 61.4` works the same. A value that is not a number (`0 / 0`) moves
+nothing. ⚠️ Prefer the table to the chain for more than a handful of cases: each `else if` nests the
+compiled document two levels deeper, `--check` warns past 100 levels (a host that stores the document as a
+tree may refuse it), and blocks nested more than 256 deep are a compile error.
 
 ### `wait` — a handler that takes its time
 

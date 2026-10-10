@@ -42,6 +42,7 @@ export function forEachActionExpression(actions: Action[] | undefined, fn: (expr
     else if (a.do === 'if') fn(a.cond)
     else if (a.do === 'repeat') fn(a.count)
     else if (a.do === 'repeatRange') { fn(a.from); fn(a.to) }
+    else if (a.do === 'gotoFrame') { if (a.expr !== undefined) fn(a.expr) }
     else if (a.do === 'wait') fn(a.seconds)
     else if (a.do === 'waitUntil') fn(a.cond)
     else if (a.do === 'call') for (const arg of a.args) fn(arg)

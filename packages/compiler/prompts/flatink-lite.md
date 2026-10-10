@@ -73,7 +73,7 @@ pose "Name" [at x,y] [rotate deg] [scale s | scaleX sx scaleY sy] [opacity o] [s
 Events (in `object`): `when clicked | hovered | unhovered | pressed | released | dragged | held |
 dropped on <Zone> [at pointer]`. Scene-wide: `when loaded`, `every frame`, `at frame n`. **`when` takes a GESTURE, never a condition** -- no `when <cond>`: watch it in `every frame` and guard it with a flag so it fires once (`if done < 0.5 { done = 1 … }`), the block runs 60x/s. Scene-wide blocks live at the TOP LEVEL, outside any `object`; a `when clicked`/binding/interactor at the top level does nothing -- it needs an `object "Name" { … }`.
 Actions (one per line): `<var> = <expr>` · `arr[i] = <expr>` · `if/else if/else` · `repeat n times {}` ·
-`repeat i from a to b {}` · `wait <seconds>` / `wait until <cond>` (suspends THIS handler; not in `every frame` nor in a `fn`) · `play`/`pause` · `go to frame n [and play]` · `go to "name"` (declared at the top level: `label 24 "name"`) · `send "evt" [, <expr> | , text("id") | , { a = <expr>, b }]` · `sound "id"`.
+`repeat i from a to b {}` · `wait <seconds>` / `wait until <cond>` (suspends THIS handler; not in `every frame` nor in a `fn`) · `play`/`pause` · `go to frame n [and play]` (n may be an expression: `go to frame T[i]` — a table, not a chain of `else if`) · `go to "name"` (declared at the top level: `label 24 "name"`) · `send "evt" [, <expr> | , text("id") | , { a = <expr>, b }]` · `sound "id"`.
 Drag/interactors (write into your vars; all take `{ enabled <expr> }`):
 ```
 drag x, y [{ confine to <Zone>

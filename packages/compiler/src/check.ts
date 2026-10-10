@@ -15,12 +15,12 @@
 //  `checkProgram(src)` runs the WHOLE pass — source in, diagnostics out, no filesystem, no subprocess.
 //  The CLI calls the same function, so the two cannot drift.
 // ─────────────────────────────────────────────────────────────────────────────
-import type { Action, Doc, Layer } from '@flatkit/types'
+import type { Action, Doc, Item, Layer } from '@flatkit/types'
 import { canWait, MAX_TASKS } from '@flatkit/engine/actions'
 import { isGroup, isText } from '@flatkit/engine/layers'
 import { forEachAction } from './docWalk'
 import { declarationLines, lineIndex } from './sourceLines'
-import type { TextEdit } from '@flatkit/engine/dsl'
+import { EVENT_HEAD, type TextEdit } from '@flatkit/engine/dsl'
 import { FlatSyntaxError, parseFlatLib, behaviorDiagnostics, duplicateBindingDiagnostics, objectTargetDiagnostics, sceneOnlyUnitDiagnostics, itemOnlyUnitDiagnostics } from '@flatkit/engine/flatFormat'
 import { compileFlatpack, type MediaMap } from './compile'
 import { lintDoc } from './programDoc'
@@ -218,6 +218,7 @@ export function programDiagnostics(doc: Doc, src: string): CheckDiagnostic[] {
   for (const { scope, diag } of duplicateBindingDiagnostics(src)) push({ scope, line: diag.line, col: diag.col, severity: diag.severity === 'error' ? 'error' : 'warning', message: diag.message })
   for (const d of unreachableBehaviorDiagnostics(doc, src)) push(d)
   for (const d of loopedWaitDiagnostics(doc, src)) push(d)
+  for (const d of deepDocumentDiagnostics(doc, src)) push(d)
   const waiting = waitingHandlers(doc)
   if (waiting > MAX_TASKS) push({ scope: 'scene', line: 1, col: 1, severity: 'warning', message: `${waiting} handlers hold a \`wait\`: the player keeps at most ${MAX_TASKS} of them waiting at once — past that the one that has waited longest is dropped, and its end never runs` })
   for (const { scope, diag } of lintDoc(doc, src)) push({ scope, ...(diag.line === 1 && diag.col === 1 ? { line: locateDocWarning(diag.message, src) ?? 1 } : { line: diag.line }), col: diag.col, severity: diag.severity === 'warning' ? 'warning' : 'error', message: diag.message, ...(diag.fix ? { fix: diag.fix } : {}) })
@@ -270,6 +271,63 @@ function loopedWaitDiagnostics(doc: Doc, src: string): CheckDiagnostic[] {
     out.push({ scope: 'scene', line: lineOf(src, new RegExp(`\\bat[ \\t]+frame[ \\t]+${fa.frame}\\b`)), col: 1, severity: 'warning',
       message: `at frame ${fa.frame}: it waits ${+waited.toFixed(2)} s, the timeline loops every ${+lap.toFixed(2)} s — the playhead is back on frame ${fa.frame} before the script is through, and a handler triggered again while it waits starts over: what follows the \`wait\` never runs. Hold the playhead (\`pause\`), lengthen the timeline, or start the sequence from \`when loaded\`` })
   }
+  return out
+}
+
+/** Past this many levels of nesting, the compiled document is reported. Measured on 1135 programs of the
+ *  consumer repos: all but three sit at 60 or under; those three (224, 240, 164) hold the same generated
+ *  lookup chain. A database that stores the document as a tree stops well before any player does
+ *  (MongoDB: 180 levels, the host's own wrapping included). */
+export const DEEP_DOCUMENT = 100
+
+/** Depth of a value as JSON nests it (the value itself counts one), and the name of the deepest GROUP on
+ *  the way down. Iterative: this is the pass that reports depth, it must not die of it. */
+function nesting(root: unknown): { depth: number; group?: string } {
+  let depth = 0, group: string | undefined
+  const stack: [unknown, number, string | undefined][] = [[root, 1, undefined]]
+  while (stack.length) {
+    const [v, d, g] = stack.pop()!
+    if (v === null || typeof v !== 'object') continue
+    if (d > depth) { depth = d; group = g }
+    const named = !Array.isArray(v) && (v as { kind?: unknown }).kind === 'group' && typeof (v as { name?: unknown }).name === 'string' ? (v as { name: string }).name : g
+    for (const x of Array.isArray(v) ? v : Object.values(v)) if (x !== null && typeof x === 'object') stack.push([x, d + 1, named])
+  }
+  return { depth, group }
+}
+
+/**
+ * The places where the compiled document nests deeper than `DEEP_DOCUMENT`. An `else if` compiles to an
+ * `else` holding the next `if`: two levels per branch, so a lookup written as a chain (`if i == 0 { … }
+ * else if i == 1 { … }`, the form a generator falls back on) makes a document a host may not be able to
+ * store — and the author learned it from a database error, at save time. Nested groups add four each.
+ */
+function deepDocumentDiagnostics(doc: Doc, src: string): CheckDiagnostic[] {
+  if (nesting(doc).depth <= DEEP_DOCUMENT) return [] // one walk for nearly every document
+  const out: CheckDiagnostic[] = []
+  const names = new Map<string, string>() // item id → its name, for the handlers
+  const index: { items: Item[] }[] = [...doc.layers]
+  while (index.length) for (const it of index.pop()!.items) { if ('name' in it && it.name) names.set(it.id, it.name); if (isGroup(it)) index.push(...it.layers) }
+  const script = 'An `else if` adds two levels per branch: replace a lookup chain by a table (`go to frame T[i]`, `x = T[i]`), or split it into functions'
+  const say = (who: string, at: RegExp | null, base: number, value: unknown, advice: string): void => {
+    const n = nesting(value)
+    if (base + n.depth <= DEEP_DOCUMENT) return
+    const group = at === null && n.group ? n.group : null
+    out.push({ scope: 'scene', line: lineOf(src, group ? new RegExp(`\\bgroup[ \\t]+"${escapeRe(group)}"`) : (at ?? /\bscene\b/)), col: 1, severity: 'warning',
+      message: `${group ? `group "${group}"` : who}: the compiled document is ${base + n.depth} levels deep there — past ${DEEP_DOCUMENT}, a host that stores it as a tree may refuse it (MongoDB stops at 180, its own wrapping included). ${advice}` })
+  }
+  const name = (s: string) => escapeRe(s)
+  for (const f of doc.functions ?? []) say(`fn ${f.name}`, new RegExp(`\\bfn[ \\t]+${name(f.name)}\\b`), 2, f, script)
+  for (const i of doc.interactions ?? []) {
+    const target = names.get(i.targetId) ?? i.targetId
+    say(`object "${target}", ${i.event === 'drop' ? 'when dropped on' : EVENT_HEAD[i.event as keyof typeof EVENT_HEAD] ?? i.event}`, new RegExp(`\\bobject[ \\t]+"${name(target)}"`), 2, i, script)
+  }
+  const tl = doc.timeline
+  if (tl?.onLoad) say('when loaded', /\bwhen[ \t]+loaded\b/, 2, tl.onLoad, script)
+  if (tl?.onEnterFrame) say('every frame', /\bevery[ \t]+frame\b/, 2, tl.onEnterFrame, script)
+  for (const fa of tl?.frameActions ?? []) say(`at frame ${fa.frame}`, new RegExp(`\\bat[ \\t]+frame[ \\t]+${fa.frame}\\b`), 3, fa, script)
+  const scene = 'Each nested group adds four levels: flatten the scene, or move a subtree into a symbol'
+  say('the scene', null, 1, doc.layers, scene)
+  for (const s of doc.symbols) say(`symbol "${s.name}"`, new RegExp(`\\bsymbol[ \\t]+"${name(s.name)}"`), 2, s, scene)
   return out
 }
 

@@ -177,6 +177,11 @@ knowing: `flatc` reads a FILE and auto-discovers the `.flat` libs beside it, `ch
 STRING and only the `assetSrcs` you hand it. Two different inputs, two legitimate verdicts. If the two ever
 disagree, compare what each was actually given before suspecting the pass.
 
+`--check` also reports a compiled document that nests **more than 100 levels** deep, and names where: a
+function, a handler, a group. It is nearly always a lookup written as a chain of `else if` (two levels per
+branch) — write it as a table (`go to frame T[i]`, `x = T[i]`). Blocks nested more than 256 deep are a
+compile error.
+
 `assetNames` (same order as `assetSrcs`) gives each library the name a two-libraries warning calls it by;
 without it they are `library 1`, `library 2`. The result carries `ok`, `errors`, `warnings`, `report` (the
 text `flatc` prints), `doc`, and `diagnostics` — each `{ scope, line, col, severity, message, fix? }`.

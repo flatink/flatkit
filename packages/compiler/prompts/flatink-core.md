@@ -186,7 +186,9 @@ Actions (one per line): `<var> = <expr>` · `arr[i] = <expr>` · `if/else if/els
 `<arr> = fill(<count>, <value>)` (blank/resize a whole array — the ONE array-valued assignment) ·
 `repeat <n> times { }` · `repeat i from a to b { }` · `wait <seconds>` / `wait until <cond>` (suspends THIS
 handler, then goes on: "do, wait, do" with no flag in `every frame`; in an event / `when loaded` / `at frame`
-handler only, not in `every frame` nor in a `fn`; triggered again while waiting, the handler starts over) · `play`/`pause` · `go to frame N [and play]` ·
+handler only, not in `every frame` nor in a `fn`; triggered again while waiting, the handler starts over) · `play`/`pause` · `go to frame N [and play]` (N may be an EXPRESSION: `go to frame T[i]`, `go to frame start + i * 60` — a jump
+among many is a table `var T = [0, 320, 655]`, never a long chain of `else if`, which nests the compiled
+document two levels per branch) ·
 `go to "label" [and play]` (declare it at the top level: `label 24 "intro"`) · `send "evt" [, <expr> | , text("id") | , { a = <expr>, b }]` · `sound "id"` · `<fn>(args)`.
 
 Drag & interactors (each writes into your vars; all accept `{ enabled <expr> }`):

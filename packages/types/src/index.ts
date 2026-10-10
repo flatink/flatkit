@@ -203,7 +203,7 @@ export type SendPayload =
 export type Action =
   | { do: 'play' }
   | { do: 'pause' }
-  | { do: 'gotoFrame'; frame: number; play?: boolean } // play absent = does not change the state
+  | { do: 'gotoFrame'; frame: number; expr?: string; play?: boolean } // play absent = does not change the state; `expr` = a COMPUTED frame (`go to frame T[i]`), read when the action runs — `frame` is then 0, what a player older than 0.50 jumps to
   | { do: 'gotoLabel'; label: string; play?: boolean }
   | { do: 'setVar'; name: string; value: string } // value = expression evaluated by the host
   | { do: 'setIndex'; name: string; index: string; value: string } // arr[index] = value (array)

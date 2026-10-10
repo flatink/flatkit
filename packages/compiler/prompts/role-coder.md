@@ -50,6 +50,8 @@ wait <seconds>          wait until <cond>      // suspend THIS handler, then go 
                                                // (event / when loaded / at frame handlers only; NOT in `every frame` or a `fn`;
                                                //  triggered again while waiting, the handler starts over)
 play   pause   go to frame <n> [and play|and pause]   go to "<label>" [and play]
+go to frame T[i]          go to frame start + i * 60     // the frame may be an EXPRESSION — a jump among many is a TABLE
+                                                         // (`var T = [0, 320, 655]`), never a long chain of `else if`
 label <frame> "<label>"                                  // at the TOP LEVEL: names a frame for go to "<label>"
 send "<evt>" [, <expr> | , text("<id>") | , { a = <expr>, b }]   sound "<assetId>"   <fn>(<args>)
 ```

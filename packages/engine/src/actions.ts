@@ -78,11 +78,15 @@ function runAction(a: Action, host: ActionHost, budget: Budget): void {
     case 'pause':
       host.pause()
       break
-    case 'gotoFrame':
-      host.seek(a.frame)
+    case 'gotoFrame': {
+      // A computed frame is read now. One that is not a number (0 / 0, a typo read as nothing) moves nothing.
+      const frame = a.expr === undefined ? a.frame : host.evalNumber(a.expr)
+      if (!Number.isFinite(frame)) break
+      host.seek(frame)
       if (a.play === true) host.play()
       else if (a.play === false) host.pause()
       break
+    }
     case 'gotoLabel': {
       const f = host.labelFrame(a.label)
       if (f !== undefined) {

@@ -70,7 +70,9 @@ export type ParseResult = { units: ScriptUnit[]; diagnostics: Diagnostic[]; site
 //  PRINTER (model → text)
 // ─────────────────────────────────────────────────────────────────────────────
 const INDENT = '  '
-const EVENT_HEAD: Record<ScriptEvent, string> = {
+/** How deep blocks (`if`, `else if`, `repeat`) may nest in a script. */
+export const MAX_BLOCK_DEPTH = 256
+export const EVENT_HEAD: Record<ScriptEvent, string> = {
   click: 'when clicked',
   enter: 'when hovered',
   leave: 'when unhovered',
@@ -93,7 +95,7 @@ function printAction(a: Action, depth: number): string {
     case 'pause':
       return ind + 'pause'
     case 'gotoFrame':
-      return ind + `go to frame ${a.frame}` + playSuffix(a.play)
+      return ind + `go to frame ${a.expr ?? a.frame}` + playSuffix(a.play)
     case 'gotoLabel':
       return ind + `go to ${quote(a.label)}` + playSuffix(a.play)
     case 'setVar':
@@ -294,7 +296,23 @@ class Parser {
     this.line = m.line
     this.col = m.col
   }
+  private depth = 0 // blocks open around the statement being read
+  private tooDeep = false
+  /** Reads a block statement one level deeper. Past `MAX_BLOCK_DEPTH` the program is refused in ONE error:
+   *  the parser, the linter and the interpreter all walk blocks by recursion, and a chain of two thousand
+   *  `else if` ended the compiler on a stack overflow with a JavaScript trace for a message. */
+  private nested<T>(m: Mark, read: () => T | null): T | null {
+    if (this.depth >= MAX_BLOCK_DEPTH) {
+      this.err(`blocks nested more than ${MAX_BLOCK_DEPTH} deep — a chain of \`else if\` counts one per branch. Replace a lookup chain by a table (\`go to frame T[i]\`, \`x = T[i]\`), or split it into functions`, m)
+      this.tooDeep = true // …and nothing after it is reported: it would all be noise from the cut
+      this.i = this.s.length
+      return null
+    }
+    this.depth++
+    try { return read() } finally { this.depth-- }
+  }
   private err(message: string, m?: Mark, fix?: TextEdit) {
+    if (this.tooDeep) return
     this.diags.push({ line: m?.line ?? this.line, col: m?.col ?? this.col, message, ...(fix ? { fix } : {}) })
   }
 
@@ -907,15 +925,23 @@ class Parser {
     }
     const w = this.word()
     if (w === 'frame') {
-      const n = this.number()
-      if (n === null) {
-        this.err('frame number expected after "frame"', m)
-        this.skipLine()
+      // A number, or an expression (`go to frame T[mes]`, `go to frame start + i * 60`): a jump that is
+      // looked up or computed used to be written as a chain of `else if`, one literal per branch.
+      this.skipSpace()
+      const pos = this.mark()
+      const raw = this.lineExpr()
+      const tail = /(?:^|\s)and\s+(play|pause)$/.exec(raw)
+      const target = (tail ? raw.slice(0, tail.index) : raw).trim()
+      if (!target) {
+        this.err('a frame number or an expression expected after "frame" (`go to frame 12`, `go to frame T[i]`)', m)
+        this.endStatement()
         return null
       }
-      const play = this.andPlay()
+      const play = tail ? { play: tail[1] === 'play' } : {}
       this.endStatement()
-      return { do: 'gotoFrame', frame: n, ...(play === undefined ? {} : { play }) }
+      if (/^-?(?:\d+\.?\d*|\.\d+)$/.test(target)) return { do: 'gotoFrame', frame: Number(target), ...play }
+      this.exprSite(target, pos)
+      return { do: 'gotoFrame', frame: 0, expr: target, ...play }
     }
     this.err('"frame N" or a label "name" expected after "go to"', m)
     this.skipLine()
@@ -947,6 +973,9 @@ class Parser {
 
   private ifStatement(): Action | null {
     this.skipSpace()
+    return this.nested(this.mark(), () => this.ifBlock())
+  }
+  private ifBlock(): Action | null {
     const m = this.mark()
     const cond = this.header()
     if (cond === null) {
@@ -980,6 +1009,9 @@ class Parser {
 
   private repeatStatement(): Action | null {
     this.skipSpace()
+    return this.nested(this.mark(), () => this.repeatBlock())
+  }
+  private repeatBlock(): Action | null {
     const m = this.mark()
     const head = this.header()
     if (head === null) {
