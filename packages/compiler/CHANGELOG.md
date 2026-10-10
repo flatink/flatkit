@@ -1,5 +1,14 @@
 # @flatkit/compiler
 
+## 0.49.0
+
+### Patch Changes
+
+- Updated dependencies [[`1760881`](https://github.com/flatink/flatkit/commit/17608813e377a0c4eaf03cfcf0d611aa29e7e2da)]:
+  - @flatkit/player@0.49.0
+  - @flatkit/engine@0.49.0
+  - @flatkit/types@0.49.0
+
 ## 0.48.1
 
 ### Patch Changes
