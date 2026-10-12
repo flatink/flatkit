@@ -452,6 +452,21 @@ describe('the gestures, played — flatink/flatink #55 #56 #58', async () => {
     const r = run(src, [{ type: 'drag', source: 'p_Ib', target: 'p_TB' }, { type: 'drag', source: 'p_Ia', target: 'p_TA' }])
     expect(r.sends.map((s) => s.name)).toEqual(['correct', 'correct', 'part', 'completed'])
   })
+  // flatkit#83 — an item had no touch area of its own: it was grabbed wherever its drawing happened to
+  // reach, so a theme that drew smaller shrank the grip, and one that drew nothing left none.
+  it('place: an item is grabbed anywhere in its footprint, whatever the theme draws', () => {
+    const src = 'place p {\n  target A at 200,150\n  item a -> A at 200,450\n}\n'
+    for (const theme of [GREYBOX, BLANK]) {
+      const c = checkProgram(ensureHeader(desugar(src, { gestures: gestures({ theme }) }).flatink))
+      expect(c.errors).toBe(0)
+      expect(c.warnings).toBe(0)
+      const item = (c.doc!.layers.flatMap((l) => l.items) as Array<{ name: string; hitbox?: { w: number; h: number } }>).find((it) => it.name === 'p_Ia')
+      expect(item?.hitbox, theme.name).toEqual(theme.size('item'))
+      const corner = { x: 200 + 44, y: 450 + 44 } // inside the 92 px footprint, outside the disc
+      const r = playHeadless(c.doc!, [{ type: 'down', ...corner }, { type: 'move', x: 200, y: 150 }, { type: 'up', x: 200, y: 150 }] as never)
+      expect(r.sends.map((s) => s.name), theme.name).toEqual(['correct', 'part', 'completed'])
+    }
+  })
   it('place: a malformed size is refused, with the rule', () => {
     expect(() => desugar('place p {\n  target A at 100,300 size big\n  item a -> A at 100,100\n}\n')).toThrow(/size/)
   })

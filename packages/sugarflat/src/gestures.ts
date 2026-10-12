@@ -173,7 +173,9 @@ function expandPlace(name: string, body: string, theme: Theme, ctx: GestureConte
     layers.push(...container(t.id, t.x, t.y, theme.draw('target', t.label, size), size))
   }
   layers.push('  }', `  layer "${p}items" {`)
-  for (const it of m.items) layers.push(...container(it.id, it.x, it.y, theme.draw('item', it.label)))
+  // An item is touched over its whole footprint (flatkit#83): left to its drawing, the grip was whatever
+  // the theme happened to paint -- under a finger-sized target on a phone, and none at all under BLANK.
+  for (const it of m.items) layers.push(...container(it.id, it.x, it.y, theme.draw('item', it.label), theme.size('item')))
   layers.push('  }')
 
   const behavior: string[] = []
