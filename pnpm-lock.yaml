@@ -43,11 +43,11 @@ importers:
         specifier: ^0.3.25
         version: 0.3.25
       skia-canvas:
-        specifier: ^4.0.0-rc7
-        version: 4.0.0-rc7
+        specifier: ^4.0.0
+        version: 4.0.0
       tsup:
         specifier: ^8.5.1
-        version: 8.5.1(postcss@8.5.29)(tsx@4.23.15)(typescript@6.0.3)(yaml@2.9.1)
+        version: 8.5.1(postcss@8.5.30)(tsx@4.23.15)(typescript@6.0.3)(yaml@2.9.1)
       tsx:
         specifier: ^4.23.15
         version: 4.23.15
@@ -894,9 +894,19 @@ packages:
     resolution: {integrity: sha512-t09vSN3MdfsyCHoFcTRCH/iUtG7OJ0CsjzB8cjAmKc/va/kIgeDI/TxsigdncE/4be734m0cvIYwNaV4i2XqAw==}
     engines: {node: '>=10'}
 
+  '@skia-canvas/darwin-arm64@4.0.0':
+    resolution: {integrity: sha512-0THbyAdihsVc+C8dB44BWDUxYPs8g6XY19Az77Q6F3ExUpod+QpJAkKdZ8fHB8PGtj74WzsjFt+5Ns/R+RD83A==}
+    cpu: [arm64]
+    os: [darwin]
+
   '@skia-canvas/darwin-arm64@4.0.0-rc7':
     resolution: {integrity: sha512-dWL8fczlZzTLcfDGsUwPYLj5l+JKhYFYNhroPTCvtp08xr6S/bCjCoYaz2Btp6Rsh4p+EcELWB9R1CZUMWHHzg==}
     cpu: [arm64]
+    os: [darwin]
+
+  '@skia-canvas/darwin-x64@4.0.0':
+    resolution: {integrity: sha512-cZRlVDjUVlSegG63kyTY0dMG95RUTw0ZwgkUMnMoLzrp73F2T6KcX3QFAmp2CRW/405i04Mo0PLTK5Y24gLMUA==}
+    cpu: [x64]
     os: [darwin]
 
   '@skia-canvas/darwin-x64@4.0.0-rc7':
@@ -904,8 +914,18 @@ packages:
     cpu: [x64]
     os: [darwin]
 
+  '@skia-canvas/linux-arm64-glibc@4.0.0':
+    resolution: {integrity: sha512-/wJRyiIZjFSPtHf/Zwo7chEM5o2P12mS3+N2h8uckNstSlT3P/CWlOi8HjO9OBSypbLhwz4gJfWW7eS+lY6lyw==}
+    cpu: [arm64]
+    os: [linux]
+
   '@skia-canvas/linux-arm64-glibc@4.0.0-rc7':
     resolution: {integrity: sha512-VbGLfaah/pvdNvAwpK2fgjWg2hrjEqIep8J/7cKPvc2lIwmnX8LHzA11rY6tV4LlDiEvGRFLUl8G1YJnyRmbzg==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@skia-canvas/linux-arm64-musl@4.0.0':
+    resolution: {integrity: sha512-rbFMxYZ1wgZjF2l+Tx5ve+oTc3ZLHyDyAQRP6dKfbxIUHGUi8zgdpV754jM+VvkuqW9ljzc2sOYe3izrpfYByQ==}
     cpu: [arm64]
     os: [linux]
 
@@ -914,8 +934,18 @@ packages:
     cpu: [arm64]
     os: [linux]
 
+  '@skia-canvas/linux-x64-glibc@4.0.0':
+    resolution: {integrity: sha512-rpgx6WX6OrNFuBNz1tjOnxbNG6il5wfe72HhpA6fOo1ZBWPgzmHEmeAXvSMvhbnsJEdcfBV9akThufzitQ4sgA==}
+    cpu: [x64]
+    os: [linux]
+
   '@skia-canvas/linux-x64-glibc@4.0.0-rc7':
     resolution: {integrity: sha512-SQjPsk6Y34WnbsC1Nkm3hR8Hdl3tV5yhqPjlz1fpjVaHu40bzx439123xNG8W98IFi5GaF0RHRT1I0z4TdOGrQ==}
+    cpu: [x64]
+    os: [linux]
+
+  '@skia-canvas/linux-x64-musl@4.0.0':
+    resolution: {integrity: sha512-xOh7dt9Z5pAMVc6KNkJEu906usaa5HAUEQ8CwEQHWtiZQNvQx6Ma71+I0c4mEWFEJaA1mwK5xUoGSzONY+wsmw==}
     cpu: [x64]
     os: [linux]
 
@@ -924,9 +954,19 @@ packages:
     cpu: [x64]
     os: [linux]
 
+  '@skia-canvas/win32-arm64@4.0.0':
+    resolution: {integrity: sha512-5+yXHAQLp0jacna/zhLKMfesDfKcZBXoKxcu82adLYI6vu5hj5P+iUI2416rfRdeUzX/E9n+mIfKTylEHgIdMA==}
+    cpu: [arm64]
+    os: [win32]
+
   '@skia-canvas/win32-arm64@4.0.0-rc7':
     resolution: {integrity: sha512-l5AyFBaZpFAwWtkq9YLWR/F6TAJePiKrd6JQ5Y/c7g3Z1JyvV98shBY96MOpZyVJ9ITy+IWPpIeltDme8LhXaQ==}
     cpu: [arm64]
+    os: [win32]
+
+  '@skia-canvas/win32-x64@4.0.0':
+    resolution: {integrity: sha512-qLmlrca+VRR+JZAmN0TYCmztVabi3YWKAbxXD9HLHcUP5HKOk2wh+y/9nMqJsJLQyQqItBeNjnLHLfsDS65RnQ==}
+    cpu: [x64]
     os: [win32]
 
   '@skia-canvas/win32-x64@4.0.0-rc7':
@@ -1842,8 +1882,8 @@ packages:
       yaml:
         optional: true
 
-  postcss@8.5.29:
-    resolution: {integrity: sha512-49cGhUbXj8Qenv0iTMxA1cFBzxXoctpC9Ujd77t1WcbJIr6nF/eI7g/8MgxrYldFRuAXvja7xQRwavoW7kgrxQ==}
+  postcss@8.5.30:
+    resolution: {integrity: sha512-zkd+e9S1AQHhmaBKye9zlFHWjOwVgqXl1q3ECYy8561K7qxR2cREf/STLskulBFd78k6AOFeA+ff1TtEzk9bAA==}
     engines: {node: ^10 || ^12 || >=14}
 
   prelude-ls@1.2.1:
@@ -1971,6 +2011,10 @@ packages:
 
   sisteransi@1.0.5:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
+
+  skia-canvas@4.0.0:
+    resolution: {integrity: sha512-Y4K2xKy1nxj6fhT/ZTHQ+KJnSqV/oOXqbgjML8ie2Jj8eJ3satsiz9y/L8OWYclpNhEAvBSOIurdZ9hDs6fsGA==}
+    engines: {node: '>=18'}
 
   skia-canvas@4.0.0-rc7:
     resolution: {integrity: sha512-uA0svjaWPPP279gvjThHRNHzEIa4GqenkZOCzWQtTd+QtqO5v5i914SXlzhgHj4AHI6sRM2Tlv0nG/r645HHeQ==}
@@ -2865,25 +2909,49 @@ snapshots:
 
   '@sindresorhus/is@4.6.0': {}
 
+  '@skia-canvas/darwin-arm64@4.0.0':
+    optional: true
+
   '@skia-canvas/darwin-arm64@4.0.0-rc7':
+    optional: true
+
+  '@skia-canvas/darwin-x64@4.0.0':
     optional: true
 
   '@skia-canvas/darwin-x64@4.0.0-rc7':
     optional: true
 
+  '@skia-canvas/linux-arm64-glibc@4.0.0':
+    optional: true
+
   '@skia-canvas/linux-arm64-glibc@4.0.0-rc7':
+    optional: true
+
+  '@skia-canvas/linux-arm64-musl@4.0.0':
     optional: true
 
   '@skia-canvas/linux-arm64-musl@4.0.0-rc7':
     optional: true
 
+  '@skia-canvas/linux-x64-glibc@4.0.0':
+    optional: true
+
   '@skia-canvas/linux-x64-glibc@4.0.0-rc7':
+    optional: true
+
+  '@skia-canvas/linux-x64-musl@4.0.0':
     optional: true
 
   '@skia-canvas/linux-x64-musl@4.0.0-rc7':
     optional: true
 
+  '@skia-canvas/win32-arm64@4.0.0':
+    optional: true
+
   '@skia-canvas/win32-arm64@4.0.0-rc7':
+    optional: true
+
+  '@skia-canvas/win32-x64@4.0.0':
     optional: true
 
   '@skia-canvas/win32-x64@4.0.0-rc7':
@@ -3789,15 +3857,15 @@ snapshots:
       mlly: 1.8.2
       pathe: 2.0.3
 
-  postcss-load-config@6.0.1(postcss@8.5.29)(tsx@4.23.15)(yaml@2.9.1):
+  postcss-load-config@6.0.1(postcss@8.5.30)(tsx@4.23.15)(yaml@2.9.1):
     dependencies:
       lilconfig: 3.1.3
     optionalDependencies:
-      postcss: 8.5.29
+      postcss: 8.5.30
       tsx: 4.23.15
       yaml: 2.9.1
 
-  postcss@8.5.29:
+  postcss@8.5.30:
     dependencies:
       nanoid: 6.0.2
       picocolors: 1.1.1
@@ -3981,6 +4049,25 @@ snapshots:
 
   sisteransi@1.0.5: {}
 
+  skia-canvas@4.0.0:
+    dependencies:
+      detect-libc: 2.1.2
+      follow-redirects: 1.16.1
+      https-proxy-agent: 9.1.0
+    optionalDependencies:
+      '@skia-canvas/darwin-arm64': 4.0.0
+      '@skia-canvas/darwin-x64': 4.0.0
+      '@skia-canvas/linux-arm64-glibc': 4.0.0
+      '@skia-canvas/linux-arm64-musl': 4.0.0
+      '@skia-canvas/linux-x64-glibc': 4.0.0
+      '@skia-canvas/linux-x64-musl': 4.0.0
+      '@skia-canvas/win32-arm64': 4.0.0
+      '@skia-canvas/win32-x64': 4.0.0
+    transitivePeerDependencies:
+      - debug
+      - kerberos
+      - supports-color
+
   skia-canvas@4.0.0-rc7:
     dependencies:
       detect-libc: 2.1.2
@@ -4073,7 +4160,7 @@ snapshots:
   tslib@2.8.1:
     optional: true
 
-  tsup@8.5.1(postcss@8.5.29)(tsx@4.23.15)(typescript@6.0.3)(yaml@2.9.1):
+  tsup@8.5.1(postcss@8.5.30)(tsx@4.23.15)(typescript@6.0.3)(yaml@2.9.1):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.28.1)
       cac: 6.7.14
@@ -4084,7 +4171,7 @@ snapshots:
       fix-dts-default-cjs-exports: 1.0.1
       joycon: 3.1.1
       picocolors: 1.1.1
-      postcss-load-config: 6.0.1(postcss@8.5.29)(tsx@4.23.15)(yaml@2.9.1)
+      postcss-load-config: 6.0.1(postcss@8.5.30)(tsx@4.23.15)(yaml@2.9.1)
       resolve-from: 5.0.0
       rollup: 4.61.1
       source-map: 0.7.6
@@ -4093,7 +4180,7 @@ snapshots:
       tinyglobby: 0.2.17
       tree-kill: 1.2.2
     optionalDependencies:
-      postcss: 8.5.29
+      postcss: 8.5.30
       typescript: 6.0.3
     transitivePeerDependencies:
       - jiti
@@ -4152,7 +4239,7 @@ snapshots:
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
-      postcss: 8.5.29
+      postcss: 8.5.30
       rolldown: 1.0.3
       tinyglobby: 0.2.17
     optionalDependencies:
