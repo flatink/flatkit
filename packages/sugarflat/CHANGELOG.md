@@ -1,5 +1,12 @@
 # @flatkit/sugarflat
 
+## 0.6.11
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @flatkit/compiler@0.50.2
+
 ## 0.6.10
 
 ### Patch Changes

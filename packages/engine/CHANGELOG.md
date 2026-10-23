@@ -1,5 +1,12 @@
 # @flatkit/engine
 
+## 0.50.2
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @flatkit/types@0.50.2
+
 ## 0.50.1
 
 ### Patch Changes
