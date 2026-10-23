@@ -1,5 +1,9 @@
 # @flatkit/types
 
+## 0.50.1
+
+No changes in this release.
+
 ## 0.50.0
 
 ### Minor Changes
