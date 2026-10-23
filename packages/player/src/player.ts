@@ -10,7 +10,7 @@ import type { Asset, Doc, Item, Layer, Point, SymbolDef, Text } from '@flatkit/t
 import { resolveInstanceParams } from '@flatkit/engine/params'
 import { resolveInstanceFrame, scheduleSounds, applyEasing, type Timeline, type Easing } from '@flatkit/engine/timeline'
 import { stateValueOf, initialStateValue, stateMachineByParam } from '@flatkit/engine/states'
-import { compileCached, evalExpr, exprScope, SIM_HZ, type ExprContext, type Compiled } from '@flatkit/engine/expr'
+import { compileCached, evalExpr, SIM_HZ, type ExprContext, type Compiled } from '@flatkit/engine/expr'
 import { runActions, canWait, startTask, resumeTask, MAX_TASKS, MAX_SEND_FIELDS, MAX_SEND_TEXT, SEND_EVENT_NAME, isSendField, type Action, type ActionHost, type Task, type Interaction, type ItemEvent } from '@flatkit/engine/actions'
 import { containerLayers, getSymbol, isGroup, isInstance, isPoseable, isText } from '@flatkit/engine/layers'
 import { renderLayers, collectModifierTargets, docHasModifiers, type FilterCacheEntry, type RenderCtx } from './drawScene'
@@ -1464,10 +1464,13 @@ export class FlatPlayer {
     for (const vf of this.#valueFuncs) { // fn name(p) = expr -> closure (the body sees globals + math + time + params)
       ctx[vf.name] = (...args: number[]) => {
         if (this.#funcDepth > 64 || !vf.comp.ok) return Number.NaN
-        const local = exprScope(ctx, this.#frame / this.fps, this.#frame)
+        // The params ALONE, over `ctx` read by reference (the `base` of evalExpr): copying `ctx` here cost
+        // one property per variable on EVERY call — x5.5 on a frame of ~150 `pulse()` calls over ~250
+        // variables (flatink/flatink#71). `time`/`frame`/`clock` are already baked into `ctx`.
+        const local: ExprContext = Object.create(null) as ExprContext
         vf.params.forEach((p, i) => { local[p] = args[i] ?? 0 })
         this.#funcDepth++
-        const r = evalExpr(vf.comp.node, local, Number.NaN)
+        const r = evalExpr(vf.comp.node, local, Number.NaN, ctx)
         this.#funcDepth--
         return r
       }
