@@ -276,10 +276,11 @@ describe('rendering — `stroke … fixed` keeps its width on a stretched shape'
 })
 
 describe('the skia-canvas that was found', () => {
-  it('version 3 — what a bare `pnpm add -D skia-canvas` installs — is refused, with the way out', async () => {
+  it('version 3 — what a bare `pnpm add -D skia-canvas` installed until 4.0.0 — is refused, with the way out', async () => {
     const { skiaVersionError } = await import('./render')
     expect(skiaVersionError('3.0.8')).toContain('skia-canvas 3.0.8 found: flatc needs version 4')
-    expect(skiaVersionError('3.0.8')).toContain('skia-canvas@next')
+    // 4.0.0 is npm's `latest` since 2026-10-12, but a project pinned to 3 needs the major named
+    expect(skiaVersionError('3.0.8')).toContain('skia-canvas@4')
   })
   it('version 4, release candidates included, and an unknown version are accepted', async () => {
     const { skiaVersionError } = await import('./render')

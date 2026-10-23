@@ -105,12 +105,12 @@ export type Renderer = {
  * per process. `params` sets a SYMBOL's exposed params (a state name or a number) before the first
  * frame — the reason a consumer had to write its own harness to preview anything with a state.
  */
-/** What is wrong with the `skia-canvas` that was found, or ''. Version 4 is the one supported; 3 is npm's
- *  `latest` tag, so a bare `pnpm add -D skia-canvas` installs it — and it rendered, with half the picture
- *  transparent behind a moved shape larger than the frame. Nothing said so. */
+/** What is wrong with the `skia-canvas` that was found, or ''. Version 4 is the one supported; 3 was npm's
+ *  `latest` tag until 4.0.0 (2026-10-12), so a bare `pnpm add -D skia-canvas` installed it — and it
+ *  rendered, with half the picture transparent behind a moved shape larger than the frame. Nothing said so. */
 export function skiaVersionError(version: string | undefined): string {
   return version && Number.parseInt(version, 10) < 4
-    ? `skia-canvas ${version} found: flatc needs version 4 (\`pnpm add -D skia-canvas@next\`). Version 3 drops what lies behind a moved shape larger than the frame, so its pictures cannot be trusted.`
+    ? `skia-canvas ${version} found: flatc needs version 4 (\`pnpm add -D skia-canvas@4\`). Version 3 drops what lies behind a moved shape larger than the frame, so its pictures cannot be trusted.`
     : ''
 }
 /** The refusal itself: a wrong picture is worse than no picture. */
@@ -131,7 +131,7 @@ export async function createRenderer(doc: Doc, opts: { scale?: number; params?: 
   try { skia = (await import(skiaPkg)) as unknown as SkiaCanvas }
   catch {
     throw new Error(
-      'skia-canvas 4 is required for rendering. Install it as a dev dependency: `npm i -D skia-canvas@next` ' +
+      'skia-canvas 4 is required for rendering. Install it as a dev dependency: `npm i -D skia-canvas@4` ' +
       '(pnpm users: also allow its build script with `pnpm approve-builds` or add "skia-canvas" to ' +
       'pnpm.onlyBuiltDependencies, then reinstall). If the native binary is still missing afterwards, ' +
       'run `node node_modules/skia-canvas/lib/prebuild.mjs download`.',

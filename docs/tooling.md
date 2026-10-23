@@ -195,8 +195,8 @@ item, and a roster item no cel ever poses. Each renders an empty frame with no o
 ## See what you draw — `--render`
 
 Render a PNG (skia backend, faithful to the browser). Needs the optional `skia-canvas` peer dependency,
-**version 4**: `pnpm add -D skia-canvas@next` (or `npm i -D skia-canvas@next`). ⚠️ A bare
-`pnpm add -D skia-canvas` installs 3.x, npm's `latest` tag — `flatc` refuses to render with it, and says so.
+**version 4**: `pnpm add -D skia-canvas@4` (or `npm i -D skia-canvas@4`). A project still on 3.x
+(npm's `latest` until 4.0.0, 2026-10-12) must move: `flatc` refuses to render with it, and says so.
 pnpm users: allow its build script (`pnpm approve-builds`).
 
 `skia-canvas` **4** (from `4.0.0-rc7`) is required. Version 3 is no longer accepted: it drops what lies
@@ -208,7 +208,8 @@ from one text to the next, not a uniform shift: on a same picture one block may 
 third not at all (measured by a consumer on 545 scenes: 16 identical to the pixel, a median of 0.31% of
 pixels visibly different, 3.4% at most on a page of text). Frames rendered with one must not be mixed
 with frames rendered with the other in the same video, and a pixel comparison between two renders needs
-the same version on both sides. While version 4 is a release candidate, pin the exact version.
+the same version on both sides. The release candidates of version 4 (from `4.0.0-rc7`) are still
+accepted; 4.0.0 is the one tested.
 
 ```
 flatc <file> --render -o out.png [--frame N] [--at k=v[,k2=v2]] [--steps N] [--scale S]
